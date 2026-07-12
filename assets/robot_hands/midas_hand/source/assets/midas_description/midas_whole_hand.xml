@@ -1,0 +1,231 @@
+<mujoco model="midas_whole_hand">
+  <compiler angle="radian" />
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="implicitfast" />
+  <visual>
+    <headlight ambient="0.55 0.55 0.55" diffuse="0.85 0.85 0.85" specular="0.25 0.25 0.25" />
+    <rgba haze="0.88 0.92 0.96 1" />
+    <global azimuth="140" elevation="-25" />
+  </visual>
+  <default>
+    <joint type="hinge" limited="false" damping="0.01" armature="0.0001"/>
+    <geom type="mesh" contype="0" conaffinity="0" group="1"/>
+    <site type="sphere" size="0.002" rgba="0.8 0.2 0.05 1" group="3"/>
+    <default class="fingertip_contact">
+      <geom type="capsule" size="0.0088 0.004" pos="0.0016 0.021 -0.0085" quat="0.7071067812 -0.7071067812 0 0" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="pip_upper_contact">
+      <geom type="box" size="0.0095 0.01 0.0075" pos="0.001 0.0 -0.0085" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="pip_link_contact">
+      <geom type="box" size="0.012 0.008 0.01" pos="-0.013 0.0139 0" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="mcp_flex_contact">
+      <geom type="box" size="0.012 0.015 0.01" pos="-0.0135 0.0256 0" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="mcp_flex_joint_contact">
+      <geom type="capsule" size="0.01 0.0055" pos="-0.0108 0 0" quat="0.7071067812 0 0.7071067812 0" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="palm_contact">
+      <geom type="box" size="0.043 0.036 0.027" pos="-0.003 0.055 0.008" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="thumb_cmc_base_contact">
+      <geom type="box" size="0.004 0.0145 0.0165" pos="-0.014 -0.0115 -0.003" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="thumb_cmc_side_contact">
+      <geom type="box" size="0.01 0.015 0.011" pos="0 -0.0145 -0.013" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="thumb_cmc_side_bridge_contact">
+      <geom type="box" size="0.01 0.015 0.011" pos="0.03 -0.026899 -0.0112" quat="0.2758359276 -0.6958444625 -0.5142077210 -0.4186949300" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="thumb_mcp_contact">
+      <geom type="box" size="0.01 0.017 0.011" pos="-0.001 0.023 -0.017" quat="0.9459117135 -0.0959505635 -0.2705470924 0.1511581625" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+    <default class="thumb_dip_contact">
+      <geom type="capsule" size="0.0118 0.006 0.011" pos="-0.004 0.023 -0.017" quat="0.7352302348 0.6100421737 -0.0533717745 0.2905795965" rgba="1 0 0 0.1" contype="1" conaffinity="1" group="2"/>
+    </default>
+  </default>
+  <asset>
+    <material name="mat_0_262745_0_282353_0_301961" rgba="0.262745 0.282353 0.301961 1" />
+    <material name="mat_0_301961_0_301961_0_301961" rgba="0.301961 0.301961 0.301961 1" />
+    <mesh name="Finger_DIP" file="../meshes/Finger_DIP.stl" />
+    <mesh name="Finger_DIP_Linkage" file="../meshes/Finger_DIP_Linkage.stl" />
+    <mesh name="Finger_MCP_Pitch" file="../meshes/Finger_MCP_Pitch.stl" />
+    <mesh name="Finger_MCP_Yaw" file="../meshes/Finger_MCP_Yaw.stl" />
+    <mesh name="Finger_PIP" file="../meshes/Finger_PIP.stl" />
+    <mesh name="Palm_URDF_part001" file="../meshes/Palm_URDF_part001.stl" />
+    <mesh name="Palm_URDF_part002" file="../meshes/Palm_URDF_part002.stl" />
+    <mesh name="Thumb_CMC_Base_URDF" file="../meshes/Thumb_CMC_Base_URDF.stl" />
+    <mesh name="Thumb_CMC_Side_URDF" file="../meshes/Thumb_CMC_Side_URDF.stl" />
+    <mesh name="Thumb_DIP_URDF" file="../meshes/Thumb_DIP_URDF.stl" />
+    <mesh name="Thumb_MCP_URDF" file="../meshes/Thumb_MCP_URDF.stl" />
+  </asset>
+  <worldbody>
+    <light name="key_light" pos="0 -0.35 0.45" dir="0 0.6 -1" directional="true" diffuse="0.9 0.88 0.82" ambient="0.25 0.25 0.25" specular="0.2 0.2 0.2" />
+    <light name="fill_light" pos="-0.25 0.12 0.30" dir="0.45 -0.2 -1" directional="true" diffuse="0.45 0.50 0.60" ambient="0.12 0.12 0.14" specular="0.08 0.08 0.08" />
+    <light name="rim_light" pos="0.22 0.20 0.28" dir="-0.35 -0.4 -1" directional="true" diffuse="0.35 0.38 0.42" ambient="0.06 0.06 0.07" specular="0.1 0.1 0.1" />
+    <camera name="front" pos="0 -0.28 0.18" xyaxes="1 0 0 0 0.45 0.89" />
+    <body name="palm_base" pos="0 0 0">
+      <inertial pos="-0.00237079 0.0588036 0.00566891" mass="0.24634" fullinertia="0.000200211 0.000209298 0.000278645 2.35003e-06 1.91386e-06 1.1821e-06" />
+      <geom name="palm_base_visual_1" mesh="Palm_URDF_part001" material="mat_0_262745_0_282353_0_301961" pos="0.0121498 0.0740889 -0.0141495" />
+      <geom name="palm_base_visual_2" mesh="Palm_URDF_part002" material="mat_0_262745_0_282353_0_301961" pos="0.0121498 0.0740889 -0.0141495" />
+      <geom name="palm_contact" class="palm_contact" />
+      <body name="thumb_cmc_base" pos="-0.0275061 0.0291595 -0.0105" quat="1.31544401599e-06 0.991444886682 0.130525999979 1.73181230656e-07">
+        <inertial pos="-0.0109214 -0.0101644 -0.000328849" mass="0.00724593" fullinertia="1.49172e-06 1.14901e-06 1.17959e-06 -1.05834e-07 2.49017e-08 4.64569e-08" />
+        <joint name="thumb_cmc_roll_joint" axis="0 1 0" pos="0 0 0" limited="true" range="0 2.15" />
+        <geom name="thumb_cmc_base_visual" mesh="Thumb_CMC_Base_URDF" material="mat_0_262745_0_282353_0_301961" pos="0 0.003 0" />
+        <geom name="thumb_cmc_base_contact" class="thumb_cmc_base_contact" />
+        <body name="thumb_cmc_side" pos="-0.0195022 -0.0117032 0.0095" quat="0.707105482511 0 0 -0.707108079859">
+          <inertial pos="0.0130371 -0.0185505 -0.0120644" mass="0.0349478" fullinertia="5.84548e-06 9.61373e-06 1.29499e-05 3.65068e-06 -1.02616e-07 1.71331e-08" />
+          <joint name="thumb_cmc_side_joint" axis="0 0 -1" pos="0 0 0" limited="true" range="-0.79 0.9" />
+          <geom name="thumb_cmc_side_visual" mesh="Thumb_CMC_Side_URDF" material="mat_0_262745_0_282353_0_301961" pos="0.00373482 0.00298844 0.012464" />
+          <geom name="thumb_cmc_side_contact" class="thumb_cmc_side_contact" />
+          <geom name="thumb_cmc_side_bridge_contact" class="thumb_cmc_side_bridge_contact" />
+          <body name="thumb_mcp" pos="0.0399963 -0.0190516 -0.017527" quat="-0.403511350899 0.4407374251 0.557125083235 0.576663466368">
+            <inertial pos="-0.000681034 0.0215445 -0.0162457" mass="0.0171236" fullinertia="2.79847e-06 1.54917e-06 2.61115e-06 4.31731e-07 5.72294e-08 3.89179e-07" />
+            <joint name="thumb_mcp_joint" axis="-0.532844 0.0683447 0.843449" pos="0 0 0" limited="true" range="-1.57 1.57" />
+            <geom name="thumb_mcp_visual" mesh="Thumb_MCP_URDF" material="mat_0_262745_0_282353_0_301961" pos="0.0464064 -0.0114744 0.0334521" />
+            <geom name="thumb_mcp_contact" class="thumb_mcp_contact" />
+            <body name="thumb_dip" pos="-0.00993505 0.0328877 -0.00894129" quat="0.999999107319 0.000711972465475 -9.13204704454e-05 -0.00112699501548">
+              <inertial pos="-0.0012422 0.0193478 -0.0152437" mass="0.0153535" fullinertia="2.30105e-06 1.57335e-06 2.09634e-06 3.83996e-07 6.60299e-08 3.57473e-07" />
+              <joint name="thumb_dip_joint" axis="-0.532844 0.0683447 0.843449" pos="0 0 0" limited="true" range="-1.57 1.57" />
+              <geom name="thumb_dip_visual" mesh="Thumb_DIP_URDF" material="mat_0_262745_0_282353_0_301961" pos="0.0563414 -0.0443621 0.0423934" />
+              <geom name="thumb_dip_contact" class="thumb_dip_contact" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="index_mcp_abad_link" pos="-0.0331 0.08715 -0.0065" quat="0.999910947468 0 0 -0.0133453038415">
+        <inertial pos="0.000159253 0.0197001 0.00842998" mass="0.0222197" fullinertia="4.03009e-06 3.26611e-06 2.45075e-06 -1.46799e-08 6.78573e-08 2.59031e-07" />
+        <joint name="index_mcp_abad_joint" axis="0 0 -1" pos="0 0 0" limited="true" range="-0.79 0.79" />
+        <geom name="index_mcp_abad_link_visual" mesh="Finger_MCP_Yaw" material="mat_0_262745_0_282353_0_301961" pos="-0.0306 -0.0203 -0.006" />
+        <body name="index_mcp_pitch_link" pos="0.0123682 0.0238386 -0.003" quat="0.999999601242 0.000892719880664 2.38336594949e-05 6.83157738052e-14">
+          <inertial pos="-0.0126413 0.0246664 0.00129496" mass="0.0192133" fullinertia="3.15147e-06 1.55904e-06 3.41992e-06 8.95406e-08 2.96071e-08 -8.16764e-08" />
+          <joint name="index_mcp_pitch_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-1.8 0" />
+          <geom name="index_mcp_pitch_link_visual" mesh="Finger_MCP_Pitch" material="mat_0_301961_0_301961_0_301961" pos="-0.0429682 -0.0441386 -0.003" />
+          <geom name="index_mcp_flex_contact" class="mcp_flex_contact" />
+          <geom name="index_mcp_flex_joint_contact" class="mcp_flex_joint_contact" />
+          <body name="index_pip_link" pos="-0.00094743 0.0354873 -6.34058e-05" quat="0.999999954734 -0.000300778995436 -8.03010036315e-06 0">
+            <inertial pos="-0.0112551 0.0132696 -0.000739039" mass="0.00581908" fullinertia="7.71892e-07 7.98942e-07 1.24735e-06 1.04945e-07 -3.43546e-08 3.40336e-08" />
+            <joint name="index_pip_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-1.45 0" />
+            <geom name="index_pip_link_visual" mesh="Finger_PIP" material="mat_0_262745_0_282353_0_301961" pos="-0.0420208 -0.0796259 -0.00293659" />
+            <geom name="index_pip_link_contact" class="pip_link_contact" />
+            <body name="index_dip_link" pos="-0.00537911 0.0328682 -3.89616e-05" quat="0.707036801173 -0.00985524725757 0.707039398269 0.00985521105729">
+              <inertial pos="0.000380437 0.00968654 -0.00850519" mass="0.0114567" fullinertia="2.03595e-06 6.08148e-07 2.06249e-06 -8.89059e-08 7.028e-11 -1.25405e-09" />
+              <joint name="index_dip_joint" axis="0 0 1" pos="0 0 0" limited="true" range="-3.14 3.14" />
+              <geom name="index_dip_link_visual" mesh="Finger_DIP" material="mat_0_262745_0_282353_0_301961" pos="1.37822e-09 -0.033 0" />
+              <geom name="index_fingertip_contact" class="fingertip_contact" />
+              <geom name="index_pip_upper_contact" class="pip_upper_contact" />
+              <site name="index_dip_pin" pos="0.007018227081 0.009733678063 -0.01055" />
+            </body>
+          </body>
+          <body name="index_dip_linkage" pos="-0.0162626 0.0470916 0.00491515" quat="0.999999751547 -0.000704664941309 -1.88130046697e-05 3.51591829129e-14">
+            <inertial pos="0.00154845 0.016128 -0.00467179" mass="0.00161266" fullinertia="1.85154e-07 4.94859e-08 1.55131e-07 3.61565e-09 -1.81565e-09 6.8775e-08" />
+            <joint name="index_dip_linkage_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-3.14 3.14" />
+            <geom name="index_dip_linkage_visual" mesh="Finger_DIP_Linkage" material="mat_0_262745_0_282353_0_301961" pos="-0.0267056 -0.0912302 -0.00791515" />
+            <site name="index_linkage_pin" pos="-0.000881504484842 0.030712460221 -0.0120181077016" />
+          </body>
+        </body>
+      </body>
+      <body name="middle_mcp_abad_link" pos="-0.0025 0.09215 -0.0065" quat="0.999910947468 0 0 -0.0133453038415">
+        <inertial pos="0.000159253 0.0197001 0.00842998" mass="0.0222197" fullinertia="4.03009e-06 3.26611e-06 2.45075e-06 -1.46799e-08 6.78573e-08 2.59031e-07" />
+        <joint name="middle_mcp_abad_joint" axis="0 0 -1" pos="0 0 0" limited="true" range="-0.79 0.79" />
+        <geom name="middle_mcp_abad_link_visual" mesh="Finger_MCP_Yaw" material="mat_0_262745_0_282353_0_301961" pos="-0.0306 -0.0203 -0.006" />
+        <body name="middle_mcp_pitch_link" pos="0.0123682 0.0238386 -0.003" quat="0.999999601242 0.000892719880664 2.38336594949e-05 6.83157738052e-14">
+          <inertial pos="-0.0126413 0.0246664 0.00129496" mass="0.0192133" fullinertia="3.15147e-06 1.55904e-06 3.41992e-06 8.95406e-08 2.96071e-08 -8.16764e-08" />
+          <joint name="middle_mcp_pitch_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-1.8 0" />
+          <geom name="middle_mcp_pitch_link_visual" mesh="Finger_MCP_Pitch" material="mat_0_301961_0_301961_0_301961" pos="-0.0429682 -0.0441386 -0.003" />
+          <geom name="middle_mcp_flex_contact" class="mcp_flex_contact" />
+          <geom name="middle_mcp_flex_joint_contact" class="mcp_flex_joint_contact" />
+          <body name="middle_pip_link" pos="-0.00094743 0.0354873 -6.34058e-05" quat="0.999999954734 -0.000300778995436 -8.03010036315e-06 0">
+            <inertial pos="-0.0112551 0.0132696 -0.000739039" mass="0.00581908" fullinertia="7.71892e-07 7.98942e-07 1.24735e-06 1.04945e-07 -3.43546e-08 3.40336e-08" />
+            <joint name="middle_pip_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-1.45 0" />
+            <geom name="middle_pip_link_visual" mesh="Finger_PIP" material="mat_0_262745_0_282353_0_301961" pos="-0.0420208 -0.0796259 -0.00293659" />
+            <geom name="middle_pip_link_contact" class="pip_link_contact" />
+            <body name="middle_dip_link" pos="-0.00537911 0.0328682 -3.89616e-05" quat="0.707036801173 -0.00985524725757 0.707039398269 0.00985521105729">
+              <inertial pos="0.000380437 0.00968654 -0.00850519" mass="0.0114567" fullinertia="2.03595e-06 6.08148e-07 2.06249e-06 -8.89059e-08 7.028e-11 -1.25405e-09" />
+              <joint name="middle_dip_joint" axis="0 0 1" pos="0 0 0" limited="true" range="-3.14 3.14" />
+              <geom name="middle_dip_link_visual" mesh="Finger_DIP" material="mat_0_262745_0_282353_0_301961" pos="1.37822e-09 -0.033 0" />
+              <geom name="middle_fingertip_contact" class="fingertip_contact" />
+              <geom name="middle_pip_upper_contact" class="pip_upper_contact" />
+              <site name="middle_dip_pin" pos="0.007018227081 0.009733678063 -0.01055" />
+            </body>
+          </body>
+          <body name="middle_dip_linkage" pos="-0.0162626 0.0470916 0.00491515" quat="0.999999751547 -0.000704664941309 -1.88130046697e-05 3.51591829129e-14">
+            <inertial pos="0.00154845 0.016128 -0.00467179" mass="0.00161266" fullinertia="1.85154e-07 4.94859e-08 1.55131e-07 3.61565e-09 -1.81565e-09 6.8775e-08" />
+            <joint name="middle_dip_linkage_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-3.14 3.14" />
+            <geom name="middle_dip_linkage_visual" mesh="Finger_DIP_Linkage" material="mat_0_262745_0_282353_0_301961" pos="-0.0267056 -0.0912302 -0.00791515" />
+            <site name="middle_linkage_pin" pos="-0.000881504484842 0.030712460221 -0.0120181077016" />
+          </body>
+        </body>
+      </body>
+      <body name="ring_mcp_abad_link" pos="0.0281 0.08715 -0.0065" quat="0.999910947468 0 0 -0.0133453038415">
+        <inertial pos="0.000159253 0.0197001 0.00842998" mass="0.0222197" fullinertia="4.03009e-06 3.26611e-06 2.45075e-06 -1.46799e-08 6.78573e-08 2.59031e-07" />
+        <joint name="ring_mcp_abad_joint" axis="0 0 -1" pos="0 0 0" limited="true" range="-0.79 0.79" />
+        <geom name="ring_mcp_abad_link_visual" mesh="Finger_MCP_Yaw" material="mat_0_262745_0_282353_0_301961" pos="-0.0306 -0.0203 -0.006" />
+        <body name="ring_mcp_pitch_link" pos="0.0123682 0.0238386 -0.003" quat="0.999999601242 0.000892719880664 2.38336594949e-05 6.83157738052e-14">
+          <inertial pos="-0.0126413 0.0246664 0.00129496" mass="0.0192133" fullinertia="3.15147e-06 1.55904e-06 3.41992e-06 8.95406e-08 2.96071e-08 -8.16764e-08" />
+          <joint name="ring_mcp_pitch_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-1.8 0" />
+          <geom name="ring_mcp_pitch_link_visual" mesh="Finger_MCP_Pitch" material="mat_0_301961_0_301961_0_301961" pos="-0.0429682 -0.0441386 -0.003" />
+          <geom name="ring_mcp_flex_contact" class="mcp_flex_contact" />
+          <geom name="ring_mcp_flex_joint_contact" class="mcp_flex_joint_contact" />
+          <body name="ring_pip_link" pos="-0.00094743 0.0354873 -6.34058e-05" quat="0.999999954734 -0.000300778995436 -8.03010036315e-06 0">
+            <inertial pos="-0.0112551 0.0132696 -0.000739039" mass="0.00581908" fullinertia="7.71892e-07 7.98942e-07 1.24735e-06 1.04945e-07 -3.43546e-08 3.40336e-08" />
+            <joint name="ring_pip_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-1.45 0" />
+            <geom name="ring_pip_link_visual" mesh="Finger_PIP" material="mat_0_262745_0_282353_0_301961" pos="-0.0420208 -0.0796259 -0.00293659" />
+            <geom name="ring_pip_link_contact" class="pip_link_contact" />
+            <body name="ring_dip_link" pos="-0.00537911 0.0328682 -3.89616e-05" quat="0.707036801173 -0.00985524725757 0.707039398269 0.00985521105729">
+              <inertial pos="0.000380437 0.00968654 -0.00850519" mass="0.0114567" fullinertia="2.03595e-06 6.08148e-07 2.06249e-06 -8.89059e-08 7.028e-11 -1.25405e-09" />
+              <joint name="ring_dip_joint" axis="0 0 1" pos="0 0 0" limited="true" range="-3.14 3.14" />
+              <geom name="ring_dip_link_visual" mesh="Finger_DIP" material="mat_0_262745_0_282353_0_301961" pos="1.37822e-09 -0.033 0" />
+              <geom name="ring_fingertip_contact" class="fingertip_contact" />
+              <geom name="ring_pip_upper_contact" class="pip_upper_contact" />
+              <site name="ring_dip_pin" pos="0.007018227081 0.009733678063 -0.01055" />
+            </body>
+          </body>
+          <body name="ring_dip_linkage" pos="-0.0162626 0.0470916 0.00491515" quat="0.999999751547 -0.000704664941309 -1.88130046697e-05 3.51591829129e-14">
+            <inertial pos="0.00154845 0.016128 -0.00467179" mass="0.00161266" fullinertia="1.85154e-07 4.94859e-08 1.55131e-07 3.61565e-09 -1.81565e-09 6.8775e-08" />
+            <joint name="ring_dip_linkage_joint" axis="0.999644 0.0266882 0" pos="0 0 0" limited="true" range="-3.14 3.14" />
+            <geom name="ring_dip_linkage_visual" mesh="Finger_DIP_Linkage" material="mat_0_262745_0_282353_0_301961" pos="-0.0267056 -0.0912302 -0.00791515" />
+            <site name="ring_linkage_pin" pos="-0.000881504484842 0.030712460221 -0.0120181077016" />
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <contact>
+    <exclude name="palm_thumb_cmc_base_contact_exclude" body1="palm_base" body2="thumb_cmc_base" />
+    <exclude name="palm_thumb_cmc_side_contact_exclude" body1="palm_base" body2="thumb_cmc_side" />
+    <exclude name="thumb_cmc_base_side_contact_exclude" body1="thumb_cmc_base" body2="thumb_cmc_side" />
+    <exclude name="thumb_mcp_dip_contact_exclude" body1="thumb_mcp" body2="thumb_dip" />
+    <exclude name="index_mcp_pip_contact_exclude" body1="index_mcp_pitch_link" body2="index_pip_link" />
+    <exclude name="index_mcp_dip_contact_exclude" body1="index_mcp_pitch_link" body2="index_dip_link" />
+    <exclude name="index_pip_dip_contact_exclude" body1="index_pip_link" body2="index_dip_link" />
+    <exclude name="middle_mcp_pip_contact_exclude" body1="middle_mcp_pitch_link" body2="middle_pip_link" />
+    <exclude name="middle_mcp_dip_contact_exclude" body1="middle_mcp_pitch_link" body2="middle_dip_link" />
+    <exclude name="middle_pip_dip_contact_exclude" body1="middle_pip_link" body2="middle_dip_link" />
+    <exclude name="ring_mcp_pip_contact_exclude" body1="ring_mcp_pitch_link" body2="ring_pip_link" />
+    <exclude name="ring_mcp_dip_contact_exclude" body1="ring_mcp_pitch_link" body2="ring_dip_link" />
+    <exclude name="ring_pip_dip_contact_exclude" body1="ring_pip_link" body2="ring_dip_link" />
+  </contact>
+  <equality>
+    <connect name="index_dip_loop" site1="index_dip_pin" site2="index_linkage_pin" solref="0.004 1" solimp="0.95 0.99 0.001" />
+    <connect name="middle_dip_loop" site1="middle_dip_pin" site2="middle_linkage_pin" solref="0.004 1" solimp="0.95 0.99 0.001" />
+    <connect name="ring_dip_loop" site1="ring_dip_pin" site2="ring_linkage_pin" solref="0.004 1" solimp="0.95 0.99 0.001" />
+  </equality>
+  <actuator>
+    <!--Position actuators model the 13 active XM335-T323-T motors. Finger DIP and linkage joints are passive closed-loop bodies.-->
+    <position name="index_mcp_abad_joint_xm335_t323_t" joint="index_mcp_abad_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-0.79 0.79" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="index_mcp_pitch_joint_xm335_t323_t" joint="index_mcp_pitch_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.8 0" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="index_pip_joint_xm335_t323_t" joint="index_pip_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.45 0" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="middle_mcp_abad_joint_xm335_t323_t" joint="middle_mcp_abad_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-0.79 0.79" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="middle_mcp_pitch_joint_xm335_t323_t" joint="middle_mcp_pitch_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.8 0" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="middle_pip_joint_xm335_t323_t" joint="middle_pip_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.45 0" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="ring_mcp_abad_joint_xm335_t323_t" joint="ring_mcp_abad_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-0.79 0.79" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="ring_mcp_pitch_joint_xm335_t323_t" joint="ring_mcp_pitch_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.8 0" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="ring_pip_joint_xm335_t323_t" joint="ring_pip_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.45 0" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="thumb_cmc_roll_joint_xm335_t323_t" joint="thumb_cmc_roll_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="0 2.15" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="thumb_cmc_side_joint_xm335_t323_t" joint="thumb_cmc_side_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-0.79 0.9" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="thumb_mcp_joint_xm335_t323_t" joint="thumb_mcp_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.57 1.57" forcelimited="true" forcerange="-1.03 1.03" />
+    <position name="thumb_dip_joint_xm335_t323_t" joint="thumb_dip_joint" kp="6" dampratio="1" ctrllimited="true" ctrlrange="-1.57 1.57" forcelimited="true" forcerange="-1.03 1.03" />
+  </actuator>
+</mujoco>
