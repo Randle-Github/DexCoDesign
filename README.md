@@ -13,13 +13,41 @@ The upstream release supports PPO and SAC through its RL integrations. Its bundl
 
 ## Dexterous-hand assets
 
-The repository includes 15 hand families with explicit left and right entry points under [`assets/robot_hands`](assets/robot_hands). Exact upstream commits, licenses, preferred Isaac-compatible formats, derivation flags, and load paths are recorded in [`registry.json`](assets/robot_hands/registry.json). LinkerHand is intentionally excluded.
+The repository includes 14 hand families with explicit left and right entry points under [`assets/robot_hands`](assets/robot_hands). Exact upstream commits, licenses, preferred Isaac-compatible formats, derivation flags, and load paths are recorded in [`registry.json`](assets/robot_hands/registry.json). LinkerHand is intentionally excluded.
 
-Validate all 30 registered entries with:
+Validate all 28 registered entries with:
 
 ```bash
 python scripts/assets/validate_robot_hands.py
 ```
+
+## Co-design method
+
+The active method is specified in [`assets/representation.md`](assets/representation.md).
+DexCoDesign does not regress complete meshes or freely pair actuators with
+unrelated link geometry.  It compiles a versioned `HandIR` through a strict
+Design Grammar:
+
+- one morphology node is one maximal rigid functional link between adjacent
+  movable or explicitly retained semantic joint frames;
+- fixed CAD/helper links are folded into that rigid cluster, and all owned
+  visuals are transformed into its local frame and integrated as one compound
+  visual part;
+- a source motor, its transmission, its driven link contract, and its candidate
+  link meshes form one indivisible `MechanismBundle`;
+- selecting a motor therefore permits only its original source-bound candidate
+  meshes and their bounded connector-preserving deformations;
+- visual and collision geometry are generated separately;
+- morphology-specific retargeting and residual PPO evaluate each compiled hand,
+  while grammar-constrained Hybrid SAC proposes local morphology edits.
+
+The experiments under `temp/exp1` are legacy prototypes and visual diagnostics,
+not the authoritative HandIR/compiler implementation. The current executable
+Design Grammar prototype is [`temp/exp1/grammar_v1`](temp/exp1/grammar_v1). It
+enforces a maximum of five fingers, source-bound motor/link candidates,
+connected acyclic graphs, and coupled palm/finger-root transforms. Its rendered
+hands validate structure and visual assembly only; collision, inertia, hardware
+BOM validation, and Isaac Lab reload checks remain compiler work.
 
 ## Retained scope
 

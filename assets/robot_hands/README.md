@@ -25,8 +25,7 @@ Prefer native USD entries where the vendor supplies Isaac Sim assets. Otherwise 
 | Model | Preferred format | Left | Right | Source class |
 |---|---|---:|---:|---|
 | MANO Human Hand | MJCF | research | research | SPIDER physics model |
-| Ability Hand | MJCF | research | research | SPIDER physics model |
-| Meta Hand | MJCF | research | research | SPIDER physics model |
+| Ability Hand (large) | URDF | vendor | vendor | official PSYONIC |
 | Schunk SVH | MJCF | research | research | SPIDER physics model |
 | WUJI Hand 2 | URDF | vendor | vendor | official |
 | Sharpa Wave 01 | USD | vendor | vendor | official |
@@ -40,7 +39,7 @@ Prefer native USD entries where the vendor supplies Isaac Sim assets. Otherwise 
 | RUKA-v2 | URDF | reflected | vendor | official project |
 | Inspire RH56DFX | MJCF | research | research | academic model |
 
-Every row has an explicit `left` and `right` entry in `registry.json`. The four SPIDER additions use one common MJCF convention and are pinned to the same upstream commit. Existing Allegro V5, Inspire RH56DFX, and RobotEra XHAND1 entries were not duplicated with SPIDER's older or alternate copies. See `VALIDATION.md` for the checks applied to those exact entry points.
+Every row has an explicit `left` and `right` entry in `registry.json`. MANO and Schunk SVH use SPIDER's common MJCF convention and are pinned to the same upstream commit. Ability Hand uses PSYONIC's current official large left/right URDFs instead of SPIDER's older model. Existing Allegro V5, Inspire RH56DFX, and RobotEra XHAND1 entries were not duplicated with SPIDER's older or alternate copies. See `VALIDATION.md` for the checks applied to those exact entry points.
 
 ## Handedness policy
 

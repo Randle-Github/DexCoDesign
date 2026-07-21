@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="900" viewBox="0 0 1500 900">
+  <defs>
+    <style>
+      .title { font:700 38px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .h { font:700 22px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .t { font:500 17px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#334155 }
+      .s { font:500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#475569 }
+      .box { stroke-width:2.5; rx:20 }
+      .arrow { stroke:#64748b; stroke-width:4; fill:none; marker-end:url(#a) }
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+  </defs>
+  <rect width="1500" height="900" fill="#f8fafc"/>
+  <text x="750" y="60" text-anchor="middle" class="title">HandCodeV1: Exact Structure + Learned Shape</text>
+
+  <rect x="45" y="130" width="330" height="590" fill="#eff6ff" stroke="#2563eb" class="box"/>
+  <text x="210" y="180" text-anchor="middle" class="h">Exact Discrete Core</text>
+  <text x="75" y="225" class="t">• node role / node mask</text>
+  <text x="75" y="262" class="t">• canonical parent index</text>
+  <text x="75" y="299" class="t">• joint / DOF type</text>
+  <text x="75" y="336" class="t">• actuator / constraint type</text>
+  <text x="75" y="373" class="t">• digit attachment identity</text>
+  <line x1="75" y1="407" x2="345" y2="407" stroke="#93c5fd" stroke-width="2"/>
+  <text x="210" y="450" text-anchor="middle" class="h">Quantized Numeric Core</text>
+  <text x="75" y="493" class="t">• joint frames / axes / limits</text>
+  <text x="75" y="530" class="t">• fixed-node local pose</text>
+  <text x="75" y="567" class="t">• mass / COM / inertia</text>
+  <text x="75" y="604" class="t">• actuator-to-DOF map</text>
+  <text x="75" y="641" class="t">• friction / contact labels</text>
+  <text x="210" y="688" text-anchor="middle" class="s">must not be guessed from mesh latent</text>
+
+  <rect x="430" y="130" width="330" height="590" fill="#f0fdf4" stroke="#16a34a" class="box"/>
+  <text x="595" y="180" text-anchor="middle" class="h">Geometry Code per Node</text>
+  <text x="460" y="225" class="t">• primitive type / mask</text>
+  <text x="460" y="262" class="t">• local pose and size</text>
+  <text x="460" y="299" class="t">• superquadric parameters</text>
+  <text x="460" y="336" class="t">• contact-pad labels</text>
+  <line x1="460" y1="370" x2="730" y2="370" stroke="#86efac" stroke-width="2"/>
+  <text x="595" y="413" text-anchor="middle" class="h">Learned Residual Shape</text>
+  <text x="460" y="456" class="t">z_geom [Nmax, 32 or 64]</text>
+  <text x="460" y="493" class="t">• cage deformation</text>
+  <text x="460" y="530" class="t">• low-frequency SDF residual</text>
+  <text x="460" y="567" class="t">• local surface curvature</text>
+  <text x="460" y="604" class="t">• fingertip/palm pad shape</text>
+  <text x="595" y="688" text-anchor="middle" class="s">searchable, but bounded and validated</text>
+
+  <rect x="815" y="130" width="285" height="265" fill="#f5f3ff" stroke="#7c3aed" class="box"/>
+  <text x="957" y="180" text-anchor="middle" class="h">DesignCode</text>
+  <text x="845" y="225" class="t">• exact topology tokens</text>
+  <text x="845" y="262" class="t">• 16–32D z_design</text>
+  <text x="845" y="299" class="t">• local design deltas</text>
+  <text x="845" y="336" class="t">• no vertex residual</text>
+  <text x="957" y="374" text-anchor="middle" class="s">SAC / BO / task search</text>
+
+  <rect x="815" y="455" width="285" height="265" fill="#fdf4ff" stroke="#c026d3" class="box"/>
+  <text x="957" y="505" text-anchor="middle" class="h">ArchiveCode</text>
+  <text x="845" y="550" class="t">• complete HandCodeV1</text>
+  <text x="845" y="587" class="t">• quantized numeric residual</text>
+  <text x="845" y="624" class="t">• mesh hash / asset ID</text>
+  <text x="845" y="661" class="t">• optional vertex residual</text>
+  <text x="957" y="700" text-anchor="middle" class="s">near-lossless reconstruction</text>
+
+  <rect x="1160" y="235" width="295" height="380" fill="#fff7ed" stroke="#ea580c" class="box"/>
+  <text x="1307" y="286" text-anchor="middle" class="h">Structured Decoder</text>
+  <text x="1192" y="334" class="t">1. rebuild exact graph</text>
+  <text x="1192" y="373" class="t">2. decode local geometry</text>
+  <text x="1192" y="412" class="t">3. apply optional residual</text>
+  <text x="1192" y="451" class="t">4. recompute inertials</text>
+  <text x="1192" y="490" class="t">5. project to constraints</text>
+  <text x="1192" y="529" class="t">6. compile asset</text>
+  <text x="1307" y="580" text-anchor="middle" class="s">same decoder, two code modes</text>
+
+  <path d="M375 425 H430" class="arrow"/>
+  <path d="M760 265 H815" class="arrow"/>
+  <path d="M760 585 H815" class="arrow"/>
+  <path d="M1100 265 C1130 265 1130 360 1160 360" class="arrow"/>
+  <path d="M1100 585 C1130 585 1130 490 1160 490" class="arrow"/>
+
+  <rect x="280" y="785" width="940" height="72" fill="#e2e8f0" stroke="#64748b" class="box"/>
+  <text x="750" y="831" text-anchor="middle" class="h">Do not force archive fidelity and low-dimensional search into one black-box vector</text>
+</svg>

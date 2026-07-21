@@ -13,32 +13,69 @@
       "reliability": "Physics-ready bilateral MANO approximation maintained by the SPIDER research project",
       "note": "This is SPIDER's articulated rigid-body approximation of MANO, not the registration-gated official MANO parameter files.",
       "entries": {
-        "left": {"format": "mjcf", "path": "mano/source/left.xml", "derived": false},
-        "right": {"format": "mjcf", "path": "mano/source/right.xml", "derived": false}
+        "left": {
+          "format": "mjcf",
+          "path": "mano/source/left.canonical.xml",
+          "derived": false,
+          "source_path": "mano/source/left.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.0,
+            -0.707106781187
+          ]
+        },
+        "right": {
+          "format": "mjcf",
+          "path": "mano/source/right.canonical.xml",
+          "derived": false,
+          "source_path": "mano/source/right.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.0,
+            0.707106781187
+          ]
+        }
       }
     },
     "ability_hand": {
       "display_name": "Ability Hand",
-      "source": "https://github.com/facebookresearch/spider",
-      "commit": "71238456bf97a7eeb3d0471aa31974e2d404d4ae",
-      "license": "CC-BY-NC-4.0",
-      "official": false,
-      "reliability": "Bilateral physics model distributed and exercised by the SPIDER research project",
+      "source": "https://github.com/psyonicinc/ability-hand-api",
+      "commit": "34c9a9324d3739d976e6de441e56ccefafd0000b",
+      "license": "MIT",
+      "official": true,
+      "reliability": "Official PSYONIC bilateral large-hand URDF with inertias, convex collision meshes, joint limits, and coupled finger joints",
+      "note": "Uses PSYONIC's current large left/right models. Each finger's second joint is mechanically coupled to its first joint through the official URDF mimic relation.",
       "entries": {
-        "left": {"format": "mjcf", "path": "ability_hand/source/left.xml", "derived": false},
-        "right": {"format": "mjcf", "path": "ability_hand/source/right.xml", "derived": false}
-      }
-    },
-    "meta_hand": {
-      "display_name": "Meta Hand",
-      "source": "https://github.com/facebookresearch/spider",
-      "commit": "71238456bf97a7eeb3d0471aa31974e2d404d4ae",
-      "license": "CC-BY-NC-4.0",
-      "official": false,
-      "reliability": "Bilateral physics model distributed and exercised by the SPIDER research project",
-      "entries": {
-        "left": {"format": "mjcf", "path": "meta_hand/source/left.xml", "derived": false},
-        "right": {"format": "mjcf", "path": "meta_hand/source/right.xml", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "ability_hand/source/left.canonical.urdf",
+          "derived": false,
+          "source_path": "ability_hand/source/left.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "ability_hand/source/right.canonical.urdf",
+          "derived": false,
+          "source_path": "ability_hand/source/right.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
       }
     },
     "schunk_svh": {
@@ -49,8 +86,32 @@
       "official": false,
       "reliability": "Bilateral physics model distributed and exercised by the SPIDER research project",
       "entries": {
-        "left": {"format": "mjcf", "path": "schunk_svh/source/left.xml", "derived": false},
-        "right": {"format": "mjcf", "path": "schunk_svh/source/right.xml", "derived": false}
+        "left": {
+          "format": "mjcf",
+          "path": "schunk_svh/source/left.canonical.xml",
+          "derived": false,
+          "source_path": "schunk_svh/source/left.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "right": {
+          "format": "mjcf",
+          "path": "schunk_svh/source/right.canonical.xml",
+          "derived": false,
+          "source_path": "schunk_svh/source/right.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
       }
     },
     "wuji_hand_2": {
@@ -61,8 +122,32 @@
       "official": true,
       "note": "The official native USD is retained under source/, but its fingertip visual references are unresolved upstream. The official URDF is the preferred clean import path.",
       "entries": {
-        "left": {"format": "urdf", "path": "wuji_hand_2/source/body/urdf/left.urdf", "derived": false},
-        "right": {"format": "urdf", "path": "wuji_hand_2/source/body/urdf/right.urdf", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "wuji_hand_2/source/body/urdf/left.canonical.urdf",
+          "derived": false,
+          "source_path": "wuji_hand_2/source/body/urdf/left.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "wuji_hand_2/source/body/urdf/right.canonical.urdf",
+          "derived": false,
+          "source_path": "wuji_hand_2/source/body/urdf/right.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        }
       }
     },
     "sharpa_wave_01": {
@@ -73,8 +158,32 @@
       "license": "Apache-2.0",
       "official": true,
       "entries": {
-        "left": {"format": "usd", "path": "sharpa_wave_01/source/left_sharpa_wave/left_sharpa_wave/left_sharpa_wave.usd", "derived": false},
-        "right": {"format": "usd", "path": "sharpa_wave_01/source/right_sharpa_wave/right_sharpa_wave/right_sharpa_wave.usd", "derived": false}
+        "left": {
+          "format": "usd",
+          "path": "sharpa_wave_01/source/left_sharpa_wave/left_sharpa_wave/left_sharpa_wave.canonical.usda",
+          "derived": false,
+          "source_path": "sharpa_wave_01/source/left_sharpa_wave/left_sharpa_wave/left_sharpa_wave.usd",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        },
+        "right": {
+          "format": "usd",
+          "path": "sharpa_wave_01/source/right_sharpa_wave/right_sharpa_wave/right_sharpa_wave.canonical.usda",
+          "derived": false,
+          "source_path": "sharpa_wave_01/source/right_sharpa_wave/right_sharpa_wave/right_sharpa_wave.usd",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        }
       }
     },
     "tesollo_dg5f": {
@@ -84,8 +193,32 @@
       "license": "BSD-3-Clause",
       "official": true,
       "entries": {
-        "left": {"format": "usd", "path": "tesollo_dg5f/source/dg5f/usd/dg5f_left/dg5f_left.usd", "derived": false},
-        "right": {"format": "usd", "path": "tesollo_dg5f/source/dg5f/usd/dg5f_right/dg5f_right.usd", "derived": false}
+        "left": {
+          "format": "usd",
+          "path": "tesollo_dg5f/source/dg5f/usd/dg5f_left/dg5f_left.canonical.usda",
+          "derived": false,
+          "source_path": "tesollo_dg5f/source/dg5f/usd/dg5f_left/dg5f_left.usd",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        },
+        "right": {
+          "format": "usd",
+          "path": "tesollo_dg5f/source/dg5f/usd/dg5f_right/dg5f_right.canonical.usda",
+          "derived": false,
+          "source_path": "tesollo_dg5f/source/dg5f/usd/dg5f_right/dg5f_right.usd",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        }
       }
     },
     "unitree_dex5_1": {
@@ -95,8 +228,32 @@
       "license": "BSD-3-Clause",
       "official": true,
       "entries": {
-        "left": {"format": "urdf", "path": "unitree_dex5_1/models/left.urdf", "derived": false},
-        "right": {"format": "urdf", "path": "unitree_dex5_1/models/right.urdf", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "unitree_dex5_1/models/left.canonical.urdf",
+          "derived": false,
+          "source_path": "unitree_dex5_1/models/left.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.707106781187,
+            0.0
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "unitree_dex5_1/models/right.canonical.urdf",
+          "derived": false,
+          "source_path": "unitree_dex5_1/models/right.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.707106781187,
+            0.0,
+            0.0,
+            0.707106781187
+          ]
+        }
       }
     },
     "robotera_xhand1": {
@@ -107,8 +264,32 @@
       "official": true,
       "note": "Standalone hand trees extracted without geometry changes from the official STAR1 whole-body URDF.",
       "entries": {
-        "left": {"format": "urdf", "path": "robotera_xhand1/models/left.urdf", "derived": true},
-        "right": {"format": "urdf", "path": "robotera_xhand1/models/right.urdf", "derived": true}
+        "left": {
+          "format": "urdf",
+          "path": "robotera_xhand1/models/left.canonical.urdf",
+          "derived": true,
+          "source_path": "robotera_xhand1/models/left.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "robotera_xhand1/models/right.canonical.urdf",
+          "derived": true,
+          "source_path": "robotera_xhand1/models/right.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
       }
     },
     "orca_hand_v2": {
@@ -118,8 +299,32 @@
       "license": "MIT",
       "official": true,
       "entries": {
-        "left": {"format": "urdf", "path": "orca_hand_v2/models/left.urdf", "derived": false},
-        "right": {"format": "urdf", "path": "orca_hand_v2/models/right.urdf", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "orca_hand_v2/models/left.canonical.urdf",
+          "derived": false,
+          "source_path": "orca_hand_v2/models/left.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.707106781187,
+            0.0
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "orca_hand_v2/models/right.canonical.urdf",
+          "derived": false,
+          "source_path": "orca_hand_v2/models/right.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.707106781187,
+            0.0
+          ]
+        }
       }
     },
     "shadow_hand_e": {
@@ -129,8 +334,32 @@
       "license": "BSD-3-Clause",
       "official": true,
       "entries": {
-        "left": {"format": "mjcf", "path": "shadow_hand_e/source/mujoco_models/sr_hand_e_left_environment.xml", "derived": false},
-        "right": {"format": "mjcf", "path": "shadow_hand_e/source/mujoco_models/sr_hand_e_environment.xml", "derived": false}
+        "left": {
+          "format": "mjcf",
+          "path": "shadow_hand_e/source/mujoco_models/sr_hand_e_left_environment.canonical.xml",
+          "derived": false,
+          "source_path": "shadow_hand_e/source/mujoco_models/sr_hand_e_left_environment.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "right": {
+          "format": "mjcf",
+          "path": "shadow_hand_e/source/mujoco_models/sr_hand_e_environment.canonical.xml",
+          "derived": false,
+          "source_path": "shadow_hand_e/source/mujoco_models/sr_hand_e_environment.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
       }
     },
     "allegro_hand_v5": {
@@ -141,8 +370,32 @@
       "license": "MIT",
       "official": true,
       "entries": {
-        "left": {"format": "urdf", "path": "allegro_hand_v5/models/left.urdf", "derived": false},
-        "right": {"format": "urdf", "path": "allegro_hand_v5/models/right.urdf", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "allegro_hand_v5/models/left.canonical.urdf",
+          "derived": false,
+          "source_path": "allegro_hand_v5/models/left.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "allegro_hand_v5/models/right.canonical.urdf",
+          "derived": false,
+          "source_path": "allegro_hand_v5/models/right.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        }
       }
     },
     "midas_hand": {
@@ -153,8 +406,32 @@
       "official": true,
       "note": "Upstream publishes one geometry side. The left entry is a deterministic reflection across the palm lateral X axis.",
       "entries": {
-        "left": {"format": "urdf", "path": "midas_hand/models/left/hand.urdf", "derived": true},
-        "right": {"format": "urdf", "path": "midas_hand/models/right/hand.urdf", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "midas_hand/models/left/hand.canonical.urdf",
+          "derived": true,
+          "source_path": "midas_hand/models/left/hand.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.707106781187,
+            0.0
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "midas_hand/models/right/hand.canonical.urdf",
+          "derived": false,
+          "source_path": "midas_hand/models/right/hand.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.707106781187,
+            0.707106781187,
+            0.0
+          ]
+        }
       }
     },
     "ruka_v2": {
@@ -165,8 +442,32 @@
       "official": true,
       "note": "Upstream publishes one simulation geometry side. The left entry is a deterministic reflection across the palm lateral X axis.",
       "entries": {
-        "left": {"format": "urdf", "path": "ruka_v2/models/left/hand.urdf", "derived": true},
-        "right": {"format": "urdf", "path": "ruka_v2/models/right/hand.urdf", "derived": false}
+        "left": {
+          "format": "urdf",
+          "path": "ruka_v2/models/left/hand.canonical.urdf",
+          "derived": true,
+          "source_path": "ruka_v2/models/left/hand.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "right": {
+          "format": "urdf",
+          "path": "ruka_v2/models/right/hand.canonical.urdf",
+          "derived": false,
+          "source_path": "ruka_v2/models/right/hand.urdf",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
       }
     },
     "inspire_rh56dfx": {
@@ -177,9 +478,39 @@
       "official": false,
       "reliability": "CU Boulder research model with reported sim-to-real validation",
       "entries": {
-        "left": {"format": "mjcf", "path": "inspire_rh56dfx/source/inspire/inspire_left.xml", "derived": false},
-        "right": {"format": "mjcf", "path": "inspire_rh56dfx/source/inspire/inspire_right.xml", "derived": false}
+        "left": {
+          "format": "mjcf",
+          "path": "inspire_rh56dfx/source/inspire/inspire_left.canonical.xml",
+          "derived": false,
+          "source_path": "inspire_rh56dfx/source/inspire/inspire_left.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        },
+        "right": {
+          "format": "mjcf",
+          "path": "inspire_rh56dfx/source/inspire/inspire_right.canonical.xml",
+          "derived": false,
+          "source_path": "inspire_rh56dfx/source/inspire/inspire_right.xml",
+          "canonicalized": true,
+          "canonical_rotation_xyzw": [
+            0.0,
+            0.0,
+            0.707106781187,
+            -0.707106781187
+          ]
+        }
       }
     }
-  }
+  },
+  "canonical_frame": {
+    "+x": "right-hand thumb side; left-hand little-finger side",
+    "+y": "common palm normal for left and right hands",
+    "+z": "non-thumb proximal-link direction at q=0"
+  },
+  "default_joint_position": 0.0
 }

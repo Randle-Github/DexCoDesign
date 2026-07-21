@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="850" viewBox="0 0 1600 850">
+  <defs>
+    <style>
+      .title { font: 700 38px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .h { font: 700 23px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .t { font: 500 18px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#334155 }
+      .s { font: 500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#475569 }
+      .box { stroke-width:2.5; rx:20 }
+      .arrow { stroke:#64748b; stroke-width:4; fill:none; marker-end:url(#arrow) }
+      .dash { stroke:#7c3aed; stroke-width:4; stroke-dasharray:12 10; fill:none; marker-end:url(#purpleArrow) }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker>
+    <marker id="purpleArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/></marker>
+  </defs>
+  <rect width="1600" height="850" fill="#f8fafc"/>
+  <text x="800" y="62" text-anchor="middle" class="title">DexCoDesign: Reversible Morphology Codec</text>
+
+  <rect x="45" y="150" width="235" height="190" fill="#e0f2fe" stroke="#0284c7" class="box"/>
+  <text x="162" y="195" text-anchor="middle" class="h">Source Assets</text>
+  <text x="162" y="235" text-anchor="middle" class="t">URDF / MJCF / USD</text>
+  <text x="162" y="268" text-anchor="middle" class="t">visual &amp; collision mesh</text>
+  <text x="162" y="301" text-anchor="middle" class="t">actuator / tendon / mimic</text>
+
+  <rect x="345" y="150" width="250" height="190" fill="#dcfce7" stroke="#16a34a" class="box"/>
+  <text x="470" y="195" text-anchor="middle" class="h">Deterministic Frontend</text>
+  <text x="470" y="235" text-anchor="middle" class="t">parse + unit conversion</text>
+  <text x="470" y="268" text-anchor="middle" class="t">canonical frame &amp; ordering</text>
+  <text x="470" y="301" text-anchor="middle" class="t">semantic audit</text>
+
+  <rect x="660" y="125" width="280" height="240" fill="#fef3c7" stroke="#d97706" class="box"/>
+  <text x="800" y="172" text-anchor="middle" class="h">Complete HandIR / FHSG</text>
+  <text x="800" y="213" text-anchor="middle" class="t">node + kinematic edge</text>
+  <text x="800" y="246" text-anchor="middle" class="t">DOF + actuator + constraint</text>
+  <text x="800" y="279" text-anchor="middle" class="t">compound geometry per node</text>
+  <text x="800" y="312" text-anchor="middle" class="t">mass / COM / inertia / contact</text>
+  <text x="800" y="342" text-anchor="middle" class="s">authoritative representation</text>
+
+  <rect x="1005" y="150" width="235" height="190" fill="#ede9fe" stroke="#7c3aed" class="box"/>
+  <text x="1122" y="195" text-anchor="middle" class="h">Neural Encoder</text>
+  <text x="1122" y="235" text-anchor="middle" class="t">Graph Transformer</text>
+  <text x="1122" y="268" text-anchor="middle" class="t">per-node shape encoder</text>
+  <text x="1122" y="301" text-anchor="middle" class="t">task / physics predictor</text>
+
+  <rect x="1305" y="105" width="250" height="150" fill="#fae8ff" stroke="#c026d3" class="box"/>
+  <text x="1430" y="150" text-anchor="middle" class="h">ArchiveCode</text>
+  <text x="1430" y="188" text-anchor="middle" class="t">exact tokens + latent</text>
+  <text x="1430" y="218" text-anchor="middle" class="t">+ hash / residual</text>
+
+  <rect x="1305" y="285" width="250" height="150" fill="#f3e8ff" stroke="#9333ea" class="box"/>
+  <text x="1430" y="330" text-anchor="middle" class="h">DesignCode</text>
+  <text x="1430" y="368" text-anchor="middle" class="t">exact topology tokens</text>
+  <text x="1430" y="398" text-anchor="middle" class="t">+ 16–32D searchable latent</text>
+
+  <path d="M280 245 H345" class="arrow"/>
+  <path d="M595 245 H660" class="arrow"/>
+  <path d="M940 245 H1005" class="arrow"/>
+  <path d="M1240 205 C1270 205 1270 180 1305 180" class="arrow"/>
+  <path d="M1240 285 C1270 285 1270 360 1305 360" class="arrow"/>
+
+  <rect x="560" y="520" width="360" height="195" fill="#fff7ed" stroke="#ea580c" class="box"/>
+  <text x="740" y="567" text-anchor="middle" class="h">Structured Decoder + Projection</text>
+  <text x="740" y="608" text-anchor="middle" class="t">grammar-valid graph generation</text>
+  <text x="740" y="641" text-anchor="middle" class="t">joint / geometry / inertia checks</text>
+  <text x="740" y="674" text-anchor="middle" class="t">deterministic asset compiler</text>
+
+  <rect x="1005" y="520" width="315" height="195" fill="#e2e8f0" stroke="#475569" class="box"/>
+  <text x="1162" y="567" text-anchor="middle" class="h">Executable Hand</text>
+  <text x="1162" y="608" text-anchor="middle" class="t">URDF / USD / MJCF</text>
+  <text x="1162" y="641" text-anchor="middle" class="t">Isaac Lab articulation</text>
+  <text x="1162" y="674" text-anchor="middle" class="t">visual mesh + collision proxy</text>
+
+  <rect x="45" y="540" width="330" height="155" fill="#ede9fe" stroke="#7c3aed" class="box"/>
+  <text x="210" y="588" text-anchor="middle" class="h">Morphology Hybrid SAC</text>
+  <text x="210" y="628" text-anchor="middle" class="t">categorical topology operation</text>
+  <text x="210" y="661" text-anchor="middle" class="t">+ continuous design delta</text>
+
+  <path d="M1430 435 C1430 480 930 470 920 565" class="arrow"/>
+  <path d="M920 618 H1005" class="arrow"/>
+  <path d="M375 618 H560" class="dash"/>
+  <path d="M1005 700 C850 805 355 790 250 695" class="dash"/>
+  <text x="637" y="808" text-anchor="middle" class="t" fill="#7c3aed">task reward, constraints and replay data</text>
+</svg>

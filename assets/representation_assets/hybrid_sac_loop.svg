@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940">
+  <defs>
+    <style>
+      .title { font:700 38px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .h { font:700 22px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .t { font:500 17px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#334155 }
+      .s { font:500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#475569 }
+      .box { stroke-width:2.5; rx:20 }
+      .arrow { stroke:#64748b; stroke-width:4; fill:none; marker-end:url(#a) }
+      .learn { stroke:#7c3aed; stroke-width:4; fill:none; stroke-dasharray:12 9; marker-end:url(#p) }
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7c3aed"/></marker>
+  </defs>
+  <rect width="1600" height="940" fill="#f8fafc"/>
+  <text x="800" y="58" text-anchor="middle" class="title">Sample-Efficient Morphology Search with Hybrid SAC</text>
+
+  <rect x="50" y="135" width="285" height="210" fill="#e0f2fe" stroke="#0284c7" class="box"/>
+  <text x="192" y="183" text-anchor="middle" class="h">Design State s_t</text>
+  <text x="80" y="226" class="t">• current z_design: 16–32D</text>
+  <text x="80" y="260" class="t">• exact topology summary</text>
+  <text x="80" y="294" class="t">• task + performance</text>
+  <text x="80" y="328" class="t">• mass / volume / budget</text>
+
+  <rect x="405" y="105" width="310" height="270" fill="#ede9fe" stroke="#7c3aed" class="box"/>
+  <text x="560" y="153" text-anchor="middle" class="h">Hybrid SAC Actor</text>
+  <rect x="435" y="185" width="250" height="70" fill="#f5f3ff" stroke="#8b5cf6" rx="14"/>
+  <text x="560" y="215" text-anchor="middle" class="t">Categorical πd</text>
+  <text x="560" y="241" text-anchor="middle" class="s">one topology operation</text>
+  <rect x="435" y="278" width="250" height="70" fill="#f5f3ff" stroke="#8b5cf6" rx="14"/>
+  <text x="560" y="308" text-anchor="middle" class="t">Gaussian πc</text>
+  <text x="560" y="334" text-anchor="middle" class="s">continuous local delta</text>
+
+  <rect x="785" y="105" width="315" height="270" fill="#dcfce7" stroke="#16a34a" class="box"/>
+  <text x="942" y="153" text-anchor="middle" class="h">Legal Design Executor</text>
+  <text x="815" y="199" class="t">1. invalid-operation mask</text>
+  <text x="815" y="235" class="t">2. graph grammar mutation</text>
+  <text x="815" y="271" class="t">3. parameter projection</text>
+  <text x="815" y="307" class="t">4. geometry/inertia checks</text>
+  <text x="815" y="343" class="t">5. emit executed action</text>
+
+  <rect x="1170" y="135" width="380" height="210" fill="#fff7ed" stroke="#ea580c" class="box"/>
+  <text x="1360" y="183" text-anchor="middle" class="h">Compile + Evaluate</text>
+  <text x="1200" y="226" class="t">• build/cache Isaac Lab asset</text>
+  <text x="1200" y="260" class="t">• frozen cross-embodied controller</text>
+  <text x="1200" y="294" class="t">• common object/random seeds</text>
+  <text x="1200" y="328" class="t">• task and constraint metrics</text>
+
+  <path d="M335 240 H405" class="arrow"/>
+  <path d="M715 240 H785" class="arrow"/>
+  <path d="M1100 240 H1170" class="arrow"/>
+
+  <rect x="70" y="465" width="365" height="270" fill="#fef3c7" stroke="#d97706" class="box"/>
+  <text x="252" y="513" text-anchor="middle" class="h">Topology Operation aᵈ</text>
+  <text x="100" y="558" class="t">add/remove digit or terminal link</text>
+  <text x="100" y="594" class="t">add/remove DOF</text>
+  <text x="100" y="630" class="t">split/merge safe fixed palm node</text>
+  <text x="100" y="666" class="t">reattach digit to palm/carpal node</text>
+  <text x="252" y="708" text-anchor="middle" class="s">never output raw adjacency matrix</text>
+
+  <rect x="485" y="465" width="365" height="270" fill="#fae8ff" stroke="#c026d3" class="box"/>
+  <text x="667" y="513" text-anchor="middle" class="h">Continuous Delta aᶜ</text>
+  <text x="515" y="558" class="t">link / palm / mount dimensions</text>
+  <text x="515" y="594" class="t">digit attachment and joint limits</text>
+  <text x="515" y="630" class="t">motor size and actuator parameters</text>
+  <text x="515" y="666" class="t">bounded geometry latent delta</text>
+  <text x="667" y="708" text-anchor="middle" class="s">local modification, not full HandCode</text>
+
+  <rect x="900" y="465" width="300" height="270" fill="#eff6ff" stroke="#2563eb" class="box"/>
+  <text x="1050" y="513" text-anchor="middle" class="h">Replay Transition</text>
+  <text x="930" y="558" class="t">current HandCode</text>
+  <text x="930" y="594" class="t">executed aᵈ and aᶜ</text>
+  <text x="930" y="630" class="t">next HandCode</text>
+  <text x="930" y="666" class="t">reward + constraint costs</text>
+  <text x="1050" y="708" text-anchor="middle" class="s">store post-projection action</text>
+
+  <rect x="1250" y="465" width="300" height="270" fill="#f5f3ff" stroke="#7c3aed" class="box"/>
+  <text x="1400" y="513" text-anchor="middle" class="h">Twin Critics + Entropy</text>
+  <text x="1280" y="558" class="t">Q₁(s,aᵈ,aᶜ)</text>
+  <text x="1280" y="594" class="t">Q₂(s,aᵈ,aᶜ)</text>
+  <text x="1280" y="630" class="t">exact sum over small aᵈ set</text>
+  <text x="1280" y="666" class="t">reparameterize continuous aᶜ</text>
+  <text x="1400" y="708" text-anchor="middle" class="s">off-policy reuse of design trials</text>
+
+  <path d="M510 375 C500 410 350 415 280 465" class="arrow"/>
+  <path d="M610 375 C620 410 650 420 667 465" class="arrow"/>
+  <path d="M1360 345 C1360 405 1130 420 1090 465" class="arrow"/>
+  <path d="M1200 600 H1250" class="arrow"/>
+  <path d="M1400 735 C1400 850 515 875 245 735" class="learn"/>
+  <text x="820" y="875" text-anchor="middle" class="h" fill="#7c3aed">replay update → next legal morphology proposal</text>
+
+  <rect x="70" y="785" width="540" height="70" fill="#fee2e2" stroke="#dc2626" class="box"/>
+  <text x="340" y="828" text-anchor="middle" class="t">One SAC step = one morphology mutation + one evaluation</text>
+</svg>

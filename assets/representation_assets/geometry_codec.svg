@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      .title { font:700 38px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .h { font:700 22px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#172033 }
+      .t { font:500 17px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#334155 }
+      .s { font:500 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:#475569 }
+      .box { stroke-width:2.5; rx:20 }
+      .arrow { stroke:#64748b; stroke-width:4; fill:none; marker-end:url(#a) }
+      .feedback { stroke:#dc2626; stroke-width:3.5; fill:none; stroke-dasharray:10 8; marker-end:url(#r) }
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <text x="800" y="60" text-anchor="middle" class="title">Per-Node Geometry Codec: Fidelity Without Vertex-Space Search</text>
+
+  <rect x="45" y="155" width="250" height="210" fill="#e0f2fe" stroke="#0284c7" class="box"/>
+  <text x="170" y="205" text-anchor="middle" class="h">Source Link Mesh</text>
+  <text x="170" y="247" text-anchor="middle" class="t">joint-local frame</text>
+  <text x="170" y="280" text-anchor="middle" class="t">visual + collision</text>
+  <text x="170" y="313" text-anchor="middle" class="t">contact labels</text>
+  <text x="170" y="344" text-anchor="middle" class="s">mesh order is not semantic</text>
+
+  <rect x="355" y="155" width="275" height="210" fill="#ecfccb" stroke="#65a30d" class="box"/>
+  <text x="492" y="205" text-anchor="middle" class="h">Canonical Samples</text>
+  <text x="492" y="247" text-anchor="middle" class="t">surface points + normals</text>
+  <text x="492" y="280" text-anchor="middle" class="t">SDF / occupancy samples</text>
+  <text x="492" y="313" text-anchor="middle" class="t">contact-critical weights</text>
+  <text x="492" y="344" text-anchor="middle" class="s">sample at q=0 and selected q</text>
+
+  <rect x="690" y="155" width="255" height="210" fill="#ede9fe" stroke="#7c3aed" class="box"/>
+  <text x="817" y="205" text-anchor="middle" class="h">Geometry Encoder</text>
+  <text x="817" y="247" text-anchor="middle" class="t">Point Transformer</text>
+  <text x="817" y="280" text-anchor="middle" class="t">or sparse SDF encoder</text>
+  <text x="817" y="313" text-anchor="middle" class="t">z_geom: 32–64D/node</text>
+  <text x="817" y="344" text-anchor="middle" class="s">plus primitive initialization</text>
+
+  <rect x="1005" y="105" width="260" height="180" fill="#fef3c7" stroke="#d97706" class="box"/>
+  <text x="1135" y="153" text-anchor="middle" class="h">Analytic Base</text>
+  <text x="1135" y="193" text-anchor="middle" class="t">box / capsule / cylinder</text>
+  <text x="1135" y="226" text-anchor="middle" class="t">ellipsoid / superquadric</text>
+  <text x="1135" y="258" text-anchor="middle" class="s">pose + size + type mask</text>
+
+  <rect x="1005" y="325" width="260" height="180" fill="#fae8ff" stroke="#c026d3" class="box"/>
+  <text x="1135" y="373" text-anchor="middle" class="h">Residual Surface</text>
+  <text x="1135" y="413" text-anchor="middle" class="t">cage deformation</text>
+  <text x="1135" y="446" text-anchor="middle" class="t">low-frequency SDF</text>
+  <text x="1135" y="478" text-anchor="middle" class="s">no unconstrained vertex noise</text>
+
+  <rect x="1325" y="105" width="230" height="210" fill="#eff6ff" stroke="#2563eb" class="box"/>
+  <text x="1440" y="153" text-anchor="middle" class="h">Visual Decoder</text>
+  <text x="1440" y="196" text-anchor="middle" class="t">high-fidelity surface</text>
+  <text x="1440" y="229" text-anchor="middle" class="t">mesh / manufacturing</text>
+  <text x="1440" y="262" text-anchor="middle" class="t">optional archive residual</text>
+  <text x="1440" y="294" text-anchor="middle" class="s">appearance and fabrication</text>
+
+  <rect x="1325" y="375" width="230" height="210" fill="#f0fdf4" stroke="#16a34a" class="box"/>
+  <text x="1440" y="423" text-anchor="middle" class="h">Physics Decoder</text>
+  <text x="1440" y="466" text-anchor="middle" class="t">compound primitives</text>
+  <text x="1440" y="499" text-anchor="middle" class="t">or convex decomposition</text>
+  <text x="1440" y="532" text-anchor="middle" class="t">PhysX-safe collision</text>
+  <text x="1440" y="564" text-anchor="middle" class="s">contact and runtime</text>
+
+  <path d="M295 260 H355" class="arrow"/>
+  <path d="M630 260 H690" class="arrow"/>
+  <path d="M945 230 C975 230 975 195 1005 195" class="arrow"/>
+  <path d="M945 290 C975 290 975 415 1005 415" class="arrow"/>
+  <path d="M1265 195 H1325" class="arrow"/>
+  <path d="M1265 415 C1295 415 1295 480 1325 480" class="arrow"/>
+
+  <rect x="190" y="650" width="1220" height="165" fill="#fff7ed" stroke="#ea580c" class="box"/>
+  <text x="800" y="695" text-anchor="middle" class="h">Validation: geometry is accepted only if function is preserved</text>
+  <text x="250" y="742" class="t">bidirectional surface distance</text>
+  <text x="590" y="742" class="t">contact coverage &amp; normals</text>
+  <text x="930" y="742" class="t">mass / COM / inertia</text>
+  <text x="1190" y="742" class="t">FK / clearance / self-collision</text>
+  <text x="800" y="786" text-anchor="middle" class="s">visual similarity alone is not a pass condition</text>
+  <path d="M1440 585 C1440 625 1380 625 1365 650" class="feedback"/>
+  <path d="M205 650 C120 600 120 410 170 365" class="feedback"/>
+</svg>
