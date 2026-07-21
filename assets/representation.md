@@ -32,11 +32,15 @@ human trajectory
 6. visual mesh 与 collision geometry 分离。
 7. graph 先于 mesh 存在；compiler 必须从 root/base 沿 graph 向 fingertip 逐 node 装配。
 8. 每个 joint/motor instance 都有显式 `allowed_link_candidate_ids`，不能从全局 mesh 库任意采样。
-9. link replacement 只替换当前 rigid link；绝不能平移、删除或整体替换它的 child subtree。
-10. 离散结构合法性由 Design Grammar 保证，不依赖 reward 学会。
-11. 第一版固定 topology，只搜索有界连续参数；稳定后才开放 topology edit。
-12. 每种 morphology 使用独立 residual PPO checkpoint；parent-to-child 只做初始化迁移。
-13. 全局最多 5 根 active finger；任何 grammar action 都不能创建第 6 根手指。
+9. 每个 HandIR 具有唯一 `seed_source`；palm、motor、link、tip 和全部 visual mesh 的
+   `source_hand_id` 必须等于它。跨手 candidate、跨手 bundle 和跨手 mesh crossover 全部禁止。
+10. thumb/index/middle/ring/pinky 的 source bundle 和循环顺序锁定；attachment pose 可随 palm
+    做保持循环顺序的连续变化，但任何两根手指不得交叉换位。同一只手内部也不允许 bundle 重排或复制。
+11. link replacement 只替换当前 rigid link；绝不能平移、删除或整体替换它的 child subtree。
+12. 离散结构合法性由 Design Grammar 保证，不依赖 reward 学会。
+13. 第一版固定 topology，只搜索有界连续参数；稳定后才开放 topology edit。
+14. 每种 morphology 使用独立 residual PPO checkpoint；parent-to-child 只做初始化迁移。
+15. 全局最多 5 根 active finger；任何 grammar action 都不能创建第 6 根手指。
 
 ---
 
@@ -187,6 +191,10 @@ ActuationMap:
 
 它们不参与 link candidate 选择，不允许改变 parent/child，也不允许触发“完整 digit bundle 替换”。
 控制器或物理 compiler 后续再读取 actuation mapping。
+
+此外，tendon/underactuated source 的 wrist、掌下 actuator/transmission platform、非 digit base branch
+和 proximal transmission housing 属于 protected hardware。它们必须以 source pose、source scale 和
+identity mesh transform 原样编译；当前 morphology search 不得改变这部分的 mesh 或 joint frame。
 
 ---
 
@@ -655,9 +663,14 @@ actuation metadata。
 ### 17.1 当前实现
 
 - 保留 source graph 的 palm、base、掌内活动 joint 和 digit topology；
-- 第一版不增加第 5 指，始终执行最多 5 指；
+- finger count、digit topology、thumb/normal-finger identity 与循环顺序复制 source；
+- palm 和 finger-base pose 可以连续变化，但不得改变 source cyclic order；
 - 每个 motor instance 具有显式 `allowed_candidate_ids`；
-- mixed design 只替换当前 rigid link，不搬运 donor digit bundle；
+- 每个 generated hand 绑定唯一 `seed_source`，所有 palm/finger mesh 都来自该 source；
+- 禁止跨手 replacement，也禁止同一 source 内的 finger bundle 重排；
+- finger mesh edit 只包含轴向 length scale 与横向 radius scale；palm 仍使用受限、保拓扑形变；
+- 非 digit base/transmission branch 原样加入 HandIR；tendon/underactuated hand 的 root、base 和
+  proximal transmission housing 使用 identity transform 锁定；
 - `template_to_link_pose` 只配准当前 mesh，child joint/subtree 不随之平移；
 - 若 source exporter 把 palm shell 挂在 digit-root body，该 carrier mesh 被保护；
 - link length/radius 可做有界变化，graph attachment 从 base 向外重新计算。
@@ -666,20 +679,25 @@ actuation metadata。
 
 ```text
 14 source hands
-359 source link records
-216 replaceable rigid-link candidates
-19 provisional motor/interface families
 100 generated hands
 finger count: 4–5
-DoF: 10–25
+DoF: 10–20（包含保留的 platform DoF）
 added fingers: 0
-pure / mixed designs: 25 / 75
-cross-source per-link replacements: 314
+removed-finger designs: 0
+cross-source mesh assignments: 0
+hands with mixed source meshes: 0
+duplicate source bundle assignments: 0
+finger role/order permutations: 0
+cyclic finger-order violations: 0
+protected platform nodes: 24
+protected transmission hands: 49
+protected hardware changes: 0
+edited palms: 100/100
+maximum palm displacement: 21.45% of source palm extent
 connected graphs: 100/100
 acyclic graphs: 100/100
 invalid motor-link bindings: 0
-tendon metadata used by assembly: false
-subtree mesh translations: 0
+finger-root visual overlap: 476/476
 ```
 
 审计文件是 `temp/exp1/grammar_v1/outputs/grammar_audit.json`，MuJoCo 总览是
@@ -687,7 +705,6 @@ subtree mesh translations: 0
 
 ### 17.3 尚未声称完成的部分
 
-公开 URDF 通常缺少真实 motor BOM，因此当前 19 个 family 是由 joint type、finger class、chain
-stage 和 connector 几何形成的 prototype proxy，不是跨厂商物理电机等价证明。进入 Isaac Lab/SAC
-前仍需补齐真实 motor family、collision recipe、mass/inertia、joint sweep、自碰撞、torque-speed、
-导出和 Isaac Lab reload 验证。
+公开 URDF 通常缺少真实 motor BOM，因此当前 motor family 仍是 source-local prototype proxy。
+当前实现不再尝试跨厂商物理电机等价或跨手 mesh 复用。进入 Isaac Lab/SAC 前仍需补齐真实 motor
+family、collision recipe、mass/inertia、joint sweep、自碰撞、torque-speed、导出和 Isaac Lab reload 验证。
