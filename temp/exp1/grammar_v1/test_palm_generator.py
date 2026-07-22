@@ -21,7 +21,9 @@ from palm_generator import (  # noqa: E402
     deform_template_to_house_palm,
     generate_house_hull_palm,
     generate_palm_mesh,
+    infer_palm_params,
     patch_corners_2d,
+    patches_from_hand_ir,
     transform_from_rotation_translation,
 )
 from generate_hands import apply_global_palm_layout, instantiate_protected_platform  # noqa: E402
@@ -278,6 +280,106 @@ class PalmGeneratorTests(unittest.TestCase):
             self.assertTrue(np.array_equal(
                 result.attachment_frames[patch.name], patch.transform
             ))
+
+    def test_dense_surface_controls_do_not_exhaust_sparse_convex_hull(self) -> None:
+        reference_patches, wrist = layout(5)
+        current_patches = []
+        slots = []
+        for index, patch in enumerate(reference_patches):
+            reference = patch.transform.copy()
+            current = reference.copy()
+            current[0, 3] += 0.008 * (index - 2)
+            current_patches.append(AttachmentPatch(
+                patch.name,
+                current,
+                patch.width,
+                patch.depth,
+                patch.thickness,
+                footprint_center_offset=np.asarray([0.012, 0.0, 0.0]),
+                reference_footprint_center_offset=np.asarray([0.006, 0.0, 0.0]),
+            ))
+            slots.append({
+                "slot_id": index,
+                "role": "thumb" if index == 4 else f"finger_{index}",
+                "attachment_translation": current[:3, 3].tolist(),
+                "attachment_rotation": current[:3, :3].tolist(),
+                "reference_attachment_translation": reference[:3, 3].tolist(),
+                "reference_attachment_rotation": reference[:3, :3].tolist(),
+            })
+        template = trimesh.creation.box(extents=[1.25, 0.20, 1.15])
+        template.apply_translation([0.0, 0.0, 0.48])
+        for _ in range(3):
+            vertices, faces = trimesh.remesh.subdivide(template.vertices, template.faces)
+            template = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        hand = {"finger_slots": slots, "parts": [{"world_pos": [0.0, 0.0, 0.0]}]}
+        result = deform_template_palm(
+            hand, current_patches, wrist, template, np.eye(3)
+        )
+        vertices_xz = np.asarray(result.visual_mesh.vertices)[:, [0, 2]]
+        for record in result.metadata["mounting_points"]:
+            center_control = int(record["control_vertex_ids"][1])
+            self.assertTrue(np.allclose(
+                vertices_xz[center_control],
+                np.asarray(record["control_target_local"]),
+                atol=1.0e-10,
+            ))
+        for patch in current_patches:
+            self.assertTrue(np.array_equal(
+                result.attachment_frames[patch.name], patch.transform
+            ))
+
+    def test_source_palm_finger_interface_follows_joint_frame(self) -> None:
+        template = trimesh.creation.box(extents=[1.0, 0.20, 1.0])
+        template.apply_translation([0.0, 0.0, 0.45])
+        for _ in range(3):
+            vertices, faces = trimesh.remesh.subdivide(template.vertices, template.faces)
+            template = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        root_mesh = trimesh.creation.box(extents=[0.20, 0.18, 0.24])
+        reference = frame(0.18, 0.93, 0.0)
+        current = frame(0.27, 0.96, 0.16)
+        root_rotation = current[:3, :3] @ reference[:3, :3].T
+        hand = {
+            "palm_transform": np.eye(3).tolist(),
+            "finger_slots": [{
+                "slot_id": 0,
+                "role": "index",
+                "root_node_id": 1,
+                "attachment_translation": current[:3, 3].tolist(),
+                "attachment_rotation": current[:3, :3].tolist(),
+                "reference_attachment_translation": reference[:3, 3].tolist(),
+                "reference_attachment_rotation": reference[:3, :3].tolist(),
+            }],
+            "parts": [
+                {"world_pos": [0.0, 0.0, 0.0]},
+                {
+                    "world_pos": current[:3, 3].tolist(),
+                    "mesh_linear": root_rotation.tolist(),
+                    "reference_mesh_linear": np.eye(3).tolist(),
+                    "source_mesh": {
+                        "file": "root.obj",
+                        "bounds": np.asarray(root_mesh.bounds).tolist(),
+                    },
+                },
+            ],
+        }
+        configuration = infer_palm_params(template)
+        patches, wrist = patches_from_hand_ir(
+            hand,
+            template,
+            configuration,
+            root_mesh_loader=lambda _: root_mesh,
+        )
+        result = deform_template_palm(
+            hand, patches, wrist, template, np.eye(3)
+        )
+        records = result.metadata["joint_interface_patches"]
+        self.assertEqual(len(records), 1)
+        self.assertGreater(records[0]["source_interface_vertex_count"], 0)
+        self.assertEqual(records[0]["maximum_free_interface_frame_error"], 0.0)
+        self.assertEqual(records[0]["maximum_locked_interface_conflict"], 0.0)
+        self.assertTrue(np.array_equal(
+            result.attachment_frames[patches[0].name], current
+        ))
 
     def test_house_cage_preserves_source_topology_thickness_and_mount(self) -> None:
         patches, wrist = layout(5)

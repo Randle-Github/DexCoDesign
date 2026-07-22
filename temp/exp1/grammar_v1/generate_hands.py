@@ -491,9 +491,21 @@ def instantiate_finger(
     # Using the complete joint-axis frame would introduce arbitrary 180-degree
     # roll flips when two equivalent source joint axes use opposite signs.
     rotation = rotation_from_to(donor_slot["frame"][:, 2], target_slot["frame"][:, 2])
-    target_axis = target_slot["frame"][:, 2]
+    realized_frame = rotation @ donor_slot["frame"]
+    reference_frame = target_slot.get("reference_frame", target_slot["frame"])
+    reference_rotation = rotation_from_to(
+        donor_slot["frame"][:, 2], reference_frame[:, 2]
+    )
+    realized_reference_frame = reference_rotation @ donor_slot["frame"]
+    target_axis = realized_frame[:, 2]
     deform = radius_scale * np.eye(3) + (length_scale - radius_scale) * np.outer(target_axis, target_axis)
     linear = deform @ rotation
+    reference_axis = realized_reference_frame[:, 2]
+    reference_deform = (
+        radius_scale * np.eye(3)
+        + (length_scale - radius_scale) * np.outer(reference_axis, reference_axis)
+    )
+    reference_linear = reference_deform @ reference_rotation
     id_map: dict[int, int] = {}
     root_new_id = None
     for rank, source_id in enumerate(ids):
@@ -503,6 +515,11 @@ def instantiate_finger(
         new_id = len(output)
         id_map[source_id] = new_id
         node_linear = rotation if lock_proximal_hardware and rank == 0 else linear
+        node_reference_linear = (
+            reference_rotation
+            if lock_proximal_hardware and rank == 0
+            else reference_linear
+        )
         if not internal:
             relative = target_slot["anchor"]
             parent = 0
@@ -531,10 +548,12 @@ def instantiate_finger(
             "motor_binding": candidate["motor_binding"],
             "compatible_candidate_ids": candidate["compatible_candidate_ids"],
             "mesh_linear": node_linear.tolist(),
+            "reference_mesh_linear": node_reference_linear.tolist(),
             "length_scale": 1.0 if lock_proximal_hardware and rank == 0 else length_scale,
             "radius_scale": 1.0 if lock_proximal_hardware and rank == 0 else radius_scale,
             "source_rank": rank,
             "protected_proximal_hardware": bool(lock_proximal_hardware and rank == 0),
+            "morphology_part": "finger_root_rigid_body" if rank == 0 else "finger_link_rigid_body",
         })
     return {
         "slot_id": slot_id,
@@ -544,14 +563,14 @@ def instantiate_finger(
         "source_hand_id": bundle["source_hand_id"],
         "dof_count": bundle["dof_count"],
         "root_node_id": root_new_id,
+        "interface_parent_palm_node_id": 0,
+        "interface_child_finger_node_id": root_new_id,
         "attachment_translation": target_slot["anchor"].tolist(),
-        "attachment_rotation": target_slot["frame"].tolist(),
+        "attachment_rotation": realized_frame.tolist(),
         "reference_attachment_translation": target_slot.get(
             "reference_anchor", target_slot["anchor"]
         ).tolist(),
-        "reference_attachment_rotation": target_slot.get(
-            "reference_frame", target_slot["frame"]
-        ).tolist(),
+        "reference_attachment_rotation": realized_reference_frame.tolist(),
         "connector_transform_applied": True,
         "proximal_hardware_locked": lock_proximal_hardware,
     }
@@ -605,6 +624,7 @@ def instantiate_protected_platform(
             "radius_scale": 1.0,
             "protected_platform": True,
             "geometry_locked": True,
+            "morphology_part": "fixed_base_or_transmission",
         })
     return created
 
@@ -700,6 +720,7 @@ def main() -> int:
             "protected_transmission_root": seed_id in PROTECTED_TRANSMISSION_SOURCES,
             "global_transform_locked": seed_id in PROTECTED_TRANSMISSION_SOURCES,
             "geometry_locked": False,
+            "morphology_part": "palm_parent_rigid_body",
         }]
 
         protected_platform_node_ids = instantiate_protected_platform(
@@ -774,6 +795,8 @@ def main() -> int:
     attachment_pose_errors = []
     cyclic_order_violations = []
     connector_errors = []
+    mesh_joint_frame_errors = []
+    semantic_interface_errors = []
     connected = []
     acyclic = []
     for hand in hands:
@@ -831,6 +854,25 @@ def main() -> int:
             root = hand["parts"][slot["root_node_id"]]
             error = float(np.linalg.norm(np.asarray(root["world_pos"]) - np.asarray(slot["attachment_translation"])))
             connector_errors.append(error)
+            if (
+                slot.get("interface_parent_palm_node_id") != 0
+                or slot.get("interface_child_finger_node_id") != slot["root_node_id"]
+                or hand["parts"][0].get("morphology_part") != "palm_parent_rigid_body"
+                or root.get("morphology_part") != "finger_root_rigid_body"
+            ):
+                semantic_interface_errors.append([
+                    hand["hand_id"], slot["slot_id"], slot["role"]
+                ])
+            donor_frame = source_slot(
+                sources[slot["source_hand_id"]], bundles[slot["bundle_id"]]
+            )["frame"]
+            linear = np.asarray(root["mesh_linear"], dtype=float)
+            left, _, right = np.linalg.svd(linear)
+            mesh_rotation = left @ right
+            mesh_joint_frame_errors.append(float(np.linalg.norm(
+                mesh_rotation @ donor_frame
+                - np.asarray(slot["attachment_rotation"], dtype=float)
+            )))
     house_layouts = [
         hand["palm_layout"] for hand in hands
         if "source_house_blend" in hand["palm_layout"]
@@ -892,6 +934,13 @@ def main() -> int:
             ),
         ],
         "maximum_slot_connector_error": max(connector_errors, default=0.0),
+        "semantic_palm_finger_interface_errors": semantic_interface_errors,
+        "all_interfaces_have_explicit_palm_parent_and_finger_child": (
+            not semantic_interface_errors
+        ),
+        "maximum_finger_mesh_joint_frame_error": max(
+            mesh_joint_frame_errors, default=0.0
+        ),
         "all_palm_transforms_applied_to_slots": all(
             slot["connector_transform_applied"] for hand in hands for slot in hand["finger_slots"]
         ),

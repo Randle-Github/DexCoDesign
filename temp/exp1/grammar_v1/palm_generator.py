@@ -14,11 +14,11 @@ parameters so the geometry code does not silently depend on that convention.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Literal
+from typing import Callable, Iterable, Literal
 
 import numpy as np
 import trimesh
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, cKDTree
 from shapely.geometry import LineString, MultiPoint, Point, Polygon
 from shapely.ops import unary_union
 
@@ -50,6 +50,10 @@ class AttachmentPatch:
     depth: float
     thickness: float
     locked: bool = True
+    footprint_center_offset: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    reference_footprint_center_offset: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    reference_interface_center: np.ndarray | None = None
+    reference_interface_vertex_ids: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "transform", _as_transform(self.transform))
@@ -58,6 +62,21 @@ class AttachmentPatch:
             if not np.isfinite(value) or value <= 0.0:
                 raise ValueError(f"{self.name}.{name} must be positive")
             object.__setattr__(self, name, value)
+        for name in ("footprint_center_offset", "reference_footprint_center_offset"):
+            value = np.asarray(getattr(self, name), dtype=float)
+            if value.shape != (3,) or not np.all(np.isfinite(value)):
+                raise ValueError(f"{self.name}.{name} must be a finite vector3")
+            object.__setattr__(self, name, value.copy())
+        if self.reference_interface_center is not None:
+            center = np.asarray(self.reference_interface_center, dtype=float)
+            if center.shape != (3,) or not np.all(np.isfinite(center)):
+                raise ValueError(f"{self.name}.reference_interface_center must be a finite vector3")
+            object.__setattr__(self, "reference_interface_center", center.copy())
+        object.__setattr__(
+            self,
+            "reference_interface_vertex_ids",
+            tuple(int(index) for index in self.reference_interface_vertex_ids),
+        )
 
 
 @dataclass(frozen=True)
@@ -109,10 +128,189 @@ def _normalize_2d(value: np.ndarray, fallback: np.ndarray | None = None) -> np.n
     return np.asarray([0.0, 1.0] if fallback is None else fallback, dtype=float)
 
 
+def _extract_reference_interface(
+    palm_vertices: np.ndarray,
+    root_vertices: np.ndarray,
+    plane_axes: tuple[int, int],
+) -> tuple[np.ndarray, tuple[int, ...]]:
+    """Find the source palm-side surface patch touching one finger root.
+
+    The kinematic joint origin is often inside a bearing or offset from the
+    visible mounting surface.  Interface geometry is therefore inferred from
+    the two source rigid bodies, never from the joint origin alone.
+    """
+    palm_vertices = np.asarray(palm_vertices, dtype=float)
+    root_vertices = np.asarray(root_vertices, dtype=float)
+    plane = np.asarray(plane_axes, dtype=int)
+    palm_uv = palm_vertices[:, plane]
+    root_uv = root_vertices[:, plane]
+    palm_scale = max(float(np.max(np.ptp(palm_uv, axis=0))), 1.0e-6)
+    root_span = np.maximum(np.ptp(root_uv, axis=0), 1.0e-6)
+    margin = max(0.10 * float(np.max(root_span)), 0.012 * palm_scale)
+    lower = root_uv.min(axis=0) - margin
+    upper = root_uv.max(axis=0) + margin
+    candidate_ids = np.flatnonzero(np.all((palm_uv >= lower) & (palm_uv <= upper), axis=1))
+    if len(candidate_ids) < 12:
+        center = 0.5 * (lower + upper)
+        count = min(max(32, len(candidate_ids)), len(palm_vertices))
+        candidate_ids = np.argsort(np.linalg.norm(palm_uv - center, axis=1))[:count]
+
+    root_sample = root_vertices
+    if len(root_sample) > 12000:
+        root_sample = root_sample[
+            np.linspace(0, len(root_sample) - 1, 12000, dtype=int)
+        ]
+    distances = cKDTree(root_sample).query(
+        palm_vertices[candidate_ids], workers=-1
+    )[0]
+    minimum = float(distances.min())
+    threshold = minimum + max(
+        0.035 * float(np.min(root_span)),
+        0.0025 * palm_scale,
+    )
+    selected = candidate_ids[distances <= threshold]
+    if len(selected) < 12:
+        selected = candidate_ids[np.argsort(distances)[:min(32, len(candidate_ids))]]
+    center = np.mean(palm_vertices[selected], axis=0)
+    return center, tuple(int(index) for index in selected)
+
+
+def _apply_interface_frame_constraints(
+    hand: dict,
+    attachment_patches: list[AttachmentPatch],
+    original_local_vertices: np.ndarray,
+    deformed_uv: np.ndarray,
+    palm_rotation: np.ndarray,
+    locked: np.ndarray,
+) -> tuple[np.ndarray, list[dict]]:
+    """Move each palm-side source interface with its graph joint frame."""
+    rotation = np.asarray(palm_rotation, dtype=float)
+    original_local_vertices = np.asarray(original_local_vertices, dtype=float)
+    result = np.asarray(deformed_uv, dtype=float).copy()
+    correction_sum = np.zeros_like(result)
+    weight_sum = np.zeros(len(result), dtype=float)
+    maximum_weight = np.zeros(len(result), dtype=float)
+    records = []
+
+    for slot, patch in zip(hand["finger_slots"], attachment_patches):
+        ids = np.asarray(patch.reference_interface_vertex_ids, dtype=int)
+        if len(ids) == 0:
+            continue
+        reference_origin = (
+            np.asarray(slot.get(
+                "reference_attachment_translation", slot["attachment_translation"]
+            ), dtype=float) @ rotation
+        )
+        current_origin = (
+            np.asarray(slot["attachment_translation"], dtype=float) @ rotation
+        )
+        reference_frame = rotation.T @ np.asarray(
+            slot.get("reference_attachment_rotation", slot["attachment_rotation"]),
+            dtype=float,
+        )
+        current_frame = rotation.T @ np.asarray(
+            slot["attachment_rotation"], dtype=float
+        )
+        frame_delta = current_frame @ reference_frame.T
+
+        reference_center = np.asarray(
+            patch.reference_interface_center, dtype=float
+        ) @ rotation
+        reference_outward = _normalize_2d(reference_frame[[0, 2], 2])
+        reference_tangent = np.asarray(
+            [-reference_outward[1], reference_outward[0]], dtype=float
+        )
+        relative = original_local_vertices - reference_origin
+        rigid_target = current_origin + relative @ frame_delta.T
+        rigid_target_uv = rigid_target[:, [0, 2]]
+
+        delta_uv = original_local_vertices[:, [0, 2]] - reference_center[[0, 2]]
+        tangent_coordinate = delta_uv @ reference_tangent
+        outward_coordinate = delta_uv @ reference_outward
+        inner_tangent = max(0.38 * patch.width, 1.0e-6)
+        inner_outward = max(0.28 * patch.depth, 1.0e-6)
+        outer_tangent = max(0.90 * patch.width, 1.8 * inner_tangent)
+        outer_outward = max(0.72 * patch.depth, 1.8 * inner_outward)
+        inner_radius = np.sqrt(
+            (tangent_coordinate / inner_tangent) ** 2
+            + (outward_coordinate / inner_outward) ** 2
+        )
+        outer_radius = np.sqrt(
+            (tangent_coordinate / outer_tangent) ** 2
+            + (outward_coordinate / outer_outward) ** 2
+        )
+        weight = np.ones(len(result), dtype=float)
+        transition = outer_radius > 1.0
+        weight[transition] = 0.0
+        annulus = (inner_radius > 1.0) & ~transition
+        weight[annulus] = 1.0 - _smoothstep(
+            (outer_radius[annulus] - 0.55) / 0.45
+        )
+        weight[locked] = 0.0
+        correction = rigid_target_uv - result
+        correction_sum += weight[:, None] * correction
+        weight_sum += weight
+        maximum_weight = np.maximum(maximum_weight, weight)
+
+        free_ids = ids[~locked[ids]]
+        locked_ids = ids[locked[ids]]
+        records.append({
+            "slot_id": int(slot["slot_id"]),
+            "role": slot["role"],
+            "palm_node_id": 0,
+            "finger_root_node_id": int(slot["root_node_id"]),
+            "source_interface_vertex_count": int(len(ids)),
+            "locked_interface_vertex_count": int(len(locked_ids)),
+            "reference_interface_center_local": reference_center.tolist(),
+            "target_joint_origin_local": current_origin.tolist(),
+            "frame_transform_applied": True,
+        })
+
+    active = weight_sum > 1.0e-12
+    result[active] += (
+        maximum_weight[active, None]
+        * correction_sum[active]
+        / weight_sum[active, None]
+    )
+
+    # Exact source interface vertices are the mechanical contract. They are
+    # transformed by the same reference->current joint-frame map as the child
+    # rigid body. Immutable wrist/base vertices always win.
+    record_by_slot = {record["slot_id"]: record for record in records}
+    for slot, patch in zip(hand["finger_slots"], attachment_patches):
+        ids = np.asarray(patch.reference_interface_vertex_ids, dtype=int)
+        if len(ids) == 0:
+            continue
+        record = record_by_slot[int(slot["slot_id"])]
+        reference_origin = np.asarray(slot.get(
+            "reference_attachment_translation", slot["attachment_translation"]
+        ), dtype=float) @ rotation
+        current_origin = np.asarray(slot["attachment_translation"], dtype=float) @ rotation
+        reference_frame = rotation.T @ np.asarray(slot.get(
+            "reference_attachment_rotation", slot["attachment_rotation"]
+        ), dtype=float)
+        current_frame = rotation.T @ np.asarray(slot["attachment_rotation"], dtype=float)
+        frame_delta = current_frame @ reference_frame.T
+        relative = original_local_vertices[ids] - reference_origin
+        expected = (current_origin + relative @ frame_delta.T)[:, [0, 2]]
+        free = ~locked[ids]
+        result[ids[free]] = expected[free]
+        error = np.linalg.norm(result[ids] - expected, axis=1)
+        record["maximum_interface_frame_error"] = float(error.max())
+        record["maximum_free_interface_frame_error"] = (
+            0.0 if not np.any(free) else float(error[free].max())
+        )
+        record["maximum_locked_interface_conflict"] = (
+            0.0 if np.all(free) else float(error[~free].max())
+        )
+    result[locked] = original_local_vertices[locked][:, [0, 2]]
+    return result, records
+
+
 def patch_corners_2d(patch: AttachmentPatch, params: PalmGeometryParams) -> np.ndarray:
     """Project one rigid patch to the palm plane without changing its frame."""
     plane = np.asarray(params.plane_axes, dtype=int)
-    center = patch.transform[plane, 3]
+    center = patch.transform[plane, 3] + patch.footprint_center_offset[plane]
     # The graph frame Z direction is the outgoing finger-chain direction.
     # Its projection defines patch depth; the perpendicular direction defines
     # patch width.  Degenerate projections use graph-frame X, then +V.
@@ -430,7 +628,10 @@ def generate_house_hull_palm(
     grip_points: list[np.ndarray] = []
     footprint_records = []
     for slot, patch in zip(hand["finger_slots"], attachment_patches):
-        center3 = np.asarray(slot["attachment_translation"], dtype=float) @ rotation
+        center3 = (
+            np.asarray(slot["attachment_translation"], dtype=float)
+            + patch.footprint_center_offset
+        ) @ rotation
         frame = rotation.T @ np.asarray(slot["attachment_rotation"], dtype=float)
         center = center3[[0, 2]]
         outward = _normalize_2d(frame[[0, 2], 2])
@@ -625,9 +826,9 @@ def deform_template_to_house_palm(
     wrist_center3 = wrist_patch.transform[:3, 3] @ rotation
     wrist_center = wrist_center3[[0, 2]]
     lock_inner = max(
-        0.62 * float(wrist_patch.width),
-        0.62 * float(wrist_patch.depth),
-        0.11 * source_scale,
+        0.42 * float(wrist_patch.width),
+        0.42 * float(wrist_patch.depth),
+        0.075 * source_scale,
     )
     lock_outer = 1.85 * lock_inner
     mount_distance = np.linalg.norm(uv - wrist_center, axis=1)
@@ -635,8 +836,9 @@ def deform_template_to_house_palm(
     protected_base = np.zeros(len(uv), dtype=bool)
     if hand.get("protected_transmission_source", False):
         finger_centers = np.asarray([
-            (np.asarray(slot["attachment_translation"], dtype=float) @ rotation)[[0, 2]]
-            for slot in hand["finger_slots"]
+            ((np.asarray(slot["attachment_translation"], dtype=float)
+              + patch.footprint_center_offset) @ rotation)[[0, 2]]
+            for slot, patch in zip(hand["finger_slots"], attachment_patches)
         ])
         forward = _normalize_2d(np.mean(finger_centers, axis=0) - wrist_center)
         longitudinal = (uv - wrist_center) @ forward
@@ -650,6 +852,14 @@ def deform_template_to_house_palm(
     deformed_uv = uv + blend[:, None] * (mapped_uv - uv)
     locked = (mount_distance <= lock_inner) | protected_base
     deformed_uv[locked] = uv[locked]
+    deformed_uv, interface_records = _apply_interface_frame_constraints(
+        hand,
+        attachment_patches,
+        original_local,
+        deformed_uv,
+        rotation,
+        locked,
+    )
 
     local_vertices[:, 0] = deformed_uv[:, 0]
     local_vertices[:, 2] = deformed_uv[:, 1]
@@ -679,7 +889,10 @@ def deform_template_to_house_palm(
 
     motor_records = []
     for slot, patch in zip(hand["finger_slots"], attachment_patches):
-        center3 = np.asarray(slot["attachment_translation"], dtype=float) @ rotation
+        center3 = (
+            np.asarray(slot["attachment_translation"], dtype=float)
+            + patch.footprint_center_offset
+        ) @ rotation
         motor_center = center3[[0, 2]]
         center_distance = float(deformed_outline.distance(Point(motor_center)))
         covered = bool(deformed_outline.buffer(1.0e-9).covers(Point(motor_center)))
@@ -738,20 +951,32 @@ def deform_template_to_house_palm(
         "target_cage_outline_coordinates": np.asarray(target_outline.exterior.coords, dtype=float).tolist(),
         "deformed_outline_coordinates": np.asarray(deformed_outline.exterior.coords, dtype=float).tolist(),
         "motor_centers": motor_records,
+        "joint_interface_patches": interface_records,
         "all_motor_centers_covered": all(record["covered_by_deformed_palm"] for record in motor_records),
         "all_motor_interfaces_reached": all(record["interface_reached"] for record in motor_records),
         "visual_quality": _mesh_quality(visual),
         "collision_quality": _mesh_quality(collision),
     }
+    graph_displacement_fraction = float(
+        hand.get("palm_layout", {}).get("maximum_attachment_displacement_fraction", 0.0)
+    )
+    deformation_limit = max(
+        0.30,
+        min(0.90, graph_displacement_fraction + 0.40),
+    )
+    metadata["graph_attachment_displacement_fraction"] = graph_displacement_fraction
+    metadata["maximum_allowed_planar_displacement_fraction"] = deformation_limit
     if thickness_error != 0.0:
         raise ValueError("source-topology palm deformation changed a thickness coordinate")
     if locked_error != 0.0:
         raise ValueError("source-topology palm deformation moved the root mount region")
     if not metadata["template_vertex_count_preserved"] or not metadata["template_face_count_preserved"]:
         raise ValueError("source-topology palm deformation changed visual topology")
-    if metadata["maximum_planar_displacement_fraction"] > 0.30:
+    if metadata["maximum_planar_displacement_fraction"] > deformation_limit:
         raise ValueError(
-            "source-topology palm exceeds the 30% manufacturing deformation limit"
+            "source-topology palm exceeds the graph-conditioned manufacturing deformation limit: "
+            f"actual={metadata['maximum_planar_displacement_fraction']:.4f}, "
+            f"limit={deformation_limit:.4f}"
         )
     # Center-to-outline distance is diagnostic only: the actual candidate
     # motor/root mesh can be substantially larger than this generic patch.
@@ -804,10 +1029,18 @@ def deform_template_palm(
     for slot in hand["finger_slots"]:
         slot_id = int(slot["slot_id"])
         patch = patch_by_slot[slot_id]
-        current_translation = np.asarray(slot["attachment_translation"], dtype=float) @ rotation
+        joint_translation = np.asarray(slot["attachment_translation"], dtype=float) @ rotation
+        current_translation = (
+            np.asarray(slot["attachment_translation"], dtype=float)
+            + patch.footprint_center_offset
+        ) @ rotation
         current_rotation = rotation.T @ np.asarray(slot["attachment_rotation"], dtype=float)
-        reference_translation = np.asarray(
-            slot.get("reference_attachment_translation", slot["attachment_translation"]), dtype=float
+        reference_translation = (
+            np.asarray(
+                slot.get("reference_attachment_translation", slot["attachment_translation"]),
+                dtype=float,
+            )
+            + patch.reference_footprint_center_offset
         ) @ rotation
         reference_rotation = rotation.T @ np.asarray(
             slot.get("reference_attachment_rotation", slot["attachment_rotation"]), dtype=float
@@ -818,30 +1051,41 @@ def deform_template_palm(
             reference_rotation[[0, 2], 2],
         )
         planar_delta = current_translation[[0, 2]] - reference_translation[[0, 2]]
-        outward = _normalize_2d(reference_rotation[[0, 2], 2])
-        tangent = np.asarray([-outward[1], outward[0]], dtype=float)
+        reference_outward = _normalize_2d(reference_rotation[[0, 2], 2])
+        reference_tangent = np.asarray([-reference_outward[1], reference_outward[0]], dtype=float)
+        current_outward = _normalize_2d(current_rotation[[0, 2], 2])
+        current_tangent = np.asarray([-current_outward[1], current_outward[0]], dtype=float)
         selected = []
         for offset in (-0.42 * patch.width, 0.0, 0.42 * patch.width):
-            query = source_center + offset * tangent
-            order = np.argsort(np.linalg.norm(uv[hull_indices] - query, axis=1))
+            query = source_center + offset * reference_tangent
+            # A source CAD palm may project to a convex hull with only a few
+            # extreme vertices. Reserving those vertices globally can exhaust
+            # a finger's local edge neighborhood and make a later collar bind
+            # to a remote wrist vertex. Select from the complete source surface
+            # instead; proximity to the already-computed boundary query keeps
+            # the control local while dense front/back surface vertices provide
+            # enough independent controls for every connector.
+            order = np.argsort(np.linalg.norm(uv - query, axis=1))
             vertex_index = None
-            for candidate in hull_indices[order]:
+            for candidate in order:
                 if int(candidate) not in used:
                     vertex_index = int(candidate)
                     break
             if vertex_index is None:
-                vertex_index = int(hull_indices[order[0]])
+                vertex_index = int(order[0])
             used.add(vertex_index)
-            control_delta.setdefault(vertex_index, []).append(planar_delta)
+            desired = source_center + planar_delta + offset * current_tangent
+            control_delta.setdefault(vertex_index, []).append(desired - uv[vertex_index])
             selected.append(vertex_index)
         center_vertex = selected[1]
         mounting_records.append({
             "slot_id": slot_id,
             "role": slot["role"],
-            "joint_origin_local": current_translation.tolist(),
+            "joint_origin_local": joint_translation.tolist(),
+            "footprint_center_local": current_translation.tolist(),
             "joint_outward_local": current_rotation[:, 2].tolist(),
             "reference_boundary_point": uv[center_vertex].tolist(),
-            "control_target_local": (uv[center_vertex] + planar_delta).tolist(),
+            "control_target_local": (source_center + planar_delta).tolist(),
             "layout_delta": planar_delta.tolist(),
             "control_vertex_ids": selected,
         })
@@ -881,9 +1125,9 @@ def deform_template_palm(
     wrist_center3 = wrist_patch.transform[:3, 3] @ rotation
     wrist_center = wrist_center3[[0, 2]]
     lock_inner = max(
-        0.62 * float(wrist_patch.width),
-        0.62 * float(wrist_patch.depth),
-        0.11 * palm_scale,
+        0.42 * float(wrist_patch.width),
+        0.42 * float(wrist_patch.depth),
+        0.075 * palm_scale,
     )
     lock_outer = 1.85 * lock_inner
     mount_distance = np.linalg.norm(uv - wrist_center, axis=1)
@@ -893,8 +1137,9 @@ def deform_template_palm(
     protected_base = np.zeros(len(uv), dtype=bool)
     if hand.get("protected_transmission_source", False):
         finger_centers = np.asarray([
-            (np.asarray(slot["attachment_translation"], dtype=float) @ rotation)[[0, 2]]
-            for slot in hand["finger_slots"]
+            ((np.asarray(slot["attachment_translation"], dtype=float)
+              + patch.footprint_center_offset) @ rotation)[[0, 2]]
+            for slot, patch in zip(hand["finger_slots"], attachment_patches)
         ])
         forward = _normalize_2d(np.mean(finger_centers, axis=0) - wrist_center)
         longitudinal = (uv - wrist_center) @ forward
@@ -908,6 +1153,23 @@ def deform_template_palm(
     deformed_uv = uv + mount_blend[:, None] * (deformed_uv - uv)
     locked = (mount_distance <= lock_inner) | protected_base
     deformed_uv[locked] = uv[locked]
+    # Mount/base protection is applied after the RBF field, so it can
+    # otherwise pull an already-correct finger collar back toward the source
+    # outline. Re-impose only connector controls outside the immutable mount
+    # region. A genuine connector/mount conflict remains locked and is caught
+    # by the compiled root-volume audit instead of silently moving hardware.
+    free_control = ~locked[control_indices]
+    deformed_uv[control_indices[free_control]] = (
+        uv[control_indices[free_control]] + deltas[free_control]
+    )
+    deformed_uv, interface_records = _apply_interface_frame_constraints(
+        hand,
+        attachment_patches,
+        original_local_vertices,
+        deformed_uv,
+        rotation,
+        locked,
+    )
     local_vertices[:, 0] = deformed_uv[:, 0]
     local_vertices[:, 2] = deformed_uv[:, 1]
     # local Y is copied verbatim: no thickness scaling and no arch/cup warp.
@@ -936,7 +1198,7 @@ def deform_template_palm(
 
     target_boundary = target_outline.boundary
     for record in mounting_records:
-        origin = np.asarray(record["joint_origin_local"], dtype=float)[[0, 2]]
+        origin = np.asarray(record["footprint_center_local"], dtype=float)[[0, 2]]
         outward = np.asarray(record["joint_outward_local"], dtype=float)[[0, 2]]
         mounting_point = _ray_boundary_point(target_outline, origin, outward)
         record["mounting_point_local"] = mounting_point.tolist()
@@ -979,6 +1241,7 @@ def deform_template_palm(
             not hand.get("protected_transmission_source", False) or np.any(protected_base)
         ),
         "mounting_points": mounting_records,
+        "joint_interface_patches": interface_records,
         "all_mounting_points_on_boundary": all(record["on_target_boundary"] for record in mounting_records),
         "source_outline_coordinates": np.asarray(source_outline.exterior.coords, dtype=float).tolist(),
         "target_outline_coordinates": np.asarray(target_outline.exterior.coords, dtype=float).tolist(),
@@ -1020,6 +1283,7 @@ def patches_from_hand_ir(
     hand: dict,
     fixed_palm_mesh: trimesh.Trimesh,
     params: PalmGeometryParams,
+    root_mesh_loader: Callable[[str], trimesh.Trimesh] | None = None,
 ) -> tuple[list[AttachmentPatch], AttachmentPatch]:
     """Convert existing HandIR slots to patches without changing the graph."""
     extents = np.maximum(np.asarray(fixed_palm_mesh.extents, dtype=float), 1.0e-4)
@@ -1033,21 +1297,123 @@ def patches_from_hand_ir(
             np.asarray(slot["attachment_translation"], dtype=float),
         )
         role_scale = 1.10 if slot["role"] == "thumb" else 1.0
+        root = hand["parts"][int(slot["root_node_id"])]
+        source_mesh = root.get("source_mesh")
+        actual_width = actual_depth = 0.0
+        footprint_center_offset = np.zeros(3)
+        reference_footprint_center_offset = np.zeros(3)
+        reference_interface_center = None
+        reference_interface_vertex_ids: tuple[int, ...] = ()
+        if source_mesh is not None and "bounds" in source_mesh:
+            bounds = np.asarray(source_mesh["bounds"], dtype=float)
+            corners = np.asarray([
+                [x, y, z]
+                for x in bounds[:, 0]
+                for y in bounds[:, 1]
+                for z in bounds[:, 2]
+            ])
+            linear = np.asarray(root["mesh_linear"], dtype=float)
+            corners = corners @ linear.T
+            outward3 = np.asarray(slot["attachment_rotation"], dtype=float)[:, 2]
+            outward2 = _normalize_2d(outward3[list(params.plane_axes)])
+            width2 = np.asarray([-outward2[1], outward2[0]], dtype=float)
+            corner_uv = corners[:, list(params.plane_axes)]
+            actual_width = float(np.ptp(corner_uv @ width2))
+            actual_depth = float(np.ptp(corner_uv @ outward2))
+
+            # Joint origins are kinematic data, whereas exported CAD housings
+            # are not necessarily centred on those origins (notably WUJI).
+            # Move only the palm-plane tangential footprint centre; retaining
+            # the joint origin and outward coordinate avoids changing either
+            # kinematics or effective finger length.
+            source_center = 0.5 * (bounds[0] + bounds[1])
+            current_center = linear @ source_center
+            footprint_center_offset[list(params.plane_axes)] = (
+                float(np.dot(current_center[list(params.plane_axes)], width2)) * width2
+            )
+
+            reference_rotation = np.asarray(
+                slot.get("reference_attachment_rotation", slot["attachment_rotation"]),
+                dtype=float,
+            )
+            reference_outward2 = _normalize_2d(
+                reference_rotation[:, 2][list(params.plane_axes)]
+            )
+            reference_width2 = np.asarray(
+                [-reference_outward2[1], reference_outward2[0]], dtype=float
+            )
+            reference_linear = np.asarray(
+                hand.get("palm_transform", np.eye(3)), dtype=float
+            )
+            reference_center = reference_linear @ source_center
+            reference_footprint_center_offset[list(params.plane_axes)] = (
+                float(np.dot(
+                    reference_center[list(params.plane_axes)], reference_width2
+                )) * reference_width2
+            )
+            if root_mesh_loader is not None:
+                root_mesh = root_mesh_loader(source_mesh["file"])
+                reference_mesh_linear = np.asarray(
+                    root.get("reference_mesh_linear", reference_linear), dtype=float
+                )
+                reference_anchor = np.asarray(
+                    slot.get(
+                        "reference_attachment_translation",
+                        slot["attachment_translation"],
+                    ),
+                    dtype=float,
+                )
+                reference_root_vertices = (
+                    np.asarray(root_mesh.vertices, dtype=float)
+                    @ reference_mesh_linear.T
+                    + reference_anchor
+                )
+                (
+                    reference_interface_center,
+                    reference_interface_vertex_ids,
+                ) = _extract_reference_interface(
+                    np.asarray(fixed_palm_mesh.vertices, dtype=float),
+                    reference_root_vertices,
+                    params.plane_axes,
+                )
         patches.append(AttachmentPatch(
             name=f"finger_slot_{int(slot['slot_id'])}_{slot['role']}",
             transform=transform,
-            width=max(role_scale * 0.16 * planar_width, 0.045 * planar_length),
-            depth=patch_depth,
+            width=min(
+                max(role_scale * 0.16 * planar_width, 0.045 * planar_length, actual_width),
+                0.58 * max(planar_width, planar_length),
+            ),
+            depth=min(
+                max(patch_depth, actual_depth),
+                0.48 * max(planar_width, planar_length),
+            ),
             thickness=patch_thickness,
             locked=True,
+            footprint_center_offset=footprint_center_offset,
+            reference_footprint_center_offset=reference_footprint_center_offset,
+            reference_interface_center=reference_interface_center,
+            reference_interface_vertex_ids=reference_interface_vertex_ids,
         ))
 
     plane_axes = params.plane_axes
     normal_slots = [slot for slot in hand["finger_slots"] if slot["role"] != "thumb"]
     source = normal_slots if normal_slots else hand["finger_slots"]
-    target = np.mean([np.asarray(slot["attachment_translation"], dtype=float) for slot in source], axis=0)
+    target = np.mean([
+        np.asarray(
+            slot.get("reference_attachment_translation", slot["attachment_translation"]),
+            dtype=float,
+        )
+        for slot in source
+    ], axis=0)
     root = np.asarray(hand["parts"][0].get("world_pos", [0.0, 0.0, 0.0]), dtype=float)
-    direction = target - root
+    palm_vertices = np.asarray(fixed_palm_mesh.vertices, dtype=float)
+    palm_uv = palm_vertices[:, list(plane_axes)]
+    palm_hull = ConvexHull(palm_uv, qhull_options="Qx")
+    palm_outline = Polygon(palm_uv[np.asarray(palm_hull.vertices, dtype=np.int64)])
+    palm_center_uv = np.asarray(palm_outline.centroid.coords[0], dtype=float)
+    palm_center = np.mean(palm_vertices, axis=0)
+    palm_center[list(plane_axes)] = palm_center_uv
+    direction = target - palm_center
     direction[params.thickness_axis] = 0.0
     norm = float(np.linalg.norm(direction))
     if norm < 1.0e-8:
@@ -1060,9 +1426,19 @@ def patches_from_hand_ir(
     width_axis = np.cross(normal, direction)
     width_axis /= max(float(np.linalg.norm(width_axis)), 1.0e-8)
     rotation = np.column_stack([width_axis, normal, direction])
+    mount_uv = _ray_boundary_point(
+        palm_outline,
+        palm_center_uv,
+        -direction[list(plane_axes)],
+    )
+    mount_center = root.copy()
+    mount_center[list(plane_axes)] = mount_uv
+    mount_center[params.thickness_axis] = float(np.median(
+        palm_vertices[:, params.thickness_axis]
+    ))
     wrist = AttachmentPatch(
         name="wrist_root",
-        transform=transform_from_rotation_translation(rotation, root),
+        transform=transform_from_rotation_translation(rotation, mount_center),
         width=float(params.wrist_width),
         depth=max(0.14 * planar_length, patch_depth),
         thickness=patch_thickness,

@@ -62,7 +62,9 @@ def compile_palm(hand: dict, node: dict, fixed_mesh: trimesh.Trimesh, args: argp
         longitudinal_arch=args.longitudinal_arch,
         central_cup=args.central_cup,
     )
-    patches, wrist = patches_from_hand_ir(hand, fixed_mesh, params)
+    patches, wrist = patches_from_hand_ir(
+        hand, fixed_mesh, params, root_mesh_loader=load_source
+    )
     linear = np.asarray(node["mesh_linear"], dtype=float)
     scales = np.linalg.norm(linear, axis=0)
     palm_rotation = linear @ np.diag(1.0 / scales)
@@ -102,14 +104,40 @@ def compile_palm(hand: dict, node: dict, fixed_mesh: trimesh.Trimesh, args: argp
 
 
 def audit_attachment_overlap(hand: dict, parts: list[dict]) -> dict:
-    """Conservative visual check that every meshed finger root reaches palm."""
+    """Check that every meshed finger root actually enters the palm volume."""
     palm_mesh = parts[0].get("compiled_mesh")
     if palm_mesh is None:
-        return {"checked": 0, "unmeshed": len(hand["finger_slots"]), "nonoverlapping": []}
+        return {
+            "checked": 0,
+            "unmeshed": len(hand["finger_slots"]),
+            "nonoverlapping": [],
+            "surface_checked": 0,
+            "surface_nonintersecting": [],
+            "centering_violations": [],
+            "sampled_root_vertices_inside_palm": 0,
+            "minimum_tangential_coverage": None,
+            "maximum_tangential_center_error": 0.0,
+            "minimum_axis_overlap": None,
+        }
     palm_bounds = np.asarray(palm_mesh["bounds"], dtype=float)
+    collision_file = palm_mesh.get("collision_file")
+    collision_mesh = None
+    if collision_file is not None:
+        collision_mesh = trimesh.load(
+            HERE / "outputs" / collision_file, force="mesh", process=False
+        )
+        collision_mesh.vertices = (
+            np.asarray(collision_mesh.vertices, dtype=float)
+            + np.asarray(parts[0]["world_pos"], dtype=float)
+        )
     checked = unmeshed = 0
     nonoverlapping = []
+    surface_nonintersecting = []
+    centering_violations = []
+    root_vertices_inside = 0
     minimum_axis_overlap = float("inf")
+    minimum_tangential_coverage = float("inf")
+    maximum_tangential_center_error = 0.0
     for slot in hand["finger_slots"]:
         root = parts[int(slot["root_node_id"])]
         compiled = root.get("compiled_mesh")
@@ -127,10 +155,68 @@ def audit_attachment_overlap(hand: dict, parts: list[dict]) -> dict:
                 "role": slot["role"],
                 "axis_overlap": overlap.tolist(),
             })
+        if collision_mesh is not None:
+            root_mesh = trimesh.load(
+                HERE / "outputs" / compiled["file"], force="mesh", process=False
+            )
+            vertices = (
+                np.asarray(root_mesh.vertices, dtype=float)
+                + np.asarray(root["world_pos"], dtype=float)
+            )
+            # A deterministic bounded sample keeps this strict check affordable
+            # even for source CAD links with hundreds of thousands of vertices.
+            if len(vertices) > 1500:
+                vertices = vertices[
+                    np.linspace(0, len(vertices) - 1, 1500, dtype=int)
+                ]
+            signed_distance = trimesh.proximity.signed_distance(
+                collision_mesh, vertices
+            )
+            inside = int(np.count_nonzero(signed_distance >= -1.0e-6))
+            root_vertices_inside += inside
+            if inside == 0:
+                surface_nonintersecting.append({
+                    "slot_id": int(slot["slot_id"]),
+                    "role": slot["role"],
+                    "maximum_signed_distance": float(np.max(signed_distance)),
+                })
+            else:
+                inside_vertices = vertices[signed_distance >= -1.0e-6]
+                outward = np.asarray(slot["attachment_rotation"], dtype=float)[:, 2][[0, 2]]
+                outward /= max(float(np.linalg.norm(outward)), 1.0e-10)
+                tangent = np.asarray([-outward[1], outward[0]], dtype=float)
+                root_tangent = vertices[:, [0, 2]] @ tangent
+                inside_tangent = inside_vertices[:, [0, 2]] @ tangent
+                root_width = max(float(np.ptp(root_tangent)), 1.0e-10)
+                coverage = float(np.ptp(inside_tangent)) / root_width
+                center_error = abs(
+                    0.5 * float(inside_tangent.min() + inside_tangent.max())
+                    - 0.5 * float(root_tangent.min() + root_tangent.max())
+                ) / root_width
+                minimum_tangential_coverage = min(minimum_tangential_coverage, coverage)
+                maximum_tangential_center_error = max(
+                    maximum_tangential_center_error, center_error
+                )
+                if coverage < 0.45 or center_error > 0.28:
+                    centering_violations.append({
+                        "slot_id": int(slot["slot_id"]),
+                        "role": slot["role"],
+                        "tangential_coverage": coverage,
+                        "tangential_center_error": center_error,
+                    })
     return {
         "checked": checked,
         "unmeshed": unmeshed,
         "nonoverlapping": nonoverlapping,
+        "surface_checked": 0 if collision_mesh is None else checked,
+        "surface_nonintersecting": surface_nonintersecting,
+        "centering_violations": centering_violations,
+        "sampled_root_vertices_inside_palm": root_vertices_inside,
+        "minimum_tangential_coverage": (
+            None if minimum_tangential_coverage == float("inf")
+            else minimum_tangential_coverage
+        ),
+        "maximum_tangential_center_error": maximum_tangential_center_error,
         "minimum_axis_overlap": None if checked == 0 else minimum_axis_overlap,
     }
 
@@ -197,6 +283,27 @@ def main() -> int:
                     },
                     "joint_frame_invariance": True,
                 }
+                if args.palm_generation_mode in {
+                    "template_deform",
+                    "source_topology_house",
+                    "hybrid_source_topology",
+                }:
+                    interfaces = palm_result.metadata.get("joint_interface_patches", [])
+                    if len(interfaces) != len(hand["finger_slots"]):
+                        raise ValueError(
+                            f"{hand['hand_id']} extracted {len(interfaces)} palm/finger "
+                            f"interfaces for {len(hand['finger_slots'])} finger roots"
+                        )
+                    invalid_interfaces = [
+                        record for record in interfaces
+                        if record["maximum_free_interface_frame_error"] > 1.0e-10
+                        or record["maximum_locked_interface_conflict"] > 1.0e-10
+                    ]
+                    if invalid_interfaces:
+                        raise ValueError(
+                            f"{hand['hand_id']} has palm/finger interface frames that do not "
+                            f"follow their graph joints: {invalid_interfaces}"
+                        )
             hand_faces += int(len(mesh.faces))
             hand_meshes += 1
             total_faces += int(len(mesh.faces))
@@ -205,10 +312,17 @@ def main() -> int:
         output["parts"] = output_parts
         output["mesh_summary"] = {"meshed_parts": hand_meshes, "faces": hand_faces}
         output["palm_attachment_audit"] = audit_attachment_overlap(output, output_parts)
-        if args.palm_generation_mode != "fixed_template" and output["palm_attachment_audit"]["nonoverlapping"]:
+        attachment_audit = output["palm_attachment_audit"]
+        if args.palm_generation_mode != "fixed_template" and (
+            attachment_audit["nonoverlapping"]
+            or attachment_audit["surface_nonintersecting"]
+            or attachment_audit["centering_violations"]
+        ):
             raise ValueError(
-                f"{hand['hand_id']} has finger-root visuals that do not overlap the generated palm: "
-                f"{output['palm_attachment_audit']['nonoverlapping']}"
+                f"{hand['hand_id']} has finger-root visuals that do not intersect the generated palm: "
+                f"bounds={attachment_audit['nonoverlapping']}, "
+                f"surface={attachment_audit['surface_nonintersecting']}, "
+                f"centering={attachment_audit['centering_violations']}"
             )
         output_hands.append(output)
     result = {
@@ -227,6 +341,47 @@ def main() -> int:
             ),
             "nonoverlapping_attachment_roots": sum(
                 len(hand["palm_attachment_audit"]["nonoverlapping"]) for hand in output_hands
+            ),
+            "surface_nonintersecting_attachment_roots": sum(
+                len(hand["palm_attachment_audit"]["surface_nonintersecting"])
+                for hand in output_hands
+            ),
+            "off_center_attachment_roots": sum(
+                len(hand["palm_attachment_audit"]["centering_violations"])
+                for hand in output_hands
+            ),
+            "minimum_tangential_root_coverage": min(
+                hand["palm_attachment_audit"]["minimum_tangential_coverage"]
+                for hand in output_hands
+                if hand["palm_attachment_audit"]["minimum_tangential_coverage"] is not None
+            ),
+            "maximum_tangential_root_center_error": max(
+                hand["palm_attachment_audit"]["maximum_tangential_center_error"]
+                for hand in output_hands
+            ),
+            "sampled_root_vertices_inside_palms": sum(
+                hand["palm_attachment_audit"]["sampled_root_vertices_inside_palm"]
+                for hand in output_hands
+            ),
+            "semantic_palm_finger_interfaces": sum(
+                len(hand["parts"][0]["palm_generation"].get(
+                    "joint_interface_patches", []
+                ))
+                for hand in output_hands
+            ),
+            "maximum_palm_interface_frame_error": max(
+                record["maximum_free_interface_frame_error"]
+                for hand in output_hands
+                for record in hand["parts"][0]["palm_generation"].get(
+                    "joint_interface_patches", []
+                )
+            ),
+            "palm_interface_mount_lock_conflicts": sum(
+                record["maximum_locked_interface_conflict"] > 1.0e-10
+                for hand in output_hands
+                for record in hand["parts"][0]["palm_generation"].get(
+                    "joint_interface_patches", []
+                )
             ),
         },
     }

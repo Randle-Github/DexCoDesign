@@ -674,6 +674,16 @@ actuation metadata。
 - `template_to_link_pose` 只配准当前 mesh，child joint/subtree 不随之平移；
 - 若 source exporter 把 palm shell 挂在 digit-root body，该 carrier mesh 被保护；
 - link length/radius 可做有界变化，graph attachment 从 base 向外重新计算。
+- palm connector collar 使用实际 root mesh 经过 `mesh_linear` 后的 footprint 宽度、深度、朝向与
+  相对 joint origin 的侧向 CAD 偏置；这只改变 palm visual/collision 的接口形状，不反推或移动
+  HandIR joint frame。
+- connector control 从完整 source palm 表面选择，而不是只从稀疏的二维 convex-hull 顶点选择；
+  wrist/base lock 之后会对非锁定 connector 再施加一次精确位置约束。
+- 更严格地说，每个 digit joint 显式绑定 parent palm rigid part 与 child finger-root rigid part；
+  source interface patch 由这两个原始 rigid mesh 的最近表面提取。palm-side patch 与 child mesh
+  使用完全相同的 reference-to-target joint-frame transform。
+- articulation root frame 不再被误当成物理 wrist mount 中心；mount patch 从原始 palm mesh 上、
+  普通手指接口反方向的边界提取，并与 finger interface patch 分开锁定。
 
 ### 17.2 当前数据和自动审计
 
@@ -693,11 +703,17 @@ protected platform nodes: 24
 protected transmission hands: 49
 protected hardware changes: 0
 edited palms: 100/100
-maximum palm displacement: 21.45% of source palm extent
+maximum palm displacement: 69.58% of source palm extent（radial extreme；逐手记录约束）
 connected graphs: 100/100
 acyclic graphs: 100/100
 invalid motor-link bindings: 0
 finger-root visual overlap: 476/476
+off-center finger-root interfaces: 0/476
+minimum tangential root coverage: 65.71%
+maximum normalized tangential center error: 17.15%
+semantic palm/finger interfaces: 476/476
+maximum palm-interface frame error: 0
+palm-interface / mount-lock conflicts: 0
 ```
 
 审计文件是 `temp/exp1/grammar_v1/outputs/grammar_audit.json`，MuJoCo 总览是

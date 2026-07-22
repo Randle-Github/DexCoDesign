@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import xml.etree.ElementTree as ET
@@ -97,7 +98,7 @@ def scene(hands: list[dict], tile: int) -> Path:
     return path
 
 
-def render_tile(hands: list[dict], tile: int) -> Path:
+def render_tile(hands: list[dict], tile: int, *, camera_distance: float = 17.4) -> Path:
     xml = scene(hands, tile)
     image_path = TILE_DIR / f"tile_{tile + 1:02d}.png"
     model = mujoco.MjModel.from_xml_path(str(xml))
@@ -108,7 +109,7 @@ def render_tile(hands: list[dict], tile: int) -> Path:
     camera.lookat[:] = [0.0, 0.0, 0.9]
     # Five rows must remain fully visible in each tile; the earlier 14.7 view
     # clipped the nearest row after the 2x2 contact-sheet composition.
-    camera.distance = 17.4
+    camera.distance = camera_distance
     camera.azimuth = 90.0
     camera.elevation = -33.0
     with mujoco.Renderer(model, height=HEIGHT, width=WIDTH) as renderer:
@@ -119,8 +120,26 @@ def render_tile(hands: list[dict], tile: int) -> Path:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hand-id", action="append", default=[])
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--camera-distance", type=float, default=None)
+    args = parser.parse_args()
     payload = json.loads(INPUT.read_text(encoding="utf-8"))
     hands = payload["hands"]
+    if args.hand_id:
+        wanted = set(args.hand_id)
+        hands = [hand for hand in hands if hand["hand_id"] in wanted]
+        missing = wanted - {hand["hand_id"] for hand in hands}
+        if missing:
+            raise ValueError(f"unknown hand ids: {sorted(missing)}")
+        output = args.output or OUTPUTS / "selected_hands.png"
+        distance = args.camera_distance or max(5.8, 2.15 * math.ceil(len(hands) / COLUMNS) + 2.6)
+        tile = render_tile(hands, 98, camera_distance=distance)
+        with Image.open(tile) as image:
+            image.convert("RGB").save(output)
+        print(f"selected hands -> {output}")
+        return 0
     if len(hands) != 100:
         raise ValueError(f"expected 100 hands, got {len(hands)}")
     tiles = [render_tile(hands[index * 25:(index + 1) * 25], index) for index in range(4)]
@@ -135,4 +154,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

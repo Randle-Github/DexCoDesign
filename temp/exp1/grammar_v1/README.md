@@ -25,6 +25,13 @@ validation.
   appearance.
 - The generated HandIR graph is the only source of finger-root attachment
   translation, rotation, and joint axis.
+- Each digit interface explicitly names one parent palm rigid body and one
+  child finger-root rigid body. Its source palm-side patch is extracted from
+  the nearest surfaces of those two original meshes, rather than guessed from
+  the palm outline, root AABB, or joint origin.
+- The extracted palm-side interface patch and child finger mesh use the same
+  reference-to-target joint-frame transform. The HandIR joint frame is never
+  inferred from the deformed mesh.
 - The current batch retains anthropomorphic, symmetric, and asymmetric palm
   edits, but maps target slots to the original cyclic finger order.
 - Every palm starts from the selected source palm CAD mesh. Large radial edits
@@ -33,9 +40,14 @@ validation.
 - Radial graph layouts interpolate the source finger-root arrangement with the
   House target before compiling either fingers or palm. The default House
   contribution is 52–66%; it increases only when required for motor clearance.
-- Source-topology palm deformation is rejected if any planar vertex moves more
-  than 30% of the source palm's maximum planar extent.
-- Palm thickness coordinates and the wrist/root mount region are immutable.
+- Radial layouts use a graph-conditioned displacement bound because a joint
+  moved by more than 30% of palm scale cannot have an exactly aligned palm
+  socket while retaining a false universal 30% mesh bound. The measured bound
+  and displacement are stored per hand.
+- Palm thickness coordinates and the physical wrist/mount region are immutable.
+  The articulation root origin is not assumed to be the mount center: the
+  mount patch is extracted on the source palm boundary opposite the normal
+  finger interfaces.
   Non-anthropomorphic layouts reserve a mount exclusion sector so no generated
   finger slot competes with that mechanical interface.
 - Non-digit base/transmission branches are copied into HandIR and compiled with
@@ -83,7 +95,7 @@ from a mesh bounding box.
 - `source_topology_house` computes the official-style motor-footprint hull as
   a target cage, then globally maps the source palm footprint to that cage.
   It keeps the original visual vertex/face topology and every local thickness
-  coordinate. A disk around the source wrist/root mount is copied exactly,
+  coordinate. A disk around the inferred physical wrist/mount patch is copied exactly,
   with a smooth transition annulus into the deformable palm body.
   The attachment graph and cage share the same source/House interpolation, so
   reducing shape change cannot detach fingers from the palm.
@@ -96,6 +108,9 @@ from a mesh bounding box.
   details, and thickness coordinates. It is restricted to small local
   anthropomorphic attachment changes. Large circular layouts are deliberately
   rejected from this path because they create folded or spiky shells.
+  Connector controls are selected from the complete source palm surface, not
+  only the often-sparse 2D convex-hull vertex set. Wrist/base locks are applied
+  first and every non-locked connector control is then re-imposed exactly.
 - `fixed_template` is the strict backward-compatible mode with no local palm
   shape deformation.
 - `attachment_hull` projects all graph-defined finger and wrist patches,
@@ -204,9 +219,15 @@ source visual topology preserved      100 / 100 palms
 exact root mount lock                 100 / 100 palms (max error 0)
 source-palm thickness-coordinate error 0
 edited palms                           100 / 100
-maximum planar palm displacement       21.45% of source palm extent
+maximum planar palm displacement       69.58% of source palm extent (radial extreme)
 protected tendon-base lock failures    0
 finger-root visual overlap            476 / 476
+off-center finger-root interfaces      0 / 476
+minimum tangential root coverage       65.71%
+maximum normalized center error        17.15%
+semantic palm/finger interfaces        476 / 476
+maximum interface-frame error          0
+interface/mount-lock conflicts          0
 watertight collision palms           100 / 100
 ```
 
