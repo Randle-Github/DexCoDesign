@@ -41,13 +41,18 @@ Design Grammar:
 - morphology-specific retargeting and residual PPO evaluate each compiled hand,
   while grammar-constrained Hybrid SAC proposes local morphology edits.
 
-The experiments under `temp/exp1` are legacy prototypes and visual diagnostics,
-not the authoritative HandIR/compiler implementation. The current executable
-Design Grammar prototype is [`temp/exp1/grammar_v1`](temp/exp1/grammar_v1). It
-enforces a maximum of five fingers, source-bound motor/link candidates,
-connected acyclic graphs, and coupled palm/finger-root transforms. Its rendered
-hands validate structure and visual assembly only; collision, inertia, hardware
-BOM validation, and Isaac Lab reload checks remain compiler work.
+The executable production pipeline is
+[`source/dexcodesign/dexcodesign/morphology`](source/dexcodesign/dexcodesign/morphology);
+its complete data flow is documented in
+[`docs/morphology_pipeline.md`](docs/morphology_pipeline.md). It has no
+dependency on `temp/`. Generated reference parts and morphology libraries are
+written to `artifacts/hand_morphology/`.
+
+Generate 100 source-bound hands with:
+
+```bash
+.venv-morphology/bin/python scripts/dexcodesign/generate_hand_morphologies.py
+```
 
 ## Retained scope
 

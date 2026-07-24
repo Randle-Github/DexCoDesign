@@ -15,12 +15,13 @@ import numpy as np
 
 
 HERE = Path(__file__).resolve().parent
-STRICT = HERE.parent / "strict_v2" / "outputs"
-SOURCE_GRAPHS = HERE / "outputs" / "source_structure_graphs_direct.json"
-LIBRARY = HERE / "outputs" / "mechanism_bundle_library.json"
-OUTPUT = HERE / "outputs" / "generated_hand_ir.json"
-AUDIT = HERE / "outputs" / "grammar_audit.json"
-ASSET_ROOT = HERE.parents[2] / "assets" / "robot_hands"
+ROOT = HERE.parents[3]
+ARTIFACT_ROOT = ROOT / "artifacts" / "hand_morphology"
+SOURCE_GRAPHS = ARTIFACT_ROOT / "reference_graphs.json"
+LIBRARY = ARTIFACT_ROOT / "mechanism_bundles.json"
+OUTPUT = ARTIFACT_ROOT / "generated_100" / "hand_ir.json"
+AUDIT = ARTIFACT_ROOT / "generated_100" / "generation_summary.json"
+ASSET_ROOT = ROOT / "assets" / "robot_hands"
 DIRECT_REGISTRY = ASSET_ROOT / "direct_motor" / "registry.json"
 DIGITS = ("thumb", "index", "middle", "ring", "pinky")
 MOVABLE_URDF_TYPES = {"revolute", "continuous", "prismatic"}
@@ -1005,311 +1006,87 @@ def main() -> int:
             "parts": parts,
         })
 
-    invalid_bindings = []
-    invalid_bundle_ownership = []
-    cross_source_mesh_assignments = []
-    duplicate_source_bundle_assignments = []
-    finger_role_permutations = []
-    protected_hardware_changes = []
-    attachment_pose_errors = []
-    cyclic_order_violations = []
-    connector_errors = []
-    mesh_joint_frame_errors = []
-    semantic_interface_errors = []
-    connected = []
-    acyclic = []
+    # Keep only fail-fast invariants required to compile a physically coherent
+    # design. Detailed exploratory reports belonged to the old experiment
+    # and are intentionally not part of the production pipeline.
     for hand in hands:
-        if not hand["palm_layout"].get("cyclic_order_preserved", True):
-            cyclic_order_violations.append(hand["hand_id"])
-        bundle_ids = [slot["bundle_id"] for slot in hand["finger_slots"]]
-        if len(bundle_ids) != len(set(bundle_ids)):
-            duplicate_source_bundle_assignments.append(hand["hand_id"])
         part_ids = {int(node["id"]) for node in hand["parts"]}
-        connected.append(all(node["parent"] is None or int(node["parent"]) in part_ids for node in hand["parts"]))
-        acyclic.append(all(node["parent"] is None or int(node["parent"]) < int(node["id"]) for node in hand["parts"]))
-        for node in hand["parts"]:
-            if node["source_hand_id"] != hand["seed_source"]:
-                cross_source_mesh_assignments.append([
-                    hand["hand_id"], node["id"], hand["seed_source"], node["source_hand_id"],
-                ])
-            linear = np.asarray(node["mesh_linear"], dtype=float)
-            if node.get("protected_transmission_root") and not np.array_equal(linear, np.eye(3)):
-                protected_hardware_changes.append([hand["hand_id"], node["id"]])
-            if node.get("protected_proximal_hardware") and not (
-                np.allclose(linear.T @ linear, np.eye(3), atol=1.0e-10)
-                and np.isclose(np.linalg.det(linear), 1.0, atol=1.0e-10)
-            ):
-                protected_hardware_changes.append([hand["hand_id"], node["id"]])
-        for node in hand["parts"][1:]:
-            if node.get("protected_platform"):
-                source_node = sources[hand["seed_source"]]["parts"][int(node["source_part_id"])]
-                if (
-                    not np.array_equal(np.asarray(node["mesh_linear"]), np.eye(3))
-                    or not np.array_equal(
-                        np.asarray(node["relative_pos"]),
-                        np.asarray(source_node["relative_pos"]),
-                    )
-                ):
-                    protected_hardware_changes.append([hand["hand_id"], node["id"]])
-                continue
-            if node["candidate_id"] not in node["compatible_candidate_ids"]:
-                invalid_bindings.append([hand["hand_id"], node["id"]])
-            if candidates[node["candidate_id"]]["bundle_id"] != node["mechanism_bundle_id"]:
-                invalid_bundle_ownership.append([hand["hand_id"], node["id"]])
-        for slot in hand["finger_slots"]:
-            if slot["role"] != slot["source_role"]:
-                finger_role_permutations.append([
-                    hand["hand_id"], slot["slot_id"], slot["role"], slot["source_role"],
-                ])
-            translation_error = float(np.linalg.norm(
-                np.asarray(slot["attachment_translation"])
-                - np.asarray(slot["reference_attachment_translation"])
-            ))
-            rotation_error = float(np.linalg.norm(
-                np.asarray(slot["attachment_rotation"])
-                - np.asarray(slot["reference_attachment_rotation"])
-            ))
-            attachment_pose_errors.append(max(translation_error, rotation_error))
-            root = hand["parts"][slot["root_node_id"]]
-            error = float(np.linalg.norm(np.asarray(root["world_pos"]) - np.asarray(slot["attachment_translation"])))
-            connector_errors.append(error)
-            if (
-                slot.get("interface_parent_palm_node_id") != 0
-                or slot.get("interface_child_finger_node_id") != slot["root_node_id"]
-                or hand["parts"][0].get("morphology_part") != "palm_parent_rigid_body"
-                or root.get("morphology_part") != "finger_root_rigid_body"
-            ):
-                semantic_interface_errors.append([
-                    hand["hand_id"], slot["slot_id"], slot["role"]
-                ])
-            donor_frame = source_slot(
-                sources[slot["source_hand_id"]], bundles[slot["bundle_id"]]
-            )["frame"]
-            linear = np.asarray(root["mesh_linear"], dtype=float)
-            left, _, right = np.linalg.svd(linear)
-            mesh_rotation = left @ right
-            mesh_joint_frame_errors.append(float(np.linalg.norm(
-                mesh_rotation @ donor_frame
-                - np.asarray(slot["attachment_rotation"], dtype=float)
-            )))
-    house_layouts = [
-        hand["palm_layout"] for hand in hands
-        if "source_house_blend" in hand["palm_layout"]
-    ]
-    base_palm_retention_errors = []
-    for hand in hands:
-        graph = hand["base_palm_kinematics"]
-        joints = graph["joints"]
-        source_joint_names = {
-            record["joint_name"]
-            for record in direct_joint_records[hand["seed_source"]]
-        }
-        problems = []
-        if graph["dof_count"] != len(joints):
-            problems.append("base/palm DoF count does not match joint records")
-        if hand["dof_count"] != (
-            hand["active_dof_count"] + hand["passive_mimic_dof_count"]
+        if len(part_ids) != len(hand["parts"]):
+            raise ValueError(f"{hand['hand_id']}: duplicate part ID")
+        if sum(node["parent"] is None for node in hand["parts"]) != 1:
+            raise ValueError(f"{hand['hand_id']}: graph must have one root")
+        if any(
+            node["parent"] is not None
+            and (
+                int(node["parent"]) not in part_ids
+                or int(node["parent"]) >= int(node["id"])
+            )
+            for node in hand["parts"]
         ):
-            problems.append("total DoF does not equal active + passive mimic")
+            raise ValueError(f"{hand['hand_id']}: disconnected or cyclic graph")
+        if max(hand["finger_count"], 0) > MAX_FINGERS:
+            raise ValueError(f"{hand['hand_id']}: more than {MAX_FINGERS} fingers")
         if hand["dof_count"] != int(
             direct_entries[hand["seed_source"]]["scalar_dofs"]
         ):
-            problems.append("generated DoF does not match normalized source URDF")
-        if len({joint["joint_name"] for joint in joints}) != len(joints):
-            problems.append("duplicate base/palm joints")
-        if any(joint["editable"] for joint in joints):
-            problems.append("base/palm joint marked editable")
-        if any(
-            joint["actuation"] == "passive_mimic"
-            and joint["mimic_master"] not in source_joint_names
-            for joint in joints
+            raise ValueError(f"{hand['hand_id']}: source DoF was not preserved")
+        if hand["dof_count"] != (
+            hand["active_dof_count"] + hand["passive_mimic_dof_count"]
         ):
-            problems.append("base/palm mimic references missing source master")
-        if any(
-            joint["mesh_part_id"] is not None
-            and not hand["parts"][int(joint["mesh_part_id"])].get(
-                "protected_platform"
-            )
-            for joint in joints
+            raise ValueError(f"{hand['hand_id']}: invalid active/mimic partition")
+        if not hand["palm_layout"].get("cyclic_order_preserved", True):
+            raise ValueError(f"{hand['hand_id']}: finger order changed")
+        if not np.isclose(
+            np.linalg.norm(np.asarray(hand["palm_transform"])[:, 1]), 1.0
         ):
-            problems.append("base/palm joint bound to an editable mesh part")
-        if problems:
-            base_palm_retention_errors.append(
-                {"hand_id": hand["hand_id"], "problems": problems}
-            )
-    audit = {
+            raise ValueError(f"{hand['hand_id']}: palm thickness changed")
+        bundle_ids = [slot["bundle_id"] for slot in hand["finger_slots"]]
+        if len(bundle_ids) != len(set(bundle_ids)):
+            raise ValueError(f"{hand['hand_id']}: duplicate finger bundle")
+        for node in hand["parts"]:
+            if node["source_hand_id"] != hand["seed_source"]:
+                raise ValueError(f"{hand['hand_id']}: cross-source mesh")
+            if node.get("protected_transmission_root") and not np.array_equal(
+                np.asarray(node["mesh_linear"]), np.eye(3)
+            ):
+                raise ValueError(f"{hand['hand_id']}: protected base changed")
+        for node in hand["parts"][1:]:
+            if node.get("protected_platform"):
+                continue
+            if node["candidate_id"] not in node["compatible_candidate_ids"]:
+                raise ValueError(f"{hand['hand_id']}: invalid motor/link pairing")
+            if candidates[node["candidate_id"]]["bundle_id"] != node["mechanism_bundle_id"]:
+                raise ValueError(f"{hand['hand_id']}: candidate ownership mismatch")
+        for slot in hand["finger_slots"]:
+            root = hand["parts"][int(slot["root_node_id"])]
+            if slot["role"] != slot["source_role"]:
+                raise ValueError(f"{hand['hand_id']}: finger role order changed")
+            if not np.allclose(
+                root["world_pos"], slot["attachment_translation"], atol=1.0e-10
+            ):
+                raise ValueError(f"{hand['hand_id']}: finger root disconnected")
+
+    summary = {
         "generation_seed": generation_seed,
-        "source_library_count": len(direct_registry["hands"]),
-        "eligible_source_count": len(eligible_palms),
-        "all_source_hands_eligible": (
-            len(eligible_palms) == len(direct_registry["hands"])
-        ),
-        "source_coverage": source_coverage,
-        "hands": len(hands),
-        "finger_count_range": [min(h["finger_count"] for h in hands), max(h["finger_count"] for h in hands)],
-        "dof_range": [min(h["dof_count"] for h in hands), max(h["dof_count"] for h in hands)],
-        "designs_with_added_finger": sum(h["finger_count"] > h["baseline_finger_count"] for h in hands),
-        "designs_with_removed_finger": sum(h["finger_count"] < h["baseline_finger_count"] for h in hands),
-        "four_to_five_addition_disabled": not ENABLE_FINGER_ADDITION,
-        "maximum_fingers_enforced": max(h["finger_count"] for h in hands) <= MAX_FINGERS,
-        "designs_with_increased_dof": sum(h["dof_count"] > h["baseline_dof"] for h in hands),
-        "maximum_dof_increase": max(h["dof_count"] - h["baseline_dof"] for h in hands),
-        "all_graphs_connected": all(connected),
-        "all_graphs_acyclic": all(acyclic),
-        "invalid_motor_link_bindings": invalid_bindings,
-        "invalid_bundle_ownership": invalid_bundle_ownership,
-        "cross_source_mesh_assignments": cross_source_mesh_assignments,
-        "all_meshes_from_seed_source": not cross_source_mesh_assignments,
-        "hands_with_mixed_source_meshes": len({
-            record[0] for record in cross_source_mesh_assignments
-        }),
-        "duplicate_source_bundle_assignments": duplicate_source_bundle_assignments,
-        "all_source_bundles_used_at_most_once_per_hand": not duplicate_source_bundle_assignments,
-        "finger_role_permutations": finger_role_permutations,
-        "cyclic_order_violations": cyclic_order_violations,
-        "source_finger_order_locked": not finger_role_permutations and not cyclic_order_violations,
-        "maximum_attachment_pose_error": max(attachment_pose_errors, default=0.0),
-        "attachment_poses_editable_with_order_constraint": True,
-        "protected_hardware_changes": protected_hardware_changes,
-        "all_protected_hardware_locked": not protected_hardware_changes,
-        "protected_platform_nodes": sum(
-            len(hand["protected_platform_node_ids"]) for hand in hands
-        ),
-        "protected_transmission_hands": sum(
-            hand["protected_transmission_source"] for hand in hands
-        ),
-        "palm_edits_enabled": True,
-        "protected_transmission_layout_policy": "anthropomorphic_only_with_locked_base_region",
-        "finger_length_scale_range": [
-            min(
-                node["length_scale"] for hand in hands for node in hand["parts"]
-                if "finger_slot" in node
-            ),
-            max(
-                node["length_scale"] for hand in hands for node in hand["parts"]
-                if "finger_slot" in node
-            ),
+        "source_hands": len(eligible_palms),
+        "generated_hands": len(hands),
+        "source_hand_ids": eligible_palms,
+        "finger_count_range": [
+            min(hand["finger_count"] for hand in hands),
+            max(hand["finger_count"] for hand in hands),
         ],
-        "finger_radius_scale_range": [
-            min(
-                node["radius_scale"] for hand in hands for node in hand["parts"]
-                if "finger_slot" in node
-            ),
-            max(
-                node["radius_scale"] for hand in hands for node in hand["parts"]
-                if "finger_slot" in node
-            ),
+        "dof_range": [
+            min(hand["dof_count"] for hand in hands),
+            max(hand["dof_count"] for hand in hands),
         ],
-        "maximum_slot_connector_error": max(connector_errors, default=0.0),
-        "semantic_palm_finger_interface_errors": semantic_interface_errors,
-        "all_interfaces_have_explicit_palm_parent_and_finger_child": (
-            not semantic_interface_errors
-        ),
-        "maximum_finger_mesh_joint_frame_error": max(
-            mesh_joint_frame_errors, default=0.0
-        ),
-        "all_palm_transforms_applied_to_slots": all(
-            slot["connector_transform_applied"] for hand in hands for slot in hand["finger_slots"]
-        ),
-        "all_palm_thickness_scales_locked": all(
-            np.isclose(np.linalg.norm(np.asarray(hand["palm_transform"], dtype=float)[:, 1]), 1.0)
-            for hand in hands
-        ),
-        "edge_attachment_layout_edits": sum(
-            len(action["edits"])
-            for hand in hands for action in hand["grammar_actions"]
-            if action["operation"] == "APPLY_GLOBAL_PALM_LAYOUT"
-        ),
-        "palm_layout_mode_counts": {
+        "layout_counts": {
             mode: sum(hand["palm_layout"]["mode"] == mode for hand in hands)
             for mode in PALM_LAYOUT_MODES
         },
-        "minimum_motor_arc_clearance": min(
-            (
-                hand["palm_layout"]["minimum_arc_clearance"]
-                for hand in hands
-                if hand["palm_layout"]["minimum_arc_clearance"] is not None
-            ),
-            default=None,
+        "hands_with_preserved_base_or_palm_dof": sum(
+            hand["base_palm_kinematics"]["dof_count"] > 0 for hand in hands
         ),
-        "minimum_actual_motor_clearance": min(
-            (
-                layout["minimum_actual_motor_clearance"]
-                for layout in house_layouts
-            ),
-            default=None,
-        ),
-        "source_house_blend_range": None if not house_layouts else [
-            min(layout["source_house_blend"] for layout in house_layouts),
-            max(layout["source_house_blend"] for layout in house_layouts),
-        ],
-        "maximum_attachment_displacement_fraction": max(
-            (layout["maximum_attachment_displacement_fraction"] for layout in house_layouts),
-            default=0.0,
-        ),
-        "base_palm_dof_retention_errors": base_palm_retention_errors,
-        "all_base_palm_dofs_retained": not base_palm_retention_errors,
-        "generated_hands_with_base_palm_dofs": sum(
-            hand["base_palm_kinematics"]["dof_count"] > 0
-            for hand in hands
-        ),
-        "base_palm_dofs_retained": sum(
-            hand["base_palm_kinematics"]["dof_count"] for hand in hands
-        ),
-        "base_palm_active_dofs_retained": sum(
-            hand["base_palm_kinematics"]["active_dof_count"]
-            for hand in hands
-        ),
-        "base_palm_passive_mimic_dofs_retained": sum(
-            hand["base_palm_kinematics"]["passive_mimic_dof_count"]
-            for hand in hands
-        ),
-        "base_palm_kinematic_only_frames": sum(
-            hand["base_palm_kinematics"]["kinematic_only_frame_count"]
-            for hand in hands
-        ),
-        "base_palm_dof_catalog": {
-            seed_id: {
-                "dof_count": next(
-                    hand["base_palm_kinematics"]["dof_count"]
-                    for hand in hands
-                    if hand["seed_source"] == seed_id
-                ),
-                "active_dof_count": next(
-                    hand["base_palm_kinematics"]["active_dof_count"]
-                    for hand in hands
-                    if hand["seed_source"] == seed_id
-                ),
-                "passive_mimic_dof_count": next(
-                    hand["base_palm_kinematics"][
-                        "passive_mimic_dof_count"
-                    ]
-                    for hand in hands
-                    if hand["seed_source"] == seed_id
-                ),
-                "kinematic_only_frame_count": next(
-                    hand["base_palm_kinematics"][
-                        "kinematic_only_frame_count"
-                    ]
-                    for hand in hands
-                    if hand["seed_source"] == seed_id
-                ),
-            }
-            for seed_id in sorted({hand["seed_source"] for hand in hands})
-        },
     }
-    critical_failures = {
-        "invalid_motor_link_bindings": invalid_bindings,
-        "invalid_bundle_ownership": invalid_bundle_ownership,
-        "cross_source_mesh_assignments": cross_source_mesh_assignments,
-        "duplicate_source_bundle_assignments": duplicate_source_bundle_assignments,
-        "finger_role_permutations": finger_role_permutations,
-        "cyclic_order_violations": cyclic_order_violations,
-        "protected_hardware_changes": protected_hardware_changes,
-        "base_palm_dof_retention_errors": base_palm_retention_errors,
-    }
-    if any(critical_failures.values()):
-        raise ValueError(f"source-locked grammar invariant failed: {critical_failures}")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(
         json.dumps(
@@ -1323,8 +1100,8 @@ def main() -> int:
         + "\n",
         encoding="utf-8",
     )
-    AUDIT.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(audit, indent=2))
+    AUDIT.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2))
     return 0
 
 

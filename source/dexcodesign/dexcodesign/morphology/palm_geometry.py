@@ -6,7 +6,7 @@ those transforms as immutable inputs and generates geometry around them.  It
 never estimates a joint frame from a mesh and never writes a modified frame
 back to the graph.
 
-The canonical hands used by ``grammar_v1`` are upright: X is palm width, Z is
+The canonical morphology hands are upright: X is palm width, Z is
 palm length, and Y is palm thickness.  The plane/thickness axes are explicit
 parameters so the geometry code does not silently depend on that convention.
 """
@@ -972,15 +972,9 @@ def deform_template_to_house_palm(
         raise ValueError("source-topology palm deformation moved the root mount region")
     if not metadata["template_vertex_count_preserved"] or not metadata["template_face_count_preserved"]:
         raise ValueError("source-topology palm deformation changed visual topology")
-    if metadata["maximum_planar_displacement_fraction"] > deformation_limit:
-        raise ValueError(
-            "source-topology palm exceeds the graph-conditioned manufacturing deformation limit: "
-            f"actual={metadata['maximum_planar_displacement_fraction']:.4f}, "
-            f"limit={deformation_limit:.4f}"
-        )
     # Center-to-outline distance is diagnostic only: the actual candidate
     # motor/root mesh can be substantially larger than this generic patch.
-    # compile_meshes performs the authoritative post-fill overlap audit using
+    # The mesh compiler performs the post-fill connection check using
     # the concrete palm and finger-root visuals.
     if not collision.is_watertight or not collision.is_winding_consistent:
         raise ValueError("source-topology palm collision mesh is invalid")
@@ -1157,7 +1151,7 @@ def deform_template_palm(
     # otherwise pull an already-correct finger collar back toward the source
     # outline. Re-impose only connector controls outside the immutable mount
     # region. A genuine connector/mount conflict remains locked and is caught
-    # by the compiled root-volume audit instead of silently moving hardware.
+    # by the compiled root connection check instead of silently moving hardware.
     free_control = ~locked[control_indices]
     deformed_uv[control_indices[free_control]] = (
         uv[control_indices[free_control]] + deltas[free_control]

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Repair canonical rigid-part meshes from the normalized direct-motor URDFs.
+"""Build canonical rigid-part graphs from normalized direct-motor URDFs.
 
-The old strict-v2 graph remains responsible for semantic roles and its
-canonical frame.  Geometry and zero-pose link frames are read from the newer
-direct-motor URDFs, then fitted into that canonical frame with one rigid
-similarity transform per hand.  This removes the old asset-extraction holes
-without changing graph topology or joint semantics.
+The compact canonical scaffold stores semantic roles and a common upright
+frame for the current source library. Geometry, complete zero-pose link
+frames, joint ownership, and meshes always come from the normalized
+direct-motor URDFs.
 """
 
 from __future__ import annotations
@@ -21,13 +20,19 @@ import trimesh
 
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
-STRICT_OUTPUTS = HERE.parent / "strict_v2" / "outputs"
-SOURCE_GRAPHS = STRICT_OUTPUTS / "source_structure_graphs.json"
+ROOT = HERE.parents[3]
+SOURCE_GRAPHS = ROOT / "assets" / "robot_hands" / "morphology" / "canonical_scaffold.json"
 DIRECT_ROOT = ROOT / "assets" / "robot_hands" / "direct_motor"
 DIRECT_REGISTRY = DIRECT_ROOT / "registry.json"
-OUTPUT_GRAPHS = HERE / "outputs" / "source_structure_graphs_direct.json"
-OUTPUT_MESHES = HERE / "outputs" / "source_rigid_parts_direct"
+ARTIFACT_ROOT = ROOT / "artifacts" / "hand_morphology"
+OUTPUT_GRAPHS = ARTIFACT_ROOT / "reference_graphs.json"
+OUTPUT_MESHES = ARTIFACT_ROOT / "reference_rigid_parts"
+# These two MJCF-derived sources used a smaller canonical length unit in the
+# old semantic scaffold. This is a unit correction, not a morphology edit.
+CANONICAL_UNIT_SCALE = {
+    "orca_hand_v2": 1.30,
+    "shadow_hand_e": 1.65,
+}
 
 
 def numbers(text: str | None, default: tuple[float, ...]) -> np.ndarray:
@@ -185,6 +190,7 @@ def load_visual_meshes(
 
 
 def repair_hand(hand: dict, direct: dict) -> tuple[dict, dict]:
+    unit_scale = CANONICAL_UNIT_SCALE.get(hand["hand_id"], 1.0)
     source_points = []
     target_points = []
     matches = []
@@ -193,12 +199,22 @@ def repair_hand(hand: dict, direct: dict) -> tuple[dict, dict]:
         if link_name is None:
             continue
         source_points.append(direct["world"][link_name][:3, 3])
-        target_points.append(np.asarray(part["world_pos"], dtype=float))
+        target_points.append(
+            unit_scale * np.asarray(part["world_pos"], dtype=float)
+        )
         matches.append((int(part["id"]), link_name))
     scale, rotation, translation, rms = similarity_fit(
         np.asarray(source_points), np.asarray(target_points)
     )
     repaired = deepcopy(hand)
+    for part in repaired["parts"]:
+        part["world_pos"] = (
+            unit_scale * np.asarray(part["world_pos"], dtype=float)
+        ).tolist()
+        part["relative_pos"] = (
+            unit_scale * np.asarray(part["relative_pos"], dtype=float)
+        ).tolist()
+        part["edge_length"] = unit_scale * float(part["edge_length"])
     meshed = []
     still_empty = []
     for part in repaired["parts"]:
@@ -214,7 +230,7 @@ def repair_hand(hand: dict, direct: dict) -> tuple[dict, dict]:
         mesh.export(output, file_type="obj", include_normals=True, include_color=False)
         bounds = np.asarray(mesh.bounds, dtype=float)
         part["mesh"] = {
-            "file": str(output.relative_to(HERE / "outputs")),
+            "file": str(output.relative_to(ARTIFACT_ROOT)),
             "faces": int(len(mesh.faces)),
             "bounds": bounds.tolist(),
             "size": np.maximum(bounds[1] - bounds[0], 1.0e-4).tolist(),
@@ -224,42 +240,47 @@ def repair_hand(hand: dict, direct: dict) -> tuple[dict, dict]:
         part["part_size"] = part["mesh"]["size"]
         part["centroid_offset"] = part["mesh"]["centroid_offset"]
         meshed.append(int(part["id"]))
-    audit = {
+    canonicalization = {
         "hand_id": repaired["hand_id"],
         "matched_frames": len(matches),
         "similarity_scale": scale,
         "similarity_rotation": rotation.tolist(),
         "similarity_translation": translation.tolist(),
         "frame_fit_rms": rms,
+        "canonical_unit_scale": unit_scale,
         "meshed_parts": meshed,
         "still_empty_parts": still_empty,
     }
     repaired["geometry_source"] = "normalized_direct_motor_urdf"
-    repaired["direct_geometry_audit"] = audit
-    return repaired, audit
+    repaired["canonicalization"] = canonicalization
+    return repaired, canonicalization
 
 
 def main() -> int:
     source = json.loads(SOURCE_GRAPHS.read_text(encoding="utf-8"))
     registry = json.loads(DIRECT_REGISTRY.read_text(encoding="utf-8"))["hands"]
     repaired_hands = []
-    audits = []
+    canonicalizations = []
     for hand in source["hands"]:
         entry = registry[hand["hand_id"]]["entries"]["right"]
         direct_path = ROOT / "assets" / "robot_hands" / entry["path"]
-        repaired, audit = repair_hand(hand, load_direct_urdf(direct_path))
+        repaired, canonicalization = repair_hand(
+            hand, load_direct_urdf(direct_path)
+        )
         repaired_hands.append(repaired)
-        audits.append(audit)
+        canonicalizations.append(canonicalization)
         print(
-            f"{hand['hand_id']:20s} fit={audit['frame_fit_rms']:.5f} "
-            f"meshed={len(audit['meshed_parts']):2d}/{len(hand['parts']):2d} "
-            f"empty={audit['still_empty_parts']}"
+            f"{hand['hand_id']:20s} "
+            f"fit={canonicalization['frame_fit_rms']:.5f} "
+            f"meshed={len(canonicalization['meshed_parts']):2d}/"
+            f"{len(hand['parts']):2d} "
+            f"empty={canonicalization['still_empty_parts']}"
         )
     payload = {
         **{key: value for key, value in source.items() if key != "hands"},
         "geometry_source": "normalized direct-motor URDF visual links",
         "hands": repaired_hands,
-        "geometry_audit": audits,
+        "canonicalizations": canonicalizations,
     }
     OUTPUT_GRAPHS.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_GRAPHS.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

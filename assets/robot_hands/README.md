@@ -15,8 +15,13 @@ Generated files are reproducible with:
 
 ```bash
 python scripts/assets/prepare_robot_hands.py
-python scripts/assets/validate_robot_hands.py
+python scripts/assets/build_direct_motor_hands.py
 ```
+
+The morphology pipeline consumes only the normalized bilateral assets under
+`direct_motor/`. Every movable joint there is either an active direct joint or
+a passive affine mimic. See
+[`docs/morphology_pipeline.md`](../../docs/morphology_pipeline.md).
 
 Prefer native USD entries where the vendor supplies Isaac Sim assets. Otherwise use the normalized URDF or the upstream MJCF through Isaac Sim's corresponding importer. Do not edit files under `source/`; project-specific dynamics and actuator tuning belong in DexCoDesign configuration code.
 

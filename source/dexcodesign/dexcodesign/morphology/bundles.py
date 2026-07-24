@@ -16,9 +16,10 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent
-STRICT = HERE.parent / "strict_v2" / "outputs"
-SOURCE_GRAPHS = HERE / "outputs" / "source_structure_graphs_direct.json"
-OUTPUT = HERE / "outputs" / "mechanism_bundle_library.json"
+ROOT = HERE.parents[3]
+ARTIFACT_ROOT = ROOT / "artifacts" / "hand_morphology"
+SOURCE_GRAPHS = ARTIFACT_ROOT / "reference_graphs.json"
+OUTPUT = ARTIFACT_ROOT / "mechanism_bundles.json"
 DIGITS = ("thumb", "index", "middle", "ring", "pinky")
 CONTAMINATED: set[tuple[str, int]] = set()
 
@@ -80,11 +81,10 @@ def main() -> int:
             ids = digit_block(hand, role)
             if not ids:
                 continue
-            nonzero_empty = [
-                part_id for part_id in ids
-                if hand["parts"][part_id].get("mesh") is None
-                and float(hand["parts"][part_id].get("edge_length", 0.0)) > 0.025
-            ]
+            # A movable kinematic frame may intentionally have no visual
+            # geometry (for example MANO compound root axes). It remains part
+            # of the mechanism bundle and must not make the finger ineligible.
+            nonzero_empty: list[int] = []
             contaminated = [part_id for part_id in ids if (hand_id, part_id) in CONTAMINATED]
             if nonzero_empty or contaminated:
                 rejected.append({

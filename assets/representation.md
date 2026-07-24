@@ -635,42 +635,38 @@ compiler 只接受已经通过该 validation 的 HandIR。
 
 ---
 
-## 16. Legacy prototype 边界
+## 16. 当前正式实现
 
-`temp/exp1/strict_v2` 是历史 graph/crossover/MuJoCo 可视化实验，只用于记录失败模式和验证工具链。
-它的跨 donor digit crossover、candidate mesh repair 和 VAE regression 不是正式 Design Grammar。
+正式实现位于 `source/dexcodesign/dexcodesign/morphology`，完整说明见
+`docs/morphology_pipeline.md`。它不依赖 `temp/`。
 
-正式重构不得继续依赖：
+数据流为：
 
-- 整条 donor digit/subtree 搬运；
-- allow-list 之外的 source link crossover；
-- unrelated candidate mesh repair；
-- motor 与 link candidate 独立采样；
-- geometry descriptor 直接代表物理 mesh；
-- reconstruction MAE 代表 contact fidelity；
-- 由 visual bounds 猜 joint/motor interface。
+```text
+公开 source asset
+→ 双侧标准 URDF
+→ active-direct / passive-mimic
+→ fixed-joint-contracted rigid-link graph
+→ source-local motor/link grammar
+→ graph morphology edit
+→ source-topology palm deformation与逐 link mesh 编译
+→ compiled hand
+```
 
-下一阶段代码应从 versioned motor/link database、HandIR schema 和 deterministic compiler 开始。
-
----
-
-## 17. 当前 `grammar_v1` 结构/视觉验证
-
-`temp/exp1/grammar_v1` 当前采用 graph-first compiler：先实例化完整 source graph，再从 base 向外
-逐 node 选择合法 rigid-link candidate。tendon/mimic/equality 不参与装配，只保留为以后控制器使用的
-actuation metadata。
-
-### 17.1 当前实现
+### 16.1 Graph 与 actuation
 
 - 保留 source graph 的 palm、base、掌内活动 joint 和 digit topology；
+- 所有 movable joint 只有 active direct 或 passive mimic 两类；
+- 原 tendon/equality 被有损但显式地转换为 direct master + affine mimic follower；
+- MANO 的所有自由度均为 active；
 - finger count、digit topology、thumb/normal-finger identity 与循环顺序复制 source；
 - palm 和 finger-base pose 可以连续变化，但不得改变 source cyclic order；
 - 每个 motor instance 具有显式 `allowed_candidate_ids`；
 - 每个 generated hand 绑定唯一 `seed_source`，所有 palm/finger mesh 都来自该 source；
 - 禁止跨手 replacement，也禁止同一 source 内的 finger bundle 重排；
 - finger mesh edit 只包含轴向 length scale 与横向 radius scale；palm 仍使用受限、保拓扑形变；
-- 非 digit base/transmission branch 原样加入 HandIR；tendon/underactuated hand 的 root、base 和
-  proximal transmission housing 使用 identity transform 锁定；
+- 非 digit base/palm branch 原样加入 HandIR；under-palm hardware、root mount 和不可编辑
+  transmission housing 使用 identity transform 锁定；
 - `template_to_link_pose` 只配准当前 mesh，child joint/subtree 不随之平移；
 - 若 source exporter 把 palm shell 挂在 digit-root body，该 carrier mesh 被保护；
 - link length/radius 可做有界变化，graph attachment 从 base 向外重新计算。
@@ -685,41 +681,16 @@ actuation metadata。
 - articulation root frame 不再被误当成物理 wrist mount 中心；mount patch 从原始 palm mesh 上、
   普通手指接口反方向的边界提取，并与 finger interface patch 分开锁定。
 
-### 17.2 当前数据和自动审计
+### 16.2 生产检查
 
-```text
-14 source hands
-100 generated hands
-finger count: 4–5
-DoF: 10–20（包含保留的 platform DoF）
-added fingers: 0
-removed-finger designs: 0
-cross-source mesh assignments: 0
-hands with mixed source meshes: 0
-duplicate source bundle assignments: 0
-finger role/order permutations: 0
-cyclic finger-order violations: 0
-protected platform nodes: 24
-protected transmission hands: 49
-protected hardware changes: 0
-edited palms: 100/100
-maximum palm displacement: 69.58% of source palm extent（radial extreme；逐手记录约束）
-connected graphs: 100/100
-acyclic graphs: 100/100
-invalid motor-link bindings: 0
-finger-root visual overlap: 476/476
-off-center finger-root interfaces: 0/476
-minimum tangential root coverage: 65.71%
-maximum normalized tangential center error: 17.15%
-semantic palm/finger interfaces: 476/476
-maximum palm-interface frame error: 0
-palm-interface / mount-lock conflicts: 0
-```
+旧的探索性 `grammar_audit.json` 已删除。生产版只保留会导致编译结果错误的 fail-fast 条件：
+source 覆盖、graph 连通/无环、motor-link ownership、source mesh ownership、finger order、
+最多五指、DoF 与 active/mimic 分区、palm thickness、root mount、finger-root connector 和
+collision validity。
 
-审计文件是 `temp/exp1/grammar_v1/outputs/grammar_audit.json`，MuJoCo 总览是
-`temp/exp1/grammar_v1/outputs/grammar_100_hands.png`。
+成功后仅写简短的 `artifacts/hand_morphology/generated_100/generation_summary.json`。
 
-### 17.3 尚未声称完成的部分
+### 16.3 尚未声称完成的部分
 
 公开 URDF 通常缺少真实 motor BOM，因此当前 motor family 仍是 source-local prototype proxy。
 当前实现不再尝试跨厂商物理电机等价或跨手 mesh 复用。进入 Isaac Lab/SAC 前仍需补齐真实 motor

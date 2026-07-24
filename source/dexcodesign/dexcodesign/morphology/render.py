@@ -15,10 +15,11 @@ from PIL import Image
 
 
 HERE = Path(__file__).resolve().parent
-OUTPUTS = HERE / "outputs"
+ROOT = HERE.parents[3]
+OUTPUTS = ROOT / "artifacts" / "hand_morphology" / "generated_100"
 INPUT = OUTPUTS / "compiled_hands.json"
 TILE_DIR = OUTPUTS / "render_tiles"
-FINAL = OUTPUTS / "grammar_100_hands.png"
+FINAL = OUTPUTS / "hands_100.png"
 WIDTH, HEIGHT = 1920, 1080
 COLUMNS = 5
 SPACING_X, SPACING_Y = 3.1, 3.15

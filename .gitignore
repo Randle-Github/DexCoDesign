@@ -21,6 +21,7 @@
 **/.pytest_cache/
 **/*.pyc
 **/*.pb
+/.venv-morphology/
 
 # Docker/Singularity
 **/*.sif
@@ -41,6 +42,7 @@ docker/.container.cfg
 **/wandb/*
 **/.neptune/*
 docker/artifacts/
+/artifacts/
 *.tmp
 
 # Doc Outputs

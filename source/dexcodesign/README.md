@@ -1,35 +1,34 @@
-# DexCoDesign grammar/compiler core
+# DexCoDesign morphology pipeline
 
-This package is the model-free foundation of the current HandIR method.  It
-contains:
+The production pipeline lives in `dexcodesign.morphology` and has no
+dependency on `temp/`.
 
-- versioned HandIR and `MechanismBundle` schemas;
-- a migration importer for the audited 14-hand canonical graph/rigid-part library;
-- strict graph and source motor/link candidate validation;
-- deterministic source-bound mesh compilation;
-- twenty WUJI Hand 2 grammar-edit examples.
-
-It intentionally contains no SAC, PPO, graph encoder, decoder, or learned mesh
-model yet.
-
-## Current hardware boundary
-
-The migration importer can preserve the audited joint-to-child-link ownership,
-but the legacy canonical graph does not contain complete vendor motor,
-transmission, tendon, mimic, or equality metadata.  Such bundles are marked
-`joint_bound_pending_native_hardware_parse`; they must not be presented as
-resolved physical motor specifications.
-
-The native URDF/MJCF/USD importer will replace this bridge and populate actual
-source actuator/transmission bindings.  The HandIR, grammar, and compiler APIs
-do not depend on the bridge.
-
-## Reference demo
-
-```bash
-cd /Users/liuyangcen/workspace/DexCoDesign
-temp/.venv/bin/python scripts/dexcodesign/build_reference_demo.py
-temp/.venv/bin/mjpython scripts/dexcodesign/render_reference_demo.py
+```text
+source URDF/MJCF/USD companion
+        ↓
+bilateral standard URDF
+        ↓
+active direct joint or passive mimic joint
+        ↓
+fixed-joint-contracted rigid-link graph
+        ↓
+source-local motor/link grammar
+        ↓
+graph morphology edits
+        ↓
+source-topology palm deformation + rigid-link mesh deformation
+        ↓
+compiled 100-hand library
 ```
 
-Outputs are written under `temp/design_grammar/outputs`.
+Run from the repository root:
+
+```bash
+.venv-morphology/bin/python scripts/dexcodesign/generate_hand_morphologies.py
+```
+
+Add `--render` for the MuJoCo contact sheet, `--resume` after an interrupted
+mesh build, or `--rebuild-reference` after changing a source URDF or the
+semantic scaffold.
+
+Outputs are placed in `artifacts/hand_morphology/`.
