@@ -17,14 +17,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 STRICT = HERE.parent / "strict_v2" / "outputs"
-SOURCE_GRAPHS = STRICT / "source_structure_graphs.json"
+SOURCE_GRAPHS = HERE / "outputs" / "source_structure_graphs_direct.json"
 OUTPUT = HERE / "outputs" / "mechanism_bundle_library.json"
 DIGITS = ("thumb", "index", "middle", "ring", "pinky")
-CONTAMINATED = {
-    ("mano", 1),
-    ("sharpa_wave_01", 6),
-    ("inspire_rh56dfx", 1),
-}
+CONTAMINATED: set[tuple[str, int]] = set()
 
 
 def descendant_digits(hand: dict) -> list[set[str]]:
@@ -183,4 +179,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

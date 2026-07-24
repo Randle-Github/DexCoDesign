@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
@@ -15,11 +16,14 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 STRICT = HERE.parent / "strict_v2" / "outputs"
-SOURCE_GRAPHS = STRICT / "source_structure_graphs.json"
+SOURCE_GRAPHS = HERE / "outputs" / "source_structure_graphs_direct.json"
 LIBRARY = HERE / "outputs" / "mechanism_bundle_library.json"
 OUTPUT = HERE / "outputs" / "generated_hand_ir.json"
 AUDIT = HERE / "outputs" / "grammar_audit.json"
+ASSET_ROOT = HERE.parents[2] / "assets" / "robot_hands"
+DIRECT_REGISTRY = ASSET_ROOT / "direct_motor" / "registry.json"
 DIGITS = ("thumb", "index", "middle", "ring", "pinky")
+MOVABLE_URDF_TYPES = {"revolute", "continuous", "prismatic"}
 MAX_FINGERS = 5
 # Do not synthesize a fifth digit on a four-finger source.  Five-finger designs
 # are generated from a real five-finger palm, while three/four-finger layouts
@@ -40,6 +44,108 @@ PROTECTED_TRANSMISSION_SOURCES = {
     "ruka_v2",
     "inspire_rh56dfx",
 }
+BOUNDED_PALM_LAYOUT_SOURCES = PROTECTED_TRANSMISSION_SOURCES | {
+    # These source palms have attachment geometry close to the fixed mount
+    # sector. Large House-style radial edits exceed the source-topology
+    # deformation bound; bounded edge edits remain valid.
+    "mano",
+    "schunk_svh",
+    "tesollo_dg5f",
+}
+
+
+def parse_floats(value: str | None, default: tuple[float, ...]) -> list[float]:
+    if value is None:
+        return list(default)
+    return [float(item) for item in value.replace(",", " ").split()]
+
+
+def load_direct_joint_records(
+    hand_id: str,
+    direct_registry: dict,
+) -> tuple[list[dict], dict]:
+    """Read the normalized direct/mimic graph independently of visual parts.
+
+    A joint may intentionally have no mesh-bearing rigid part. This happens for
+    multi-DoF roots and virtual wrist frames, so actuation cannot be inferred
+    from the mesh-part graph.
+    """
+    entry = direct_registry["hands"][hand_id]["entries"]["right"]
+    path = ASSET_ROOT / entry["path"]
+    robot = ET.parse(path).getroot()
+    active = {
+        joint.get("name")
+        for transmission in robot.findall("transmission")
+        if (joint := transmission.find("joint")) is not None
+    }
+    records = []
+    for joint in robot.findall("joint"):
+        joint_type = joint.get("type", "fixed")
+        if joint_type not in MOVABLE_URDF_TYPES:
+            continue
+        name = joint.get("name")
+        parent = joint.find("parent")
+        child = joint.find("child")
+        if not name or parent is None or child is None:
+            raise ValueError(f"{hand_id}: malformed movable joint")
+        axis = joint.find("axis")
+        origin = joint.find("origin")
+        limit = joint.find("limit")
+        mimic = joint.find("mimic")
+        if mimic is None:
+            if name not in active:
+                raise ValueError(
+                    f"{hand_id}/{name}: movable joint is neither active nor mimic"
+                )
+            actuation = "active_direct"
+            master = multiplier = offset = None
+        else:
+            if name in active:
+                raise ValueError(f"{hand_id}/{name}: joint cannot be active and mimic")
+            actuation = "passive_mimic"
+            master = mimic.get("joint")
+            multiplier = float(mimic.get("multiplier", "1"))
+            offset = float(mimic.get("offset", "0"))
+        if joint_type == "continuous":
+            lower, upper = -math.pi, math.pi
+        elif limit is None:
+            raise ValueError(f"{hand_id}/{name}: movable joint range is missing")
+        else:
+            lower = float(limit.get("lower"))
+            upper = float(limit.get("upper"))
+        records.append(
+            {
+                "joint_name": name,
+                "joint_type": joint_type,
+                "parent_link": parent.get("link"),
+                "child_link": child.get("link"),
+                "origin_translation": parse_floats(
+                    None if origin is None else origin.get("xyz"),
+                    (0.0, 0.0, 0.0),
+                ),
+                "origin_rotation_rpy": parse_floats(
+                    None if origin is None else origin.get("rpy"),
+                    (0.0, 0.0, 0.0),
+                ),
+                "joint_axis": parse_floats(
+                    None if axis is None else axis.get("xyz"),
+                    (1.0, 0.0, 0.0),
+                ),
+                "joint_range": [lower, upper],
+                "actuation": actuation,
+                "mimic_master": master,
+                "mimic_multiplier": multiplier,
+                "mimic_offset": offset,
+                "editable": False,
+            }
+        )
+    expected = int(entry["scalar_dofs"])
+    if len(records) != expected:
+        raise ValueError(
+            f"{hand_id}: normalized URDF has {len(records)} movable joints, "
+            f"registry declares {expected}"
+        )
+    return records, entry
 
 
 def normalize(value: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -650,12 +756,36 @@ def main() -> int:
     library = json.loads(LIBRARY.read_text(encoding="utf-8"))
     bundles = {bundle["bundle_id"]: bundle for bundle in library["bundles"]}
     candidates = candidate_map(library)
+    direct_registry = json.loads(DIRECT_REGISTRY.read_text(encoding="utf-8"))
+    direct_joint_records = {}
+    direct_entries = {}
+    for hand_id in sources:
+        records, entry = load_direct_joint_records(hand_id, direct_registry)
+        direct_joint_records[hand_id] = records
+        direct_entries[hand_id] = entry
     eligible_palms = []
+    source_coverage = {}
     for hand_id in library["palm_sources"]:
         present = [role for role in DIGITS if f"{hand_id}:{role}" in bundles]
         source_roles = [role for role in DIGITS if any(p["role"] == role for p in sources[hand_id]["parts"])]
-        if len(present) == len(source_roles) and len(present) >= 4:
+        complete = len(present) == len(source_roles) and len(present) >= 4
+        source_coverage[hand_id] = {
+            "source_roles": source_roles,
+            "accepted_bundle_roles": present,
+            "eligible": complete,
+        }
+        if complete:
             eligible_palms.append(hand_id)
+    missing_registry_sources = sorted(set(direct_registry["hands"]) - set(source_coverage))
+    ineligible_sources = sorted(
+        hand_id for hand_id, record in source_coverage.items()
+        if not record["eligible"]
+    )
+    if missing_registry_sources or ineligible_sources:
+        raise ValueError(
+            "source coverage is incomplete: "
+            f"missing={missing_registry_sources}, ineligible={ineligible_sources}"
+        )
 
     hands = []
     graph_modes = ("geometry_only",)
@@ -670,7 +800,7 @@ def main() -> int:
         # anthropomorphic palm-edit path; other sources retain all three modes.
         layout_mode = (
             "anthropomorphic"
-            if seed_id in PROTECTED_TRANSMISSION_SOURCES
+            if seed_id in BOUNDED_PALM_LAYOUT_SOURCES
             else requested_layout_mode
         )
         source_roles = [role for role in DIGITS if f"{seed_id}:{role}" in bundles]
@@ -730,6 +860,65 @@ def main() -> int:
             seed,
             [bundles[f"{seed_id}:{role}"] for role in source_roles],
         )
+        digit_source_part_ids = {
+            int(source_part_id)
+            for role in source_roles
+            for source_part_id in bundles[f"{seed_id}:{role}"]["source_part_ids"]
+        }
+        digit_joint_names = {
+            seed["parts"][source_part_id]["joint_name"]
+            for source_part_id in digit_source_part_ids
+            if seed["parts"][source_part_id]["joint_type"] != "fixed"
+        }
+        source_part_by_joint = {
+            node["joint_name"]: int(node["id"])
+            for node in seed["parts"][1:]
+            if node["joint_type"] != "fixed"
+        }
+        generated_platform_by_source_part = {
+            int(node["source_part_id"]): int(node["id"])
+            for node in parts
+            if node.get("protected_platform")
+        }
+        base_palm_joints = []
+        for record in direct_joint_records[seed_id]:
+            if record["joint_name"] in digit_joint_names:
+                continue
+            source_part_id = source_part_by_joint.get(record["joint_name"])
+            generated_part_id = (
+                None
+                if source_part_id is None
+                else generated_platform_by_source_part.get(source_part_id)
+            )
+            base_palm_joints.append(
+                {
+                    **record,
+                    "source_part_id": source_part_id,
+                    "mesh_part_id": generated_part_id,
+                    "kinematic_only": generated_part_id is None,
+                    "mesh_binding": (
+                        "kinematic_only_frame"
+                        if generated_part_id is None
+                        else "existing_rigid_part_edge"
+                    ),
+                }
+            )
+        represented_platform_joint_names = {
+            seed["parts"][source_part_id]["joint_name"]
+            for source_part_id in generated_platform_by_source_part
+            if seed["parts"][source_part_id]["joint_type"] != "fixed"
+        }
+        copied_joint_names = {
+            record["joint_name"] for record in base_palm_joints
+        }
+        missing_platform_joints = (
+            represented_platform_joint_names - copied_joint_names
+        )
+        if missing_platform_joints:
+            raise ValueError(
+                f"{seed_id}: generated base/palm graph lost represented joints "
+                f"{sorted(missing_platform_joints)}"
+            )
 
         base_slots = {role: source_slot(seed, bundles[f"{seed_id}:{role}"]) for role in base_roles}
         target_slots = {role: transformed_slot(slot, palm_linear, rotation) for role, slot in base_slots.items()}
@@ -762,14 +951,17 @@ def main() -> int:
             )
 
         finalize_graph(parts)
-        platform_dof = sum(
-            parts[node_id]["joint_type"] != "fixed"
-            for node_id in protected_platform_node_ids
-        )
+        platform_dof = len(base_palm_joints)
         baseline_dof = platform_dof + sum(
             bundles[f"{seed_id}:{role}"]["dof_count"] for role in base_roles
         )
         generated_dof = platform_dof + sum(slot["dof_count"] for slot in slots)
+        expected_dof = int(direct_entries[seed_id]["scalar_dofs"])
+        if baseline_dof != expected_dof or generated_dof != expected_dof:
+            raise ValueError(
+                f"{seed_id}: direct URDF DoF={expected_dof}, "
+                f"baseline={baseline_dof}, generated={generated_dof}"
+            )
         hands.append({
             "hand_id": f"grammar_{index + 1:03d}",
             "seed_source": seed_id,
@@ -780,6 +972,31 @@ def main() -> int:
             "baseline_dof": baseline_dof,
             "dof_count": generated_dof,
             "platform_dof_count": platform_dof,
+            "active_dof_count": int(direct_entries[seed_id]["active_dofs"]),
+            "passive_mimic_dof_count": int(
+                direct_entries[seed_id]["passive_mimic_dofs"]
+            ),
+            "base_palm_kinematics": {
+                "source_hand_id": seed_id,
+                "source_urdf": direct_entries[seed_id]["path"],
+                "editable": False,
+                "representation": (
+                    "source-copied movable-joint graph independent of mesh parts"
+                ),
+                "dof_count": len(base_palm_joints),
+                "active_dof_count": sum(
+                    joint["actuation"] == "active_direct"
+                    for joint in base_palm_joints
+                ),
+                "passive_mimic_dof_count": sum(
+                    joint["actuation"] == "passive_mimic"
+                    for joint in base_palm_joints
+                ),
+                "kinematic_only_frame_count": sum(
+                    joint["kinematic_only"] for joint in base_palm_joints
+                ),
+                "joints": base_palm_joints,
+            },
             "protected_transmission_source": seed_id in PROTECTED_TRANSMISSION_SOURCES,
             "protected_platform_node_ids": protected_platform_node_ids,
             "palm_transform": palm_linear.tolist(),
@@ -879,8 +1096,55 @@ def main() -> int:
         hand["palm_layout"] for hand in hands
         if "source_house_blend" in hand["palm_layout"]
     ]
+    base_palm_retention_errors = []
+    for hand in hands:
+        graph = hand["base_palm_kinematics"]
+        joints = graph["joints"]
+        source_joint_names = {
+            record["joint_name"]
+            for record in direct_joint_records[hand["seed_source"]]
+        }
+        problems = []
+        if graph["dof_count"] != len(joints):
+            problems.append("base/palm DoF count does not match joint records")
+        if hand["dof_count"] != (
+            hand["active_dof_count"] + hand["passive_mimic_dof_count"]
+        ):
+            problems.append("total DoF does not equal active + passive mimic")
+        if hand["dof_count"] != int(
+            direct_entries[hand["seed_source"]]["scalar_dofs"]
+        ):
+            problems.append("generated DoF does not match normalized source URDF")
+        if len({joint["joint_name"] for joint in joints}) != len(joints):
+            problems.append("duplicate base/palm joints")
+        if any(joint["editable"] for joint in joints):
+            problems.append("base/palm joint marked editable")
+        if any(
+            joint["actuation"] == "passive_mimic"
+            and joint["mimic_master"] not in source_joint_names
+            for joint in joints
+        ):
+            problems.append("base/palm mimic references missing source master")
+        if any(
+            joint["mesh_part_id"] is not None
+            and not hand["parts"][int(joint["mesh_part_id"])].get(
+                "protected_platform"
+            )
+            for joint in joints
+        ):
+            problems.append("base/palm joint bound to an editable mesh part")
+        if problems:
+            base_palm_retention_errors.append(
+                {"hand_id": hand["hand_id"], "problems": problems}
+            )
     audit = {
         "generation_seed": generation_seed,
+        "source_library_count": len(direct_registry["hands"]),
+        "eligible_source_count": len(eligible_palms),
+        "all_source_hands_eligible": (
+            len(eligible_palms) == len(direct_registry["hands"])
+        ),
+        "source_coverage": source_coverage,
         "hands": len(hands),
         "finger_count_range": [min(h["finger_count"] for h in hands), max(h["finger_count"] for h in hands)],
         "dof_range": [min(h["dof_count"] for h in hands), max(h["dof_count"] for h in hands)],
@@ -983,6 +1247,56 @@ def main() -> int:
             (layout["maximum_attachment_displacement_fraction"] for layout in house_layouts),
             default=0.0,
         ),
+        "base_palm_dof_retention_errors": base_palm_retention_errors,
+        "all_base_palm_dofs_retained": not base_palm_retention_errors,
+        "generated_hands_with_base_palm_dofs": sum(
+            hand["base_palm_kinematics"]["dof_count"] > 0
+            for hand in hands
+        ),
+        "base_palm_dofs_retained": sum(
+            hand["base_palm_kinematics"]["dof_count"] for hand in hands
+        ),
+        "base_palm_active_dofs_retained": sum(
+            hand["base_palm_kinematics"]["active_dof_count"]
+            for hand in hands
+        ),
+        "base_palm_passive_mimic_dofs_retained": sum(
+            hand["base_palm_kinematics"]["passive_mimic_dof_count"]
+            for hand in hands
+        ),
+        "base_palm_kinematic_only_frames": sum(
+            hand["base_palm_kinematics"]["kinematic_only_frame_count"]
+            for hand in hands
+        ),
+        "base_palm_dof_catalog": {
+            seed_id: {
+                "dof_count": next(
+                    hand["base_palm_kinematics"]["dof_count"]
+                    for hand in hands
+                    if hand["seed_source"] == seed_id
+                ),
+                "active_dof_count": next(
+                    hand["base_palm_kinematics"]["active_dof_count"]
+                    for hand in hands
+                    if hand["seed_source"] == seed_id
+                ),
+                "passive_mimic_dof_count": next(
+                    hand["base_palm_kinematics"][
+                        "passive_mimic_dof_count"
+                    ]
+                    for hand in hands
+                    if hand["seed_source"] == seed_id
+                ),
+                "kinematic_only_frame_count": next(
+                    hand["base_palm_kinematics"][
+                        "kinematic_only_frame_count"
+                    ]
+                    for hand in hands
+                    if hand["seed_source"] == seed_id
+                ),
+            }
+            for seed_id in sorted({hand["seed_source"] for hand in hands})
+        },
     }
     critical_failures = {
         "invalid_motor_link_bindings": invalid_bindings,
@@ -992,6 +1306,7 @@ def main() -> int:
         "finger_role_permutations": finger_role_permutations,
         "cyclic_order_violations": cyclic_order_violations,
         "protected_hardware_changes": protected_hardware_changes,
+        "base_palm_dof_retention_errors": base_palm_retention_errors,
     }
     if any(critical_failures.values()):
         raise ValueError(f"source-locked grammar invariant failed: {critical_failures}")

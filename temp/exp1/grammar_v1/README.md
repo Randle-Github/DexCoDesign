@@ -54,6 +54,16 @@ validation.
   identity transforms. For tendon/underactuated sources, palm/root and every
   proximal transmission housing are additionally marked geometry-locked.
 - Every generated graph must be connected and acyclic.
+- The complete movable `base + palm` articulation is copied from the
+  normalized direct-motor URDF and is never edited by the morphology grammar.
+  Its active/mimic semantics, parent/child links, joint frames, axes, and
+  ranges are stored in `base_palm_kinematics`.
+- Kinematics and visual geometry are separate layers. A movable virtual
+  wrist/root frame may have no mesh, while a rigid mesh part may carry several
+  fixed source meshes. Missing visual geometry must never delete a source DoF.
+- Base/platform mesh parts remain identity-transformed. The existing palm
+  compiler may deform only the palm visual shell; it cannot change or remove
+  the source base/palm joint graph.
 
 Public robot descriptions generally do not expose trustworthy physical motor
 part numbers or complete transmission data. The current motor classes are
@@ -65,6 +75,7 @@ manufacturability or torque constraints are evaluated.
 
 ```text
 strict_v2 canonical source graphs
+  + normalized direct-motor URDF base/palm articulation
   -> source-local mechanism bundle database
   -> grammar-constrained HandIR samples
   -> graph-conditioned palm + source-owned finger-part mesh assembly
@@ -86,6 +97,19 @@ attachment_translation + attachment_rotation
 The current canonical coordinate convention is XZ for the palm plane and Y
 for thickness. It is explicit in `PalmGeometryParams`, rather than inferred
 from a mesh bounding box.
+
+Each generated hand also stores the immutable source articulation separately:
+
+```text
+base_palm_kinematics.joints
+  joint frame / axis / range
+  active_direct or passive_mimic
+  optional mesh_part_id
+  kinematic_only = true for a meshless virtual frame
+```
+
+This separation is intentional: graph generation determines DoF, while the
+mesh compiler only attaches or deforms visual geometry.
 
 ## Palm generation modes
 
@@ -197,7 +221,7 @@ Latest deterministic audit:
 
 ```text
 finger count                         4-5
-DoF                                  10-20 (includes retained platform DoF)
+DoF                                  10-21 (includes complete retained base/palm DoF)
 synthetic 4-to-5 additions           0 (disabled)
 complete-bundle finger removals      0
 increased-DoF designs                0 (disabled by source ownership)
@@ -211,6 +235,10 @@ duplicate source bundle assignments  0
 finger role/order permutations       0
 cyclic finger-order violations        0
 protected platform nodes             24
+base/palm DoF retention failures       0
+generated hands with base/palm DoF    24
+retained base/palm DoF                48
+kinematic-only base/palm frames       24
 protected transmission hands         49
 protected hardware changes           0
 graph palm-slot connector error      0

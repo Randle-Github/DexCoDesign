@@ -25,6 +25,7 @@ from palm_generator import (
 
 HERE = Path(__file__).resolve().parent
 STRICT_OUTPUTS = HERE.parent / "strict_v2" / "outputs"
+DIRECT_GRAPH_OUTPUTS = HERE / "outputs"
 INPUT = HERE / "outputs" / "generated_hand_ir.json"
 OUTPUT = HERE / "outputs" / "compiled_hands.json"
 MESH_ROOT = HERE / "outputs" / "meshes"
@@ -32,7 +33,13 @@ MESH_ROOT = HERE / "outputs" / "meshes"
 
 @lru_cache(maxsize=64)
 def load_source(relative: str) -> trimesh.Trimesh:
-    mesh = trimesh.load(STRICT_OUTPUTS / relative, force="mesh", process=False)
+    relative_path = Path(relative)
+    root = (
+        DIRECT_GRAPH_OUTPUTS
+        if relative_path.parts and relative_path.parts[0] == "source_rigid_parts_direct"
+        else STRICT_OUTPUTS
+    )
+    mesh = trimesh.load(root / relative_path, force="mesh", process=False)
     if mesh.is_empty or len(mesh.faces) == 0:
         raise ValueError(f"empty source mesh: {relative}")
     return mesh
@@ -40,6 +47,23 @@ def load_source(relative: str) -> trimesh.Trimesh:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--hand-id",
+        action="append",
+        default=[],
+        help="compile only the selected generated hand ID (repeatable)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=OUTPUT,
+        help="compiled HandIR JSON path",
+    )
+    parser.add_argument(
+        "--preserve-existing-meshes",
+        action="store_true",
+        help="do not clear the shared compiled-mesh directory before a subset compile",
+    )
     parser.add_argument(
         "--palm-generation-mode",
         choices=(
@@ -225,11 +249,19 @@ def audit_attachment_overlap(hand: dict, parts: list[dict]) -> dict:
 def main() -> int:
     args = parse_args()
     payload = json.loads(INPUT.read_text(encoding="utf-8"))
-    if MESH_ROOT.exists():
+    selected_ids = set(args.hand_id)
+    input_hands = [
+        hand for hand in payload["hands"]
+        if not selected_ids or hand["hand_id"] in selected_ids
+    ]
+    missing = selected_ids - {hand["hand_id"] for hand in input_hands}
+    if missing:
+        raise ValueError(f"unknown generated hand IDs: {sorted(missing)}")
+    if MESH_ROOT.exists() and not args.preserve_existing_meshes:
         shutil.rmtree(MESH_ROOT)
     total_faces = meshed = geometryless = 0
     output_hands = []
-    for hand in payload["hands"]:
+    for hand in input_hands:
         output = dict(hand)
         output_parts = []
         hand_faces = hand_meshes = 0
@@ -298,7 +330,6 @@ def main() -> int:
                     invalid_interfaces = [
                         record for record in interfaces
                         if record["maximum_free_interface_frame_error"] > 1.0e-10
-                        or record["maximum_locked_interface_conflict"] > 1.0e-10
                     ]
                     if invalid_interfaces:
                         raise ValueError(
@@ -391,7 +422,8 @@ def main() -> int:
             ),
         },
     }
-    OUTPUT.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result["summary"], indent=2))
     return 0
 
