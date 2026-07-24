@@ -1,0 +1,361 @@
+{
+  "schema_version": 1,
+  "actuation_schema": {
+    "active": "independent scalar direct motor with SimpleTransmission",
+    "passive": "affine mimic joint of one active master",
+    "forbidden": [
+      "unconstrained passive movable joint",
+      "tendon actuator",
+      "nonlinear linkage",
+      "mimic chain"
+    ]
+  },
+  "hands": {
+    "mano": {
+      "display_name": "MANO Human Hand",
+      "source": "https://github.com/facebookresearch/spider",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/mano/left/hand.urdf",
+          "active_dofs": 28,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 28,
+          "source_format": "mjcf",
+          "source_path": "mano/source/left.canonical.xml"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/mano/right/hand.urdf",
+          "active_dofs": 28,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 28,
+          "source_format": "mjcf",
+          "source_path": "mano/source/right.canonical.xml"
+        }
+      }
+    },
+    "ability_hand": {
+      "display_name": "Ability Hand",
+      "source": "https://github.com/psyonicinc/ability-hand-api",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/ability_hand/left/hand.urdf",
+          "active_dofs": 6,
+          "passive_mimic_dofs": 4,
+          "scalar_dofs": 10,
+          "source_format": "urdf",
+          "source_path": "ability_hand/source/left.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/ability_hand/right/hand.urdf",
+          "active_dofs": 6,
+          "passive_mimic_dofs": 4,
+          "scalar_dofs": 10,
+          "source_format": "urdf",
+          "source_path": "ability_hand/source/right.canonical.urdf"
+        }
+      }
+    },
+    "schunk_svh": {
+      "display_name": "Schunk SVH",
+      "source": "https://github.com/facebookresearch/spider",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/schunk_svh/left/hand.urdf",
+          "active_dofs": 26,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 26,
+          "source_format": "mjcf",
+          "source_path": "schunk_svh/source/left.canonical.xml"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/schunk_svh/right/hand.urdf",
+          "active_dofs": 26,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 26,
+          "source_format": "mjcf",
+          "source_path": "schunk_svh/source/right.canonical.xml"
+        }
+      }
+    },
+    "wuji_hand_2": {
+      "display_name": "WUJI Hand 2 Beta 1",
+      "source": "https://github.com/wuji-technology/wuji-description",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/wuji_hand_2/left/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20,
+          "source_format": "urdf",
+          "source_path": "wuji_hand_2/source/body/urdf/left.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/wuji_hand_2/right/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20,
+          "source_format": "urdf",
+          "source_path": "wuji_hand_2/source/body/urdf/right.canonical.urdf"
+        }
+      }
+    },
+    "sharpa_wave_01": {
+      "display_name": "Sharpa Wave 01",
+      "source": "https://github.com/sharpa-robotics/sharpa-urdf-usd-xml",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/sharpa_wave_01/left/hand.urdf",
+          "active_dofs": 22,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 22,
+          "source_format": "usd",
+          "source_path": "sharpa_wave_01/source/left_sharpa_wave/left_sharpa_wave/left_sharpa_wave.canonical.usda"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/sharpa_wave_01/right/hand.urdf",
+          "active_dofs": 22,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 22,
+          "source_format": "usd",
+          "source_path": "sharpa_wave_01/source/right_sharpa_wave/right_sharpa_wave/right_sharpa_wave.canonical.usda"
+        }
+      }
+    },
+    "tesollo_dg5f": {
+      "display_name": "Tesollo DELTO Gripper DG-5F",
+      "source": "https://github.com/tesollodelto/tesollo_model",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/tesollo_dg5f/left/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20,
+          "source_format": "usd",
+          "source_path": "tesollo_dg5f/source/dg5f/usd/dg5f_left/dg5f_left.canonical.usda"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/tesollo_dg5f/right/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20,
+          "source_format": "usd",
+          "source_path": "tesollo_dg5f/source/dg5f/usd/dg5f_right/dg5f_right.canonical.usda"
+        }
+      }
+    },
+    "unitree_dex5_1": {
+      "display_name": "Unitree Dex5-1",
+      "source": "https://github.com/unitreerobotics/unitree_ros",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/unitree_dex5_1/left/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20,
+          "source_format": "urdf",
+          "source_path": "unitree_dex5_1/models/left.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/unitree_dex5_1/right/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20,
+          "source_format": "urdf",
+          "source_path": "unitree_dex5_1/models/right.canonical.urdf"
+        }
+      }
+    },
+    "robotera_xhand1": {
+      "display_name": "RobotEra XHAND1",
+      "source": "https://github.com/roboterax/models",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/robotera_xhand1/left/hand.urdf",
+          "active_dofs": 12,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 12,
+          "source_format": "urdf",
+          "source_path": "robotera_xhand1/models/left.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/robotera_xhand1/right/hand.urdf",
+          "active_dofs": 12,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 12,
+          "source_format": "urdf",
+          "source_path": "robotera_xhand1/models/right.canonical.urdf"
+        }
+      }
+    },
+    "orca_hand_v2": {
+      "display_name": "ORCA Hand v2",
+      "source": "https://github.com/orcahand/orcahand_description",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/orca_hand_v2/left/hand.urdf",
+          "active_dofs": 17,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 17,
+          "source_format": "urdf",
+          "source_path": "orca_hand_v2/models/left.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/orca_hand_v2/right/hand.urdf",
+          "active_dofs": 17,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 17,
+          "source_format": "urdf",
+          "source_path": "orca_hand_v2/models/right.canonical.urdf"
+        }
+      }
+    },
+    "shadow_hand_e": {
+      "display_name": "Shadow Dexterous Hand E-Series",
+      "source": "https://github.com/shadow-robot/sr_common",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/shadow_hand_e/left/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 4,
+          "scalar_dofs": 24,
+          "source_format": "mjcf",
+          "source_path": "shadow_hand_e/source/mujoco_models/sr_hand_e_left_environment.canonical.xml"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/shadow_hand_e/right/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 4,
+          "scalar_dofs": 24,
+          "source_format": "mjcf",
+          "source_path": "shadow_hand_e/source/mujoco_models/sr_hand_e_environment.canonical.xml"
+        }
+      }
+    },
+    "allegro_hand_v5": {
+      "display_name": "Allegro Hand V5",
+      "source": "https://github.com/Wonikrobotics-git/allegro_hand_ros_v5",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/allegro_hand_v5/left/hand.urdf",
+          "active_dofs": 16,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 16,
+          "source_format": "urdf",
+          "source_path": "allegro_hand_v5/models/left.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/allegro_hand_v5/right/hand.urdf",
+          "active_dofs": 16,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 16,
+          "source_format": "urdf",
+          "source_path": "allegro_hand_v5/models/right.canonical.urdf"
+        }
+      }
+    },
+    "midas_hand": {
+      "display_name": "MIDAS Hand",
+      "source": "https://github.com/midas-hand-org/midas_hand_mujoco",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/midas_hand/left/hand.urdf",
+          "active_dofs": 19,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 19,
+          "source_format": "urdf",
+          "source_path": "midas_hand/models/left/hand.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/midas_hand/right/hand.urdf",
+          "active_dofs": 19,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 19,
+          "source_format": "urdf",
+          "source_path": "midas_hand/models/right/hand.canonical.urdf"
+        }
+      }
+    },
+    "ruka_v2": {
+      "display_name": "RUKA-v2",
+      "source": "https://github.com/ruka-hand-v2/RUKA-v2",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/ruka_v2/left/hand.urdf",
+          "active_dofs": 17,
+          "passive_mimic_dofs": 4,
+          "scalar_dofs": 21,
+          "source_format": "urdf",
+          "source_path": "ruka_v2/models/left/hand.canonical.urdf"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/ruka_v2/right/hand.urdf",
+          "active_dofs": 17,
+          "passive_mimic_dofs": 4,
+          "scalar_dofs": 21,
+          "source_format": "urdf",
+          "source_path": "ruka_v2/models/right/hand.canonical.urdf"
+        }
+      }
+    },
+    "inspire_rh56dfx": {
+      "display_name": "Inspire RH56DFX",
+      "source": "https://github.com/correlllab/h1_mujoco",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/inspire_rh56dfx/left/hand.urdf",
+          "active_dofs": 6,
+          "passive_mimic_dofs": 6,
+          "scalar_dofs": 12,
+          "source_format": "mjcf",
+          "source_path": "inspire_rh56dfx/source/inspire/inspire_left.canonical.xml"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/inspire_rh56dfx/right/hand.urdf",
+          "active_dofs": 6,
+          "passive_mimic_dofs": 6,
+          "scalar_dofs": 12,
+          "source_format": "mjcf",
+          "source_path": "inspire_rh56dfx/source/inspire/inspire_right.canonical.xml"
+        }
+      }
+    }
+  },
+  "summary": {
+    "hands": 14,
+    "assets": 28,
+    "active_dofs": 498,
+    "passive_mimic_dofs": 36,
+    "scalar_dofs": 534,
+    "assets_with_changes": 12,
+    "loose_passive_dofs": 0,
+    "missing_meshes": 0
+  }
+}

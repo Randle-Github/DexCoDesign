@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import shutil
 from functools import lru_cache
@@ -29,7 +30,7 @@ OUTPUT = HERE / "outputs" / "compiled_hands.json"
 MESH_ROOT = HERE / "outputs" / "meshes"
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=64)
 def load_source(relative: str) -> trimesh.Trimesh:
     mesh = trimesh.load(STRICT_OUTPUTS / relative, force="mesh", process=False)
     if mesh.is_empty or len(mesh.faces) == 0:
@@ -325,6 +326,11 @@ def main() -> int:
                 f"centering={attachment_audit['centering_violations']}"
             )
         output_hands.append(output)
+        # Some source CAD parts are very large. Keeping every source mesh from
+        # all 100 designs in the process-wide cache can exceed laptop memory,
+        # even though each hand compiles independently.
+        load_source.cache_clear()
+        gc.collect()
     result = {
         "schema_version": 1,
         "method": "grammar-valid complete mechanism bundles + attachment-conditioned palm compiler",

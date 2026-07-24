@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
@@ -642,7 +643,8 @@ def finalize_graph(parts: list[dict]) -> None:
 
 
 def main() -> int:
-    rng = np.random.default_rng(20260718)
+    generation_seed = int(os.environ.get("HAND_GENERATION_SEED", "20260718"))
+    rng = np.random.default_rng(generation_seed)
     source_payload = json.loads(SOURCE_GRAPHS.read_text(encoding="utf-8"))
     sources = {hand["hand_id"]: hand for hand in source_payload["hands"]}
     library = json.loads(LIBRARY.read_text(encoding="utf-8"))
@@ -878,6 +880,7 @@ def main() -> int:
         if "source_house_blend" in hand["palm_layout"]
     ]
     audit = {
+        "generation_seed": generation_seed,
         "hands": len(hands),
         "finger_count_range": [min(h["finger_count"] for h in hands), max(h["finger_count"] for h in hands)],
         "dof_range": [min(h["dof_count"] for h in hands), max(h["dof_count"] for h in hands)],
@@ -993,7 +996,18 @@ def main() -> int:
     if any(critical_failures.values()):
         raise ValueError(f"source-locked grammar invariant failed: {critical_failures}")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps({"schema_version": 1, "hands": hands}, indent=2) + "\n", encoding="utf-8")
+    OUTPUT.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generation_seed": generation_seed,
+                "hands": hands,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     AUDIT.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(audit, indent=2))
     return 0

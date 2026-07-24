@@ -1,0 +1,867 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="schunk_svh_left_direct_motor">
+  <link name="world" />
+  <link name="left_pos_x_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.01" />
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01" />
+    </inertial>
+  </link>
+  <joint name="left_pos_x" type="prismatic">
+    <parent link="world" />
+    <child link="left_pos_x_link" />
+    <origin xyz="0 0 0" rpy="0 0 3.14159265359" />
+    <axis xyz="1 0 0" />
+    <limit lower="-5" upper="5" effort="1000" velocity="4" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_pos_y_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.01" />
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01" />
+    </inertial>
+  </link>
+  <joint name="left_pos_y" type="prismatic">
+    <parent link="left_pos_x_link" />
+    <child link="left_pos_y_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="-5" upper="5" effort="1000" velocity="4" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_pos_z_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.01" />
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01" />
+    </inertial>
+  </link>
+  <joint name="left_pos_z" type="prismatic">
+    <parent link="left_pos_y_link" />
+    <child link="left_pos_z_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-5" upper="5" effort="1000" velocity="4" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_rot_z_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.01" />
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01" />
+    </inertial>
+  </link>
+  <joint name="left_rot_z" type="revolute">
+    <parent link="left_pos_z_link" />
+    <child link="left_rot_z_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-6.2" upper="6.2" effort="1000" velocity="20" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_rot_x_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.01" />
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01" />
+    </inertial>
+  </link>
+  <joint name="left_rot_x" type="revolute">
+    <parent link="left_rot_z_link" />
+    <child link="left_rot_x_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+    <limit lower="-6.2" upper="6.2" effort="1000" velocity="20" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_link">
+    <inertial>
+      <origin xyz="-6.48554e-05 -0.00451484 0.127324" rpy="-3.12069560997 -1.5475850732 -1.60151907251" />
+      <mass value="0.6112" />
+      <inertia ixx="0.0865419" ixy="0" ixz="0" iyy="0.0593417" iyz="0" izz="0.0588699" />
+    </inertial>
+    <visual name="left_hand_link_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_link_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_link_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_link_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_rot_y" type="revolute">
+    <parent link="left_rot_x_link" />
+    <child link="left_hand_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="-6.2" upper="6.2" effort="1000" velocity="20" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_thumb_opp">
+    <inertial>
+      <origin xyz="0 0.002024 0.178636" rpy="1.57079632679 -0.0735405743012 1.57079632679" />
+      <mass value="0.0739" />
+      <inertia ixx="0.00165295" ixy="0" ixz="0" iyy="0.00110705" iyz="0" izz="0.00103" />
+    </inertial>
+    <visual name="left_hand_thumb_opp_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_opp_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_thumb_opp_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_opp_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Thumb_Opposition" type="revolute">
+    <parent link="left_hand_link" />
+    <child link="left_hand_thumb_opp" />
+    <origin xyz="0.0169 0.01313 0" rpy="3.82546875288e-08 0.261800030448 1.57100030939" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.9879" effort="296.37" velocity="3.9516" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_thumb_proximal">
+    <inertial>
+      <origin xyz="0.240205 0.010733 0.00019" rpy="3.08418434713 -1.57079632679 0" />
+      <mass value="0.41222" />
+      <inertia ixx="0.01796" ixy="0" ixz="0" iyy="0.016832" iyz="0" izz="0.00408805" />
+    </inertial>
+    <visual name="left_hand_thumb_proximal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_proximal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_thumb_proximal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_proximal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Thumb_Flexion" type="revolute">
+    <parent link="left_hand_thumb_opp" />
+    <child link="left_hand_thumb_proximal" />
+    <origin xyz="0 0 0.04596" rpy="-1.57078993185 -0.600399704345 -1.57078993185" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.9704" upper="0" effort="291.12" velocity="3.8816" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_thumb_intermediate">
+    <inertial>
+      <origin xyz="0.123157 -0.008382 -2.7e-05" rpy="1.57079632679 0 1.4720983124" />
+      <mass value="0.08224" />
+      <inertia ixx="0.00139495" ixy="0" ixz="0" iyy="0.00103" iyz="0" izz="0.000885049" />
+    </inertial>
+    <visual name="left_hand_thumb_intermediate_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_intermediate_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_thumb_intermediate_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_intermediate_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j3" type="revolute">
+    <parent link="left_hand_thumb_proximal" />
+    <child link="left_hand_thumb_intermediate" />
+    <origin xyz="0.0485 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.98506" upper="0" effort="295.518" velocity="3.94024" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_thumb_distal">
+    <inertial>
+      <origin xyz="0.007 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.02" />
+      <inertia ixx="2e-05" ixy="0" ixz="0" iyy="2e-05" iyz="0" izz="1e-05" />
+    </inertial>
+    <visual name="left_hand_thumb_distal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_distal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_thumb_distal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_thumb_distal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j4" type="revolute">
+    <parent link="left_hand_thumb_intermediate" />
+    <child link="left_hand_thumb_distal" />
+    <origin xyz="0.03 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.406" upper="0" effort="421.8" velocity="5.624" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_block">
+    <inertial>
+      <origin xyz="0.145071 -0.037868 0.323449" rpy="0.262941388873 0.133771006917 -0.534801830189" />
+      <mass value="0.46184" />
+      <inertia ixx="0.019814" ixy="0" ixz="0" iyy="0.0171408" iyz="0" izz="0.00778522" />
+    </inertial>
+    <visual name="left_hand_block_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_block_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_block_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_block_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_block_joint" type="revolute">
+    <parent link="left_hand_link" />
+    <child link="left_hand_block" />
+    <origin xyz="-0.0184 -0.00713 0.0375" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.98786" upper="0" effort="296.358" velocity="3.95144" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_ring_spread_link">
+    <inertial>
+      <origin xyz="0.003805 0.000386 0.100079" rpy="1.57079632679 -0.392699899982 0" />
+      <mass value="0.02377" />
+      <inertia ixx="0.000214142" ixy="0" ixz="0" iyy="0.000185858" iyz="0" izz="0.00011" />
+    </inertial>
+    <visual name="left_hand_ring_spread_link_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_spread_link_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_ring_spread_link_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_spread_link_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_ring_spread" type="revolute">
+    <parent link="left_hand_block" />
+    <child link="left_hand_ring_spread_link" />
+    <origin xyz="-0.003855 -0.006 0.0655" rpy="-1.57074832679 -1.5707003268 4.7999999385e-05" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.28833" upper="0" effort="86.499" velocity="1.15332" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_ring_proximal">
+    <inertial>
+      <origin xyz="0.258283 -0.00154 0" rpy="3.09120226183 -1.57079632679 0" />
+      <mass value="0.1377" />
+      <inertia ixx="0.00426" ixy="0" ixz="0" iyy="0.00411908" iyz="0" izz="0.000540922" />
+    </inertial>
+    <visual name="left_hand_ring_proximal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_proximal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_ring_proximal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_proximal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Ring_Finger" type="revolute">
+    <parent link="left_hand_ring_spread_link" />
+    <child link="left_hand_ring_proximal" />
+    <origin xyz="0 0 0" rpy="1.5707001603 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.98175" effort="294.525" velocity="3.927" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_ring_intermediate">
+    <inertial>
+      <origin xyz="0.166851 -0.00362 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.04207" />
+      <inertia ixx="0.00047" ixy="0" ixz="0" iyy="0.0004" iyz="0" izz="0.00019" />
+    </inertial>
+    <visual name="left_hand_ring_intermediate_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_intermediate_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_ring_intermediate_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_intermediate_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j12" type="revolute">
+    <parent link="left_hand_ring_proximal" />
+    <child link="left_hand_ring_intermediate" />
+    <origin xyz="0.05004 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.334" effort="400.2" velocity="5.336" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_ring_distal">
+    <inertial>
+      <origin xyz="0.007 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.02" />
+      <inertia ixx="2e-05" ixy="0" ixz="0" iyy="2e-05" iyz="0" izz="1e-05" />
+    </inertial>
+    <visual name="left_hand_ring_distal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_distal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_ring_distal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_ring_distal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j16" type="revolute">
+    <parent link="left_hand_ring_intermediate" />
+    <child link="left_hand_ring_distal" />
+    <origin xyz="0.032 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.395" effort="418.5" velocity="5.58" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_finger_spread_link">
+    <inertial>
+      <origin xyz="0.003653 4.4e-05 0.100085" rpy="1.57079632679 -0.392699899982 0" />
+      <mass value="0.02377" />
+      <inertia ixx="0.000214142" ixy="0" ixz="0" iyy="0.000185858" iyz="0" izz="0.00011" />
+    </inertial>
+    <visual name="left_hand_finger_spread_link_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_finger_spread_link_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_finger_spread_link_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_finger_spread_link_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Finger_Spread" type="revolute">
+    <parent link="left_hand_block" />
+    <child link="left_hand_finger_spread_link" />
+    <origin xyz="-0.025355 -0.006 0.056" rpy="-1.57074832679 -1.5707003268 4.7999999385e-05" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.5829" upper="0" effort="174.87" velocity="2.3316" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_pinky_proximal">
+    <inertial>
+      <origin xyz="0.232293 0.00622 0" rpy="3.11913584971 -1.57079632679 0" />
+      <mass value="0.12544" />
+      <inertia ixx="0.00328" ixy="0" ixz="0" iyy="0.00316135" iyz="0" izz="0.000488652" />
+    </inertial>
+    <visual name="left_hand_pinky_proximal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_pinky_proximal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_pinky_proximal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_pinky_proximal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Pinky" type="revolute">
+    <parent link="left_hand_finger_spread_link" />
+    <child link="left_hand_pinky_proximal" />
+    <origin xyz="0 0 0" rpy="1.5707001603 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.98175" effort="294.525" velocity="3.927" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_pinky_intermediate">
+    <inertial>
+      <origin xyz="0.007 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.02" />
+      <inertia ixx="2e-06" ixy="0" ixz="0" iyy="2e-06" iyz="0" izz="8e-07" />
+    </inertial>
+    <visual name="left_hand_pinky_intermediate_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_pinky_intermediate_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_pinky_intermediate_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_pinky_intermediate_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j13" type="revolute">
+    <parent link="left_hand_pinky_proximal" />
+    <child link="left_hand_pinky_intermediate" />
+    <origin xyz="0.04454 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.334" effort="400.2" velocity="5.336" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_pinky_distal">
+    <inertial>
+      <origin xyz="0.007 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.02" />
+      <inertia ixx="2e-05" ixy="0" ixz="0" iyy="2e-05" iyz="0" izz="1e-05" />
+    </inertial>
+    <visual name="left_hand_pinky_distal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_pinky_distal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_pinky_distal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_pinky_distal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j17" type="revolute">
+    <parent link="left_hand_pinky_intermediate" />
+    <child link="left_hand_pinky_distal" />
+    <origin xyz="0.022 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.3971" effort="419.13" velocity="5.5884" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_index_spread_link">
+    <inertial>
+      <origin xyz="0.003634 0.000206 -0.09885" rpy="1.57079632679 0.392699899982 0" />
+      <mass value="0.02383" />
+      <inertia ixx="0.000214142" ixy="0" ixz="0" iyy="0.000185858" iyz="0" izz="0.00011" />
+    </inertial>
+    <visual name="left_hand_index_spread_link_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_spread_link_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_index_spread_link_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_spread_link_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_index_spread" type="revolute">
+    <parent link="left_hand_link" />
+    <child link="left_hand_index_spread_link" />
+    <origin xyz="0.025 -0.01313 0.11" rpy="-4.79999988068e-05 -1.5707003268 1.57074832679" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.28833" upper="0" effort="86.499" velocity="1.15332" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_index_proximal">
+    <inertial>
+      <origin xyz="0.261673 0.003521 0" rpy="-3.13103083453 -1.57079632679 0" />
+      <mass value="0.13003" />
+      <inertia ixx="0.00344" ixy="0" ixz="0" iyy="0.00335032" iyz="0" izz="0.000509683" />
+    </inertial>
+    <visual name="left_hand_index_proximal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_proximal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_index_proximal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_proximal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Index_Finger_Proximal" type="revolute">
+    <parent link="left_hand_index_spread_link" />
+    <child link="left_hand_index_proximal" />
+    <origin xyz="0 0 0" rpy="-1.5707001603 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.79849" effort="239.547" velocity="3.19396" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_index_intermediate">
+    <inertial>
+      <origin xyz="0.01 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.024" />
+      <inertia ixx="1.96667e-06" ixy="0" ixz="0" iyy="1.96667e-06" iyz="0" izz="1.96667e-06" />
+    </inertial>
+    <visual name="left_hand_index_intermediate_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_intermediate_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_index_intermediate_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_intermediate_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Index_Finger_Distal" type="revolute">
+    <parent link="left_hand_index_proximal" />
+    <child link="left_hand_index_intermediate" />
+    <origin xyz="0.04804 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.334" effort="400.2" velocity="5.336" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_index_distal">
+    <inertial>
+      <origin xyz="0.007 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.02" />
+      <inertia ixx="2e-05" ixy="0" ixz="0" iyy="2e-05" iyz="0" izz="1e-05" />
+    </inertial>
+    <visual name="left_hand_index_distal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_distal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_index_distal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_index_distal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j14" type="revolute">
+    <parent link="left_hand_index_intermediate" />
+    <child link="left_hand_index_distal" />
+    <origin xyz="0.026 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.394" effort="418.2" velocity="5.576" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_middle_proximal">
+    <inertial>
+      <origin xyz="0.271122 0.00413 0" rpy="-3.13215981527 -1.57079632679 0" />
+      <mass value="0.13474" />
+      <inertia ixx="0.0038" ixy="0" ixz="0" iyy="0.00370028" iyz="0" izz="0.000519717" />
+    </inertial>
+    <visual name="left_hand_middle_proximal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_middle_proximal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_middle_proximal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_middle_proximal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Middle_Finger_Proximal" type="revolute">
+    <parent link="left_hand_link" />
+    <child link="left_hand_middle_proximal" />
+    <origin xyz="0 -0.01313 0.11" rpy="-1.57079632679 -1.57069999993 1.57079632679" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.79849" effort="239.547" velocity="3.19396" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_middle_intermediate">
+    <inertial>
+      <origin xyz="0.16683 -0.003774 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.0422" />
+      <inertia ixx="0.00047" ixy="0" ixz="0" iyy="0.0004" iyz="0" izz="0.0002" />
+    </inertial>
+    <visual name="left_hand_middle_intermediate_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_middle_intermediate_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_middle_intermediate_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_middle_intermediate_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_Middle_Finger_Distal" type="revolute">
+    <parent link="left_hand_middle_proximal" />
+    <child link="left_hand_middle_intermediate" />
+    <origin xyz="0.05004 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.334" effort="400.2" velocity="5.336" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <link name="left_hand_middle_distal">
+    <inertial>
+      <origin xyz="0.007 0 0" rpy="1.57079632679 0 1.57079632679" />
+      <mass value="0.02" />
+      <inertia ixx="2e-05" ixy="0" ixz="0" iyy="2e-05" iyz="0" izz="1e-05" />
+    </inertial>
+    <visual name="left_hand_middle_distal_visual">
+      <geometry>
+        <mesh filename="meshes/left_hand_middle_distal_visual.obj" />
+      </geometry>
+    </visual>
+    <collision name="left_hand_middle_distal_collision">
+      <geometry>
+        <mesh filename="meshes/left_hand_middle_distal_collision.obj" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_hand_j15" type="revolute">
+    <parent link="left_hand_middle_intermediate" />
+    <child link="left_hand_middle_distal" />
+    <origin xyz="0.032 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.334" effort="400.2" velocity="5.336" />
+    <dynamics damping="0" friction="0" />
+  </joint>
+  <transmission name="direct_motor__left_pos_x">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_pos_x">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_pos_x">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_pos_y">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_pos_y">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_pos_y">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_pos_z">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_pos_z">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_pos_z">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_rot_z">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_rot_z">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_rot_z">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_rot_x">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_rot_x">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_rot_x">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_rot_y">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_rot_y">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_rot_y">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Thumb_Opposition">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Thumb_Opposition">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Thumb_Opposition">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Thumb_Flexion">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Thumb_Flexion">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Thumb_Flexion">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j3">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j3">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j3">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j4">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j4">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j4">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_block_joint">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_block_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_block_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_ring_spread">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_ring_spread">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_ring_spread">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Ring_Finger">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Ring_Finger">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Ring_Finger">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j12">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j12">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j12">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j16">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j16">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j16">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Finger_Spread">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Finger_Spread">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Finger_Spread">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Pinky">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Pinky">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Pinky">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j13">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j13">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j13">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j17">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j17">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j17">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_index_spread">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_index_spread">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_index_spread">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Index_Finger_Proximal">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Index_Finger_Proximal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Index_Finger_Proximal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Index_Finger_Distal">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Index_Finger_Distal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Index_Finger_Distal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j14">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j14">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j14">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Middle_Finger_Proximal">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Middle_Finger_Proximal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Middle_Finger_Proximal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_Middle_Finger_Distal">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_Middle_Finger_Distal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_Middle_Finger_Distal">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="direct_motor__left_hand_j15">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_hand_j15">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor__left_hand_j15">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <mujoco>
+    <compiler strippath="false" discardvisual="false" balanceinertia="true" />
+  </mujoco>
+</robot>
