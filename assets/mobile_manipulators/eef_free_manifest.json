@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "representation": "vendor kinematics with empty left/right EEF mounts",
+  "robots": [
+    {
+      "robot_id": "dexmate_vega",
+      "source_urdf": "assets/mobile_manipulators/dexmate_vega/source/vega_1.urdf",
+      "output_urdf": "assets/mobile_manipulators/dexmate_vega/eef_free/robot.urdf",
+      "source_links": 45,
+      "output_links": 47,
+      "output_joints": 46,
+      "removed_links": [],
+      "empty_eef_mounts": [
+        "left_eef_mount",
+        "right_eef_mount"
+      ],
+      "converted_meshes": 44,
+      "mesh_faces": 588315
+    },
+    {
+      "robot_id": "rby1",
+      "source_urdf": "assets/mobile_manipulators/rby1/source/model.urdf",
+      "output_urdf": "assets/mobile_manipulators/rby1/eef_free/robot.urdf",
+      "source_links": 34,
+      "output_links": 30,
+      "output_joints": 29,
+      "removed_links": [
+        "ee_finger_l1",
+        "ee_finger_l2",
+        "ee_finger_r1",
+        "ee_finger_r2",
+        "ee_left",
+        "ee_right"
+      ],
+      "empty_eef_mounts": [
+        "right_eef_mount",
+        "left_eef_mount"
+      ],
+      "converted_meshes": 26,
+      "mesh_faces": 545089
+    },
+    {
+      "robot_id": "galaxea_r1",
+      "source_urdf": "assets/mobile_manipulators/galaxea_r1/source/r1_v2_1_0.urdf",
+      "output_urdf": "assets/mobile_manipulators/galaxea_r1/eef_free/robot.urdf",
+      "source_links": 34,
+      "output_links": 28,
+      "output_joints": 27,
+      "removed_links": [
+        "left_gripper_finger_link1",
+        "left_gripper_finger_link2",
+        "left_gripper_link",
+        "left_realsense_link",
+        "right_gripper_finger_link1",
+        "right_gripper_finger_link2",
+        "right_gripper_link",
+        "right_realsense_link"
+      ],
+      "empty_eef_mounts": [
+        "left_eef_mount",
+        "right_eef_mount"
+      ],
+      "converted_meshes": 26,
+      "mesh_faces": 608359
+    }
+  ]
+}

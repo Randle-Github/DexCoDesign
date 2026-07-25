@@ -54,6 +54,12 @@ Generate 100 source-bound hands with:
 .venv-morphology/bin/python scripts/dexcodesign/generate_hand_morphologies.py
 ```
 
+The analogous default-deny grammar for the EEF-free Dexmate Vega, RB-Y1, and
+Galaxea R1 mobile manipulators is documented in
+[`docs/mobile_manipulator_morphology.md`](docs/mobile_manipulator_morphology.md).
+It freezes each mobile base, enforces bilateral arm edits, and generates 32
+source-mesh-bound robot URDFs plus one MuJoCo contact sheet.
+
 ## Retained scope
 
 - Isaac Lab simulation, environment, sensor, controller, and asset APIs
