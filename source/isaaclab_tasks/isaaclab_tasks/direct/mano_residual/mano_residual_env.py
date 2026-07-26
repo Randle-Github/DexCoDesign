@@ -11,6 +11,7 @@ pinch-contact term.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -143,10 +144,15 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     residual_finger_scale = 0.30
     object_position_sigma = 0.04
     object_rotation_sigma = 0.50
+    # Match EgoEngine-MPC's Aria residual-RL reward geometry:
+    # reward = C - ||[w_pos * position_error, w_rot * rotation_error]||_2
+    #          + contact_scale * pinch_contact.
     object_position_reward_weight = 1.0
-    object_rotation_reward_weight = 0.5
-    contact_reward_weight = 10.0
-    contact_force_threshold = 0.1
+    object_rotation_reward_weight = 0.3
+    contact_reward_weight = 2.0
+    # EgoEngine treats any penetrating thumb/object and other-finger/object
+    # contact pair as active.  A positive Isaac contact force is its analogue.
+    contact_force_threshold = 0.0
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
     randomize_start_phase = False
@@ -385,16 +391,31 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _get_rewards(self) -> torch.Tensor:
         self._compute_object_errors()
-        position_reward = torch.exp(
-            -self._object_position_error / self.cfg.object_position_sigma
+        weighted_position_error = (
+            self.cfg.object_position_reward_weight
+            * self._object_position_error
         )
-        rotation_reward = torch.exp(
-            -self._object_rotation_error / self.cfg.object_rotation_sigma
+        weighted_rotation_error = (
+            self.cfg.object_rotation_reward_weight
+            * self._object_rotation_error
         )
-        pose_tracking_reward = (
-            self.cfg.object_position_reward_weight * position_reward
-            + self.cfg.object_rotation_reward_weight * rotation_reward
+        pose_tracking_error = torch.sqrt(
+            weighted_position_error.square()
+            + weighted_rotation_error.square()
         )
+        reward_offset_c = math.sqrt(
+            (
+                self.cfg.object_position_reward_weight
+                * self.cfg.object_failure_distance
+            )
+            ** 2
+            + (
+                self.cfg.object_rotation_reward_weight
+                * self.cfg.object_failure_orientation
+            )
+            ** 2
+        )
+        pose_tracking_reward = reward_offset_c - pose_tracking_error
         (
             thumb_contact,
             other_finger_contact,
@@ -410,8 +431,10 @@ class ManoResidualEnv(DirectRLEnv):
         self.extras["log"] = {
             "object_position_error_m": self._object_position_error.mean(),
             "object_rotation_error_rad": self._object_rotation_error.mean(),
-            "object_position_reward": position_reward.mean(),
-            "object_rotation_reward": rotation_reward.mean(),
+            "weighted_object_position_error": weighted_position_error.mean(),
+            "weighted_object_rotation_error": weighted_rotation_error.mean(),
+            "pose_tracking_error": pose_tracking_error.mean(),
+            "reward_offset_c": reward_offset_c,
             "pose_tracking_reward": pose_tracking_reward.mean(),
             "thumb_object_contact": thumb_contact.to(torch.float32).mean(),
             "other_finger_object_contact": other_finger_contact.to(torch.float32).mean(),
