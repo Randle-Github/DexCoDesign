@@ -32,18 +32,36 @@ the replay code. Pose arrays are copied without modification.
 
 ## Retarget all direct-motor hands
 
-`scripts/retarget_all_hands.py` keeps the verified MANO replay unchanged and
-retargets it to the other 13 normalized left hands. Its damped least-squares IK
-optimizes the free 6-DoF wrist and finger joints together. The objective has
-only these terms:
+Before retargeting, the physical distal point of each MANO fingertip mesh is
+compared with the current-frame object triangle surface. If the true
+point-to-surface distance is below `0.01 m`, that fingertip position target is
+replaced by its nearest surface point. The MANO wrist pose remains exact and
+only the existing 22 finger joints are used to reach the adjusted target.
+
+`scripts/retarget_all_hands.py` then retargets the adjusted MANO reference to
+the other 13 normalized left hands. Its damped least-squares IK optimizes the
+free 6-DoF wrist and finger joints together. The objective has only these
+terms:
 
 - bottom-wrist orientation;
 - four or five fingertip positions;
 - the corresponding terminal-link/mesh orientations.
 
 Wrist translation deliberately has no target. There are no intermediate-link,
-contact, collision, or object-surface objectives. Allegro V5 and MIDAS use four
-tips; the other hands use five.
+contact or collision terms in the per-hand solve; the object-surface adjustment
+has already been applied to the MANO source targets. Allegro V5 and MIDAS use
+four tips; the other hands use five.
+
+The Isaac Lab reference and its surface-projection diagnostics are regenerated
+with:
+
+```bash
+.venv-morphology/bin/python \
+  temp/hocap_mano_replay/scripts/prepare_isaaclab_reference.py
+```
+
+This writes `isaaclab_reference.npz` and
+`isaaclab_reference.surface_projection.json` beside the selected trajectory.
 
 ```bash
 # Solve and save per-hand trajectories.
