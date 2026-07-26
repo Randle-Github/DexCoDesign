@@ -54,7 +54,7 @@ OTHER_FINGER_CONTACT_LINK_NAMES = (
 @configclass
 class ManoResidualEnvCfg(DirectRLEnvCfg):
     decimation = 4
-    episode_length_s = 3.2
+    episode_length_s = 14.8
     action_space = 28
     observation_space = 105
     state_space = 0
@@ -142,7 +142,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     contact_force_threshold = 0.1
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
-    randomize_start_phase = True
+    randomize_start_phase = False
     log_rollout_diagnostics = False
 
 
