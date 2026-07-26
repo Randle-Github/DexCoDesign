@@ -18,10 +18,16 @@ conda activate codesign
 cd "${REPO_ROOT}"
 
 mkdir -p "${OUTPUT_ROOT}"
-if ! python -c "import isaacsim, isaaclab, skrl" >/dev/null 2>&1; then
+if ! python -c "import isaacsim" >/dev/null 2>&1; then
   python -m pip install "isaacsim[all,extscache]==5.1.0" \
     --extra-index-url https://pypi.nvidia.com
-  ./isaaclab.sh --install skrl
+fi
+if ! python -c "import isaaclab, isaaclab_tasks, isaaclab_rl, skrl" >/dev/null 2>&1; then
+  python -m pip install \
+    -e source/isaaclab \
+    -e source/isaaclab_assets \
+    -e source/isaaclab_tasks \
+    -e "source/isaaclab_rl[skrl]"
 fi
 
 if [[ ! -f "${OUTPUT_ROOT}/assets/mano_left.usd" || ! -f "${OUTPUT_ROOT}/assets/g04_1.usd" ]]; then
