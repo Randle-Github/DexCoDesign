@@ -15,6 +15,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 def choose_reward_tag(tags: list[str]) -> str:
     preferred = (
+        "Info / pose_tracking_reward",
         "Reward / Total reward (mean)",
         "Reward/Total",
         "Environment/Return",
