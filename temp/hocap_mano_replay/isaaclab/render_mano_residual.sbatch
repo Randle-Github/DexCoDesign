@@ -22,6 +22,10 @@ mkdir -p "${RUNTIME_LIB_DIR}"
 ln -sfn "${CONDA_PREFIX}/lib/libGLU.so.1" "${RUNTIME_LIB_DIR}/libGLU.so.1"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
+if [[ ! -f "${OUTPUT_ROOT}/assets/mano_visuals.json" ]]; then
+  bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
+fi
+
 RUN_DIR="$(find logs/skrl/mano_residual -mindepth 1 -maxdepth 1 -type d -print | sort | tail -n 1)"
 CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name '*.pt' -print | sort -V | tail -n 1)"
 

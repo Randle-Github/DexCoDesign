@@ -36,7 +36,9 @@ if ! python -c "from importlib.metadata import version; [version(p) for p in ('i
   python -m pip install typing_extensions==4.12.2
 fi
 
-if [[ ! -f "${OUTPUT_ROOT}/assets/mano_left.usd" || ! -f "${OUTPUT_ROOT}/assets/g04_1.usd" ]]; then
+if [[ ! -f "${OUTPUT_ROOT}/assets/mano_left.usd" \
+   || ! -f "${OUTPUT_ROOT}/assets/mano_visuals.json" \
+   || ! -f "${OUTPUT_ROOT}/assets/g04_1.usd" ]]; then
   bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
 fi
 

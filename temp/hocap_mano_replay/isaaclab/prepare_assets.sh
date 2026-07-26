@@ -13,6 +13,12 @@ mkdir -p "${ASSET_ROOT}"
   --joint-target-type position \
   --headless
 
+"${REPO_ROOT}/isaaclab.sh" -p \
+  "${REPO_ROOT}/temp/hocap_mano_replay/isaaclab/prepare_mano_visuals.py" \
+  --urdf "${REPO_ROOT}/assets/robot_hands/direct_motor/mano/left/hand.urdf" \
+  --output-dir "${ASSET_ROOT}/mano_visuals" \
+  --headless
+
 "${REPO_ROOT}/isaaclab.sh" -p "${REPO_ROOT}/scripts/tools/convert_mesh.py" \
   "${REPO_ROOT}/temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj" \
   "${ASSET_ROOT}/g04_1.usd" \

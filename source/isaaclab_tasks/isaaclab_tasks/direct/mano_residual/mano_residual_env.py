@@ -9,6 +9,7 @@ first experiment intentionally rewards only object pose tracking.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -174,6 +175,17 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
+        visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
+        if visual_manifest_path.is_file():
+            visual_manifest = json.loads(visual_manifest_path.read_text(encoding="utf-8"))
+            for link_name, relative_usd_path in visual_manifest.items():
+                visual_cfg = sim_utils.UsdFileCfg(
+                    usd_path=str(ASSET_ROOT / relative_usd_path),
+                )
+                visual_cfg.func(
+                    f"/World/envs/env_0/Hand/{link_name}/visual_overlay",
+                    visual_cfg,
+                )
         self.object = RigidObject(self.cfg.object_cfg)
         spawn_ground_plane(
             prim_path="/World/ground",
