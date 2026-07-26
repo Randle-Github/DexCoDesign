@@ -3,8 +3,9 @@
 
 """Residual RL over the reviewed HO-Cap/MANO reference trajectory.
 
-The command is exactly ``q_target = q_reference + scale * residual``.  The
-first experiment intentionally rewards only object pose tracking.
+The command is exactly ``q_target = q_reference + scale * residual``. The
+reward combines object-pose tracking with EgoEngine-MPC's binary pinch-contact
+term: the thumb and at least one other finger must both contact the object.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObjectCfg
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg, ViewerCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
@@ -40,6 +42,26 @@ REFERENCE_PATH = (
     / "isaaclab_reference.npz"
 )
 
+THUMB_CONTACT_LINK_NAMES = (
+    "left_thumb1z",
+    "left_thumb2z",
+    "left_thumb3",
+)
+OTHER_FINGER_CONTACT_LINK_NAMES = (
+    "left_index1z",
+    "left_index2",
+    "left_index3",
+    "left_middle1z",
+    "left_middle2",
+    "left_middle3",
+    "left_ring1z",
+    "left_ring2",
+    "left_ring3",
+    "left_pinky1z",
+    "left_pinky2",
+    "left_pinky3",
+)
+
 
 @configclass
 class ManoResidualEnvCfg(DirectRLEnvCfg):
@@ -49,7 +71,15 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     observation_space = 105
     state_space = 0
 
-    sim: SimulationCfg = SimulationCfg(dt=1.0 / 120.0, render_interval=decimation)
+    sim: SimulationCfg = SimulationCfg(
+        dt=1.0 / 120.0,
+        render_interval=decimation,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+    )
     viewer: ViewerCfg = ViewerCfg(
         eye=(0.45, 0.42, 0.38),
         lookat=(-0.10, 0.0, 0.17),
@@ -61,7 +91,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Hand",
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(ASSET_ROOT / "mano_left.usd"),
-            activate_contact_sensors=False,
+            activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=1.0,
@@ -118,7 +148,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     object_rotation_sigma = 0.50
     object_position_reward_weight = 1.0
     object_rotation_reward_weight = 0.5
-    object_failure_distance = 0.30
+    contact_reward_weight = 1.0
+    contact_force_threshold = 0.1
+    object_failure_distance = 0.10
+    object_failure_orientation = 0.30
     randomize_start_phase = True
     log_rollout_diagnostics = False
 
@@ -136,6 +169,7 @@ class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
     # terminates failed rollouts early, but inheriting that threshold here can
     # reset the one-environment video to frame zero on every failed step.
     object_failure_distance = float("inf")
+    object_failure_orientation = float("inf")
     randomize_start_phase = False
     log_rollout_diagnostics = True
 
@@ -200,13 +234,32 @@ class ManoResidualEnv(DirectRLEnv):
                     visual_cfg,
                 )
         self.object = RigidObject(self.cfg.object_cfg)
+        self._contact_sensors: dict[str, ContactSensor] = {}
+        for link_name in THUMB_CONTACT_LINK_NAMES + OTHER_FINGER_CONTACT_LINK_NAMES:
+            self._contact_sensors[link_name] = ContactSensor(
+                ContactSensorCfg(
+                    prim_path=f"/World/envs/env_.*/Hand/{link_name}",
+                    update_period=0.0,
+                    history_length=0,
+                    filter_prim_paths_expr=["/World/envs/env_.*/Object"],
+                )
+            )
         spawn_ground_plane(
             prim_path="/World/ground",
-            cfg=GroundPlaneCfg(color=(0.25, 0.27, 0.30)),
+            cfg=GroundPlaneCfg(
+                color=(0.25, 0.27, 0.30),
+                physics_material=sim_utils.RigidBodyMaterialCfg(
+                    static_friction=1.0,
+                    dynamic_friction=1.0,
+                    restitution=0.0,
+                ),
+            ),
         )
         self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
         self.scene.rigid_objects["object"] = self.object
+        for link_name, sensor in self._contact_sensors.items():
+            self.scene.sensors[f"{link_name}_object_contact"] = sensor
         light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
         light_cfg.func("/World/Light", light_cfg)
 
@@ -276,6 +329,24 @@ class ManoResidualEnv(DirectRLEnv):
             reference_pose[:, 3:7],
         )
 
+    def _contact_group_active(self, link_names: tuple[str, ...]) -> torch.Tensor:
+        active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        for link_name in link_names:
+            force_matrix = self._contact_sensors[link_name].data.force_matrix_w
+            if force_matrix is None:
+                continue
+            force_magnitude = torch.linalg.vector_norm(
+                force_matrix.reshape(self.num_envs, -1, 3),
+                dim=-1,
+            ).amax(dim=-1)
+            active |= force_magnitude > self.cfg.contact_force_threshold
+        return active
+
+    def _compute_pinch_contact(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        thumb_contact = self._contact_group_active(THUMB_CONTACT_LINK_NAMES)
+        other_finger_contact = self._contact_group_active(OTHER_FINGER_CONTACT_LINK_NAMES)
+        return thumb_contact, other_finger_contact, thumb_contact & other_finger_contact
+
     def _get_rewards(self) -> torch.Tensor:
         self._compute_object_errors()
         position_reward = torch.exp(
@@ -284,22 +355,33 @@ class ManoResidualEnv(DirectRLEnv):
         rotation_reward = torch.exp(
             -self._object_rotation_error / self.cfg.object_rotation_sigma
         )
+        thumb_contact, other_finger_contact, pinch_contact = self._compute_pinch_contact()
+        contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = (
             self.cfg.object_position_reward_weight * position_reward
             + self.cfg.object_rotation_reward_weight * rotation_reward
+            + contact_reward
         )
         self.extras["log"] = {
             "object_position_error_m": self._object_position_error.mean(),
             "object_rotation_error_rad": self._object_rotation_error.mean(),
             "object_position_reward": position_reward.mean(),
             "object_rotation_reward": rotation_reward.mean(),
+            "thumb_object_contact": thumb_contact.to(torch.float32).mean(),
+            "other_finger_object_contact": other_finger_contact.to(torch.float32).mean(),
+            "pinch_contact_reward": contact_reward.mean(),
         }
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_object_errors()
-        invalid = ~torch.isfinite(self._object_position_error)
-        object_lost = self._object_position_error > self.cfg.object_failure_distance
+        invalid = ~torch.isfinite(self._object_position_error) | ~torch.isfinite(
+            self._object_rotation_error
+        )
+        object_lost = (
+            (self._object_position_error > self.cfg.object_failure_distance)
+            | (self._object_rotation_error > self.cfg.object_failure_orientation)
+        )
         end_of_reference = self.phase_buf >= self._reference_length - 1
         time_out = (self.episode_length_buf >= self.max_episode_length - 1) | end_of_reference
         return invalid | object_lost, time_out
