@@ -49,7 +49,7 @@ while true; do
     "agent.agent.experiment.experiment_name=${RUN_LABEL}"
 
   RUN_DIR="$(find logs/skrl/mano_residual -mindepth 1 -maxdepth 1 -type d -name "*_${RUN_LABEL}" -print | sort | tail -n 1)"
-  CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name '*.pt' -print | sort -V | tail -n 1)"
+  CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name 'agent_*.pt' -print | sort -V | tail -n 1)"
   EVAL_JSON="${RESULT_DIR}/evaluations/iter_${TOTAL_ITERATIONS}.json"
 
   set +e
