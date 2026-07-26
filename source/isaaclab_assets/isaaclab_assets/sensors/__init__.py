@@ -7,5 +7,9 @@
 # Configuration for different assets.
 ##
 
-from .gelsight import *
+try:
+    from .gelsight import *
+except ModuleNotFoundError as exc:
+    if not exc.name or not exc.name.startswith("isaaclab_contrib"):
+        raise
 from .velodyne import *

@@ -19,16 +19,17 @@ cd "${REPO_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
 
 mkdir -p "${OUTPUT_ROOT}"
-if ! python -c "import isaacsim" >/dev/null 2>&1; then
+if ! python -c "from importlib.metadata import version; version('isaacsim')" >/dev/null 2>&1; then
   python -m pip install "isaacsim[all,extscache]==5.1.0" \
     --extra-index-url https://pypi.nvidia.com
 fi
-if ! python -c "import isaaclab, isaaclab_tasks, isaaclab_rl, skrl" >/dev/null 2>&1; then
+if ! python -c "from importlib.metadata import version; [version(p) for p in ('isaaclab', 'isaaclab_tasks', 'isaaclab_rl', 'skrl')]" >/dev/null 2>&1; then
   python -m pip install \
     -e source/isaaclab \
     -e source/isaaclab_assets \
     -e source/isaaclab_tasks \
     -e "source/isaaclab_rl[skrl]"
+  python -m pip install typing_extensions==4.12.2
 fi
 
 if [[ ! -f "${OUTPUT_ROOT}/assets/mano_left.usd" || ! -f "${OUTPUT_ROOT}/assets/g04_1.usd" ]]; then
