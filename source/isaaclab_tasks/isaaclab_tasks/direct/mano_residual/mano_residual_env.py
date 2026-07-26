@@ -138,7 +138,9 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         num_envs=1024,
         env_spacing=0.65,
         replicate_physics=True,
-        clone_in_fabric=True,
+        # ContactSensor discovers one USD reporting prim per environment.
+        # Fabric-only clones are absent from that discovery stage.
+        clone_in_fabric=False,
     )
 
     residual_root_position_scale = 0.02
@@ -162,7 +164,7 @@ class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
         num_envs=1,
         env_spacing=0.65,
         replicate_physics=True,
-        clone_in_fabric=True,
+        clone_in_fabric=False,
     )
     episode_length_s = 14.8
     # Evaluation must play the complete reference once. Training intentionally
