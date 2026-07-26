@@ -4,7 +4,9 @@ models:
   separate: False
   policy:
     class: GaussianMixin
-    clip_actions: True
+    # DirectRLEnv exposes an unbounded Box for integer action-space declarations.
+    # The environment clamps residuals to [-1, 1] in _pre_physics_step.
+    clip_actions: False
     clip_log_std: True
     min_log_std: -20.0
     max_log_std: 2.0
