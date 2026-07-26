@@ -149,13 +149,15 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     #          + contact_scale * pinch_contact.
     object_position_reward_weight = 1.0
     object_rotation_reward_weight = 0.3
-    contact_reward_weight = 2.0
+    contact_reward_weight = 0.5
     # EgoEngine treats any penetrating thumb/object and other-finger/object
     # contact pair as active.  A positive Isaac contact force is its analogue.
     contact_force_threshold = 0.0
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
-    randomize_start_phase = False
+    # Training must cover the whole trajectory even when early termination
+    # prevents a rollout starting at frame zero from reaching later phases.
+    randomize_start_phase = True
     log_rollout_diagnostics = False
 
 
@@ -443,6 +445,10 @@ class ManoResidualEnv(DirectRLEnv):
             "other_finger_object_contact_force_n": other_finger_force.mean(),
             "finger_residual_abs_mean_rad": finger_residual.mean(),
             "finger_residual_abs_max_rad": finger_residual.amax(dim=-1).mean(),
+            "reference_phase_fraction": (
+                self.phase_buf.to(torch.float32).mean()
+                / float(self._reference_length - 1)
+            ),
         }
         return total_reward
 
@@ -469,10 +475,9 @@ class ManoResidualEnv(DirectRLEnv):
         super()._reset_idx(env_ids)
 
         if self.cfg.randomize_start_phase:
-            max_start = self._reference_length - self.max_episode_length - 2
             self.phase_buf[env_ids] = torch.randint(
                 low=0,
-                high=max(max_start, 1),
+                high=max(self._reference_length - 1, 1),
                 size=(len(env_ids),),
                 device=self.device,
             )
