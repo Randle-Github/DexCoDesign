@@ -88,6 +88,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Object",
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(ASSET_ROOT / "g04_1.usd"),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.92, 0.38, 0.08),
+                roughness=0.55,
+            ),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 enable_gyroscopic_forces=True,
