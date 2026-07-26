@@ -42,23 +42,11 @@ REFERENCE_PATH = (
     / "isaaclab_reference.npz"
 )
 
-THUMB_CONTACT_LINK_NAMES = (
-    "left_thumb1z",
-    "left_thumb2z",
-    "left_thumb3",
-)
+THUMB_CONTACT_LINK_NAMES = ("left_thumb3",)
 OTHER_FINGER_CONTACT_LINK_NAMES = (
-    "left_index1z",
-    "left_index2",
     "left_index3",
-    "left_middle1z",
-    "left_middle2",
     "left_middle3",
-    "left_ring1z",
-    "left_ring2",
     "left_ring3",
-    "left_pinky1z",
-    "left_pinky2",
     "left_pinky3",
 )
 
@@ -144,13 +132,13 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     )
 
     residual_root_position_scale = 0.02
-    residual_root_rotation_scale = 0.08
-    residual_finger_scale = 0.20
+    residual_root_rotation_scale = 0.30
+    residual_finger_scale = 0.30
     object_position_sigma = 0.04
     object_rotation_sigma = 0.50
     object_position_reward_weight = 1.0
     object_rotation_reward_weight = 0.5
-    contact_reward_weight = 1.0
+    contact_reward_weight = 6.0
     contact_force_threshold = 0.1
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
@@ -174,6 +162,21 @@ class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
     object_failure_orientation = float("inf")
     randomize_start_phase = False
     log_rollout_diagnostics = True
+
+
+@configclass
+class ManoResidualEvalEnvCfg(ManoResidualEnvCfg):
+    """Full-reference evaluation with training termination thresholds enabled."""
+
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+        num_envs=1,
+        env_spacing=0.65,
+        replicate_physics=True,
+        clone_in_fabric=False,
+    )
+    episode_length_s = 14.8
+    randomize_start_phase = False
+    log_rollout_diagnostics = False
 
 
 class ManoResidualEnv(DirectRLEnv):
@@ -218,6 +221,9 @@ class ManoResidualEnv(DirectRLEnv):
         self.joint_targets = torch.zeros_like(self.actions)
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
+        self._last_evaluated_phase = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
         self._last_diagnostic_phase = -1
         self._palm_body_index = self.hand.body_names.index("left_palm")
         self._middle_tip_body_index = self.hand.body_names.index("left_middle3")
@@ -412,6 +418,10 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_object_errors()
+        # DirectRLEnv resets finished environments before returning from step().
+        # Preserve the phase used for termination so external evaluation can
+        # distinguish a true last-reference timeout from an early reset.
+        self._last_evaluated_phase.copy_(self.phase_buf)
         invalid = ~torch.isfinite(self._object_position_error) | ~torch.isfinite(
             self._object_rotation_error
         )
