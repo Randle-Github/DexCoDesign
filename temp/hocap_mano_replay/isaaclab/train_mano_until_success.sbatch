@@ -13,7 +13,8 @@ set -euo pipefail
 
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_mano_residual"
-RESULT_DIR="${OUTPUT_ROOT}/until_success"
+RESULT_NAME="${RESULT_NAME:-until_success}"
+RESULT_DIR="${OUTPUT_ROOT}/${RESULT_NAME}"
 ISAACLAB_LOG_DIR="${RESULT_DIR}/isaaclab_logs"
 RUN_SEED="${RUN_SEED:-42}"
 CHUNK_ITERATIONS="${CHUNK_ITERATIONS:-100}"
@@ -31,7 +32,7 @@ mkdir -p "${RESULT_DIR}/evaluations" "${ISAACLAB_LOG_DIR}"
 
 while true; do
   TOTAL_ITERATIONS=$((TOTAL_ITERATIONS + CHUNK_ITERATIONS))
-  RUN_LABEL="until_success_iter${TOTAL_ITERATIONS}_seed${RUN_SEED}"
+  RUN_LABEL="${RESULT_NAME}_iter${TOTAL_ITERATIONS}_seed${RUN_SEED}"
   TRAIN_ARGS=(
     --task DexCoDesign-MANO-Residual-Direct-v0
     --algorithm PPO
