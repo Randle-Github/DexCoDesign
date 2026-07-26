@@ -1,0 +1,33 @@
+{
+  "source_frames": 446,
+  "rendered_frames": 223,
+  "fps": 15,
+  "stride": 2,
+  "duration_seconds": 14.866666666666667,
+  "wrist_to_object_surface_distance_m": {
+    "min": 0.05358346924185753,
+    "median": 0.0620868094265461,
+    "max": 0.15893767774105072
+  },
+  "exact_channels": [
+    "MANO wrist position = pose translation + subject-specific J0",
+    "MANO wrist global orientation (with fixed local-axis convention transform)",
+    "object translation",
+    "object orientation"
+  ],
+  "selected_orientation_candidate": "B: -90 degrees around hand-local X",
+  "mano_root_offset_world_m": [
+    -0.096753545,
+    0.00629051,
+    0.00612738
+  ],
+  "object_id": "G04_1",
+  "approximate_channel": "45-D MANO PCA hand pose -> 22-DoF local MANO-style hand",
+  "hand_model": "assets/robot_hands/direct_motor/mano/left/hand.urdf",
+  "hand_model_nq": 28,
+  "hand_model_nv": 28,
+  "exact_mano_requirement": [
+    "MANO_LEFT.pkl",
+    "MANO_RIGHT.pkl"
+  ]
+}

@@ -1,0 +1,195 @@
+{
+  "ability_hand": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 10,
+    "neutral_hand_to_mano_size_ratio": 0.9674780586522324,
+    "mean_tip_position_error_mm": 9.211930389941337,
+    "mean_tip_orientation_error_deg": 17.875380392492723,
+    "mean_wrist_orientation_error_deg": 13.050107870830743
+  },
+  "schunk_svh": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "left_hand_link",
+    "ik_dofs": 20,
+    "neutral_hand_to_mano_size_ratio": 1.3270249386152704,
+    "mean_tip_position_error_mm": 2.2265938726350396,
+    "mean_tip_orientation_error_deg": 12.087021607623456,
+    "mean_wrist_orientation_error_deg": 7.967811302833202
+  },
+  "wuji_hand_2": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 20,
+    "neutral_hand_to_mano_size_ratio": 1.288998069086206,
+    "mean_tip_position_error_mm": 0.7589209600473931,
+    "mean_tip_orientation_error_deg": 3.8638843504437776,
+    "mean_wrist_orientation_error_deg": 8.44626432132023
+  },
+  "sharpa_wave_01": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 22,
+    "neutral_hand_to_mano_size_ratio": 1.2499053930281276,
+    "mean_tip_position_error_mm": 3.1924825294739234,
+    "mean_tip_orientation_error_deg": 11.09113610222186,
+    "mean_wrist_orientation_error_deg": 10.904556182133549
+  },
+  "tesollo_dg5f": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 20,
+    "neutral_hand_to_mano_size_ratio": 1.6952435150151484,
+    "mean_tip_position_error_mm": 1.0115242414286791,
+    "mean_tip_orientation_error_deg": 7.102628589768245,
+    "mean_wrist_orientation_error_deg": 6.280248598257327
+  },
+  "unitree_dex5_1": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 20,
+    "neutral_hand_to_mano_size_ratio": 0.9755958906240259,
+    "mean_tip_position_error_mm": 3.0384891292035454,
+    "mean_tip_orientation_error_deg": 14.05446959136773,
+    "mean_wrist_orientation_error_deg": 4.944096749126864
+  },
+  "robotera_xhand1": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 12,
+    "neutral_hand_to_mano_size_ratio": 1.1786289023650225,
+    "mean_tip_position_error_mm": 5.582547835449067,
+    "mean_tip_orientation_error_deg": 16.002734763943028,
+    "mean_wrist_orientation_error_deg": 7.7333500739587455
+  },
+  "orca_hand_v2": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "L-Carpals_719fff8c",
+    "ik_dofs": 16,
+    "neutral_hand_to_mano_size_ratio": 0.9664955988088384,
+    "mean_tip_position_error_mm": 4.995063324776593,
+    "mean_tip_orientation_error_deg": 9.885581781695695,
+    "mean_wrist_orientation_error_deg": 24.982492712934672
+  },
+  "shadow_hand_e": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "lh_palm",
+    "ik_dofs": 22,
+    "neutral_hand_to_mano_size_ratio": 1.2036878010215102,
+    "mean_tip_position_error_mm": 2.701383640083567,
+    "mean_tip_orientation_error_deg": 9.627779781850945,
+    "mean_wrist_orientation_error_deg": 5.853345073572876
+  },
+  "allegro_hand_v5": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 16,
+    "neutral_hand_to_mano_size_ratio": 0.8022277167510125,
+    "mean_tip_position_error_mm": 5.20239455452899,
+    "mean_tip_orientation_error_deg": 29.18679966058834,
+    "mean_wrist_orientation_error_deg": 16.98736424254406
+  },
+  "midas_hand": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 16,
+    "neutral_hand_to_mano_size_ratio": 1.3003833574940649,
+    "mean_tip_position_error_mm": 1.1787981629789726,
+    "mean_tip_orientation_error_deg": 8.620559968983429,
+    "mean_wrist_orientation_error_deg": 8.30636000040289
+  },
+  "ruka_v2": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "backhand",
+    "ik_dofs": 18,
+    "neutral_hand_to_mano_size_ratio": 1.283279069898607,
+    "mean_tip_position_error_mm": 4.8951380050136075,
+    "mean_tip_orientation_error_deg": 11.377246685045789,
+    "mean_wrist_orientation_error_deg": 16.952941080320308
+  },
+  "inspire_rh56dfx": {
+    "fingers": [
+      "thumb",
+      "index",
+      "middle",
+      "ring",
+      "pinky"
+    ],
+    "wrist_body": "retarget_wrapper",
+    "ik_dofs": 12,
+    "neutral_hand_to_mano_size_ratio": 1.230908803320364,
+    "mean_tip_position_error_mm": 9.906320827334374,
+    "mean_tip_orientation_error_deg": 16.841972062964555,
+    "mean_wrist_orientation_error_deg": 22.446266164770464
+  }
+}

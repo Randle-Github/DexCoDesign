@@ -1,0 +1,7 @@
+# Re-downloadable upstream archives and nested source checkouts.
+/data/raw/
+/vendor/
+
+# Machine-specific MuJoCo exports contain absolute local mesh paths.
+/artifacts/*scene.xml
+/artifacts/all_hands_ik_cache/*.xml

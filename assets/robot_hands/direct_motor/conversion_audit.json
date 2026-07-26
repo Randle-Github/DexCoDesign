@@ -31,6 +31,7 @@
       "mesh_references": 32,
       "generated_meshes": 32,
       "generated_visual_faces": 1892,
+      "collision_geometry": "visual_mesh",
       "coupling_approximation": "none",
       "coupling_records": [],
       "joint_records": [
@@ -826,6 +827,7 @@
       "mesh_references": 32,
       "generated_meshes": 32,
       "generated_visual_faces": 1892,
+      "collision_geometry": "visual_mesh",
       "coupling_approximation": "none",
       "coupling_records": [],
       "joint_records": [

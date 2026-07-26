@@ -1,0 +1,12 @@
+{
+  "source": "HO-Cap official models.zip, poses.zip, calibration.zip",
+  "sequence": "subject_7/20231022_192832",
+  "num_frames": 446,
+  "hand_side": "left",
+  "mano_pose_layout": "[global_rotvec(3), hand_PCA(45), translation_m(3)]",
+  "object_id": "G04_1",
+  "object_slot": 0,
+  "object_pose_layout": "[qx, qy, qz, qw, tx, ty, tz]",
+  "max_object_translation_m": 0.2951282262802124,
+  "object_id_note": "Verified from the official labels.zip frame annotation: pose slot 0 is G04_1. Trajectory values are unmodified."
+}

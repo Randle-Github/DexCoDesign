@@ -45,6 +45,7 @@ DEFAULT_EFFORT = 1.0
 DEFAULT_ANGULAR_VELOCITY = 8.0
 DEFAULT_LINEAR_VELOCITY = 1.0
 MAX_IMPORT_MESH_FACES = 180_000
+VISUAL_MESH_COLLISION_HANDS = {"mano"}
 
 # Native USD assets in the current registry also ship a vendor-derived URDF.
 # A future USD-only hand must provide an explicit URDF/MJCF conversion source;
@@ -91,9 +92,11 @@ direct_motor/
   <hand_id>/<left|right>/meshes/*.obj
 ```
 
-All visual and collision meshes are materialized beside each URDF. Mesh faces
-are preserved rather than decimated; very large meshes are split into OBJ
-chunks only to keep individual importer inputs manageable.
+Visual and collision meshes are materialized beside each URDF. For MANO, the
+actual per-link hand visual meshes are reused as collision meshes; SPIDER's
+extra capsule/box collision proxies are deliberately excluded. Mesh faces are
+preserved rather than decimated; very large meshes are split into OBJ chunks
+only to keep individual importer inputs manageable.
 
 ## Conversion rules
 
@@ -698,6 +701,7 @@ def export_mjcf_body_meshes(
     body_id: int,
     mesh_dir: Path,
     body_name: str,
+    use_visual_mesh_collision: bool = False,
 ) -> tuple[str | None, str | None, int]:
     geom_ids = list(
         range(
@@ -709,15 +713,18 @@ def export_mjcf_body_meshes(
         geom_id for geom_id in geom_ids if int(model.geom_group[geom_id]) in {1, 2}
     ]
     visual_ids = explicit_visual or geom_ids
-    collision_ids = [
-        geom_id
-        for geom_id in geom_ids
-        if int(model.geom_contype[geom_id]) != 0
-        or int(model.geom_conaffinity[geom_id]) != 0
-        or int(model.geom_group[geom_id]) == 3
-    ]
-    if not collision_ids:
+    if use_visual_mesh_collision:
         collision_ids = list(visual_ids)
+    else:
+        collision_ids = [
+            geom_id
+            for geom_id in geom_ids
+            if int(model.geom_contype[geom_id]) != 0
+            or int(model.geom_conaffinity[geom_id]) != 0
+            or int(model.geom_group[geom_id]) == 3
+        ]
+        if not collision_ids:
+            collision_ids = list(visual_ids)
 
     mesh_dir.mkdir(parents=True, exist_ok=True)
 
@@ -958,7 +965,11 @@ def normalize_mjcf(
             )
 
         visual_mesh, collision_mesh, faces = export_mjcf_body_meshes(
-            model, body_id, mesh_dir, body_name
+            model,
+            body_id,
+            mesh_dir,
+            body_name,
+            use_visual_mesh_collision=hand_id in VISUAL_MESH_COLLISION_HANDS,
         )
         total_faces += faces
         link = robot.findall("link")[-1]
@@ -1149,6 +1160,11 @@ def normalize_mjcf(
         "mesh_references": generated_meshes,
         "generated_meshes": generated_meshes,
         "generated_visual_faces": total_faces,
+        "collision_geometry": (
+            "visual_mesh"
+            if hand_id in VISUAL_MESH_COLLISION_HANDS
+            else "source"
+        ),
         "coupling_approximation": (
             "range-normalized affine mimic for tendons"
             if model.ntendon
@@ -1308,6 +1324,11 @@ def build_all(clean: bool = True) -> dict:
                 "active_dofs": audit["active_dofs"],
                 "passive_mimic_dofs": audit["passive_mimic_dofs"],
                 "scalar_dofs": audit["scalar_dofs"],
+                "collision_geometry": (
+                    "visual_mesh"
+                    if hand_id in VISUAL_MESH_COLLISION_HANDS
+                    else "source"
+                ),
                 "source_format": entry["format"],
                 "source_path": entry["path"],
             }
