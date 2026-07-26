@@ -116,6 +116,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     object_rotation_reward_weight = 0.5
     object_failure_distance = 0.30
     randomize_start_phase = True
+    log_rollout_diagnostics = False
 
 
 @configclass
@@ -132,6 +133,7 @@ class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
     # reset the one-environment video to frame zero on every failed step.
     object_failure_distance = float("inf")
     randomize_start_phase = False
+    log_rollout_diagnostics = True
 
 
 class ManoResidualEnv(DirectRLEnv):
@@ -176,6 +178,7 @@ class ManoResidualEnv(DirectRLEnv):
         self.joint_targets = torch.zeros_like(self.actions)
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
+        self._last_diagnostic_phase = -1
 
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
@@ -218,6 +221,25 @@ class ManoResidualEnv(DirectRLEnv):
     def _get_observations(self) -> dict[str, torch.Tensor]:
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
         object_pose = torch.cat((object_pos, self.object.data.root_quat_w), dim=-1)
+        if self.cfg.log_rollout_diagnostics and self.num_envs == 1:
+            phase_index = int(self.phase_buf[0].item())
+            if phase_index != self._last_diagnostic_phase and (
+                phase_index < 3 or phase_index % 110 == 0
+            ):
+                actual_q = self.hand.data.joint_pos[0]
+                target_q = self.joint_targets[0]
+                reference_q = self.reference_hand_q[phase_index]
+                reference_object_pos = self.reference_object_pose[phase_index, :3]
+                print(
+                    "[MANO_ROLLOUT] "
+                    f"phase={phase_index} "
+                    f"hand_actual_root={actual_q[:6].detach().cpu().tolist()} "
+                    f"hand_target_root={target_q[:6].detach().cpu().tolist()} "
+                    f"hand_reference_root={reference_q[:6].detach().cpu().tolist()} "
+                    f"object_actual_pos={object_pos[0].detach().cpu().tolist()} "
+                    f"object_reference_pos={reference_object_pos.detach().cpu().tolist()}"
+                )
+                self._last_diagnostic_phase = phase_index
         phase = (self.phase_buf.float() / float(self._reference_length - 1)).unsqueeze(-1)
         observation = torch.cat(
             (
