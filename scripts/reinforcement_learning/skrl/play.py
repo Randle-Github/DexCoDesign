@@ -13,6 +13,7 @@ a more user-friendly way.
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import inspect
 import sys
 
 from isaaclab.app import AppLauncher
@@ -214,6 +215,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
 
     # reset environment
     obs, _ = env.reset()
+    agent_act_requires_states = "states" in inspect.signature(runner.agent.act).parameters
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
@@ -222,7 +224,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
-            outputs = runner.agent.act(obs, timestep=0, timesteps=0)
+            if agent_act_requires_states:
+                outputs = runner.agent.act(obs, None, timestep=0, timesteps=0)
+            else:
+                outputs = runner.agent.act(obs, timestep=0, timesteps=0)
             # - multi-agent (deterministic) actions
             if hasattr(env, "possible_agents"):
                 actions = {a: outputs[-1][a].get("mean_actions", outputs[0][a]) for a in env.possible_agents}
