@@ -17,8 +17,8 @@ RESULT_DIR="${OUTPUT_ROOT}/until_success"
 RUN_SEED="${RUN_SEED:-42}"
 CHUNK_ITERATIONS="${CHUNK_ITERATIONS:-100}"
 CONTACT_WEIGHT="${CONTACT_WEIGHT:-6.0}"
-TOTAL_ITERATIONS=0
-CHECKPOINT=""
+TOTAL_ITERATIONS="${INITIAL_ITERATIONS:-0}"
+CHECKPOINT="${INITIAL_CHECKPOINT:-}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -52,22 +52,33 @@ while true; do
   CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name '*.pt' -print | sort -V | tail -n 1)"
   EVAL_JSON="${RESULT_DIR}/evaluations/iter_${TOTAL_ITERATIONS}.json"
 
-  if ./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/evaluate_mano_checkpoint.py \
+  set +e
+  ./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/evaluate_mano_checkpoint.py \
     --task DexCoDesign-MANO-Residual-Direct-Eval-v0 \
     --algorithm PPO \
     --checkpoint "${CHECKPOINT}" \
     --output "${EVAL_JSON}" \
     --seed "${RUN_SEED}" \
     --headless \
-    "env.contact_reward_weight=${CONTACT_WEIGHT}"; then
+    "env.contact_reward_weight=${CONTACT_WEIGHT}"
+  EVAL_EXIT=$?
+  set -e
+
+  if [[ ! -f "${EVAL_JSON}" ]]; then
+    echo "Evaluation did not write ${EVAL_JSON}." >&2
+    exit "${EVAL_EXIT:-1}"
+  fi
+  if [[ "${EVAL_EXIT}" -ne 0 && "${EVAL_EXIT}" -ne 2 ]]; then
+    echo "Evaluation crashed with exit code ${EVAL_EXIT}." >&2
+    exit "${EVAL_EXIT}"
+  fi
+
+  if python -c \
+    'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1]))["success"] else 1)' \
+    "${EVAL_JSON}"; then
     echo "Successful complete-reference rollout at ${TOTAL_ITERATIONS} iterations."
     break
   else
-    EVAL_EXIT=$?
-    if [[ "${EVAL_EXIT}" -ne 2 ]]; then
-      echo "Evaluation crashed with exit code ${EVAL_EXIT}." >&2
-      exit "${EVAL_EXIT}"
-    fi
     echo "Evaluation failed at ${TOTAL_ITERATIONS} iterations; continuing."
   fi
 done
