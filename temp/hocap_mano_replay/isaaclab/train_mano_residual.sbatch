@@ -17,7 +17,10 @@ source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
 cd "${REPO_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
-export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+RUNTIME_LIB_DIR="${OUTPUT_ROOT}/runtime_libs"
+mkdir -p "${RUNTIME_LIB_DIR}"
+ln -sfn "${CONDA_PREFIX}/lib/libGLU.so.1" "${RUNTIME_LIB_DIR}/libGLU.so.1"
+export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
 mkdir -p "${OUTPUT_ROOT}"
 if ! python -c "from importlib.metadata import version; version('isaacsim')" >/dev/null 2>&1; then
