@@ -179,6 +179,8 @@ class ManoResidualEnv(DirectRLEnv):
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
         self._last_diagnostic_phase = -1
+        self._palm_body_index = self.hand.body_names.index("left_palm")
+        self._middle_tip_body_index = self.hand.body_names.index("left_middle3")
 
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
@@ -230,12 +232,16 @@ class ManoResidualEnv(DirectRLEnv):
                 target_q = self.joint_targets[0]
                 reference_q = self.reference_hand_q[phase_index]
                 reference_object_pos = self.reference_object_pose[phase_index, :3]
+                palm_pos = self.hand.data.body_pos_w[0, self._palm_body_index]
+                middle_tip_pos = self.hand.data.body_pos_w[0, self._middle_tip_body_index]
                 print(
                     "[MANO_ROLLOUT] "
                     f"phase={phase_index} "
                     f"hand_actual_root={actual_q[:6].detach().cpu().tolist()} "
                     f"hand_target_root={target_q[:6].detach().cpu().tolist()} "
                     f"hand_reference_root={reference_q[:6].detach().cpu().tolist()} "
+                    f"palm_pos={palm_pos.detach().cpu().tolist()} "
+                    f"middle_tip_pos={middle_tip_pos.detach().cpu().tolist()} "
                     f"object_actual_pos={object_pos[0].detach().cpu().tolist()} "
                     f"object_reference_pos={reference_object_pos.detach().cpu().tolist()}"
                 )
