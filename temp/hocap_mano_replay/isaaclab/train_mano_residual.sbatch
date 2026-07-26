@@ -38,7 +38,8 @@ fi
 
 if [[ ! -f "${OUTPUT_ROOT}/assets/mano_left.usd" \
    || ! -f "${OUTPUT_ROOT}/assets/mano_visuals.json" \
-   || ! -f "${OUTPUT_ROOT}/assets/g04_1.usd" ]]; then
+   || ! -f "${OUTPUT_ROOT}/assets/g04_1.usd" \
+   || ! -f "${OUTPUT_ROOT}/assets/.fixed_base_non_instanceable_v1" ]]; then
   bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
 fi
 

@@ -22,7 +22,7 @@ mkdir -p "${RUNTIME_LIB_DIR}"
 ln -sfn "${CONDA_PREFIX}/lib/libGLU.so.1" "${RUNTIME_LIB_DIR}/libGLU.so.1"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
-if [[ ! -f "${OUTPUT_ROOT}/assets/mano_visuals.json" ]]; then
+if [[ ! -f "${OUTPUT_ROOT}/assets/.fixed_base_non_instanceable_v1" ]]; then
   bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
 fi
 
@@ -36,7 +36,6 @@ CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name '*.pt' -print | sort -
   --checkpoint "${CHECKPOINT}" \
   --video \
   --video_length 445 \
-  --disable_fabric \
   --headless
 
 python temp/hocap_mano_replay/isaaclab/export_training_artifacts.py \

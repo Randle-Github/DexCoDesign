@@ -43,7 +43,7 @@ def main() -> None:
                 usd_dir=str(link_output_dir),
                 usd_file_name="visual.usd",
                 force_usd_conversion=True,
-                make_instanceable=True,
+                make_instanceable=False,
                 collision_props=None,
                 mesh_collision_props=None,
                 mass_props=None,
