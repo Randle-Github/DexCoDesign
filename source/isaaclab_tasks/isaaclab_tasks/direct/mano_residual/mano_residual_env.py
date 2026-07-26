@@ -70,8 +70,8 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
             / "isaaclab_logs"
         ),
         physics_material=sim_utils.RigidBodyMaterialCfg(
-            static_friction=1.0,
-            dynamic_friction=1.0,
+            static_friction=2.0,
+            dynamic_friction=2.0,
             restitution=0.0,
         ),
     )
@@ -145,7 +145,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     object_rotation_sigma = 0.50
     object_position_reward_weight = 1.0
     object_rotation_reward_weight = 0.5
-    contact_reward_weight = 6.0
+    contact_reward_weight = 10.0
     contact_force_threshold = 0.1
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
