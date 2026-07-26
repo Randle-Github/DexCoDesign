@@ -127,6 +127,10 @@ class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
         clone_in_fabric=True,
     )
     episode_length_s = 14.8
+    # Evaluation must play the complete reference once. Training intentionally
+    # terminates failed rollouts early, but inheriting that threshold here can
+    # reset the one-environment video to frame zero on every failed step.
+    object_failure_distance = float("inf")
     randomize_start_phase = False
 
 
