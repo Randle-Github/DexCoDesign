@@ -346,20 +346,29 @@ class ManoResidualEnv(DirectRLEnv):
             reference_pose[:, 3:7],
         )
 
-    def _contact_sensor_active(self, sensor: ContactSensor) -> torch.Tensor:
+    def _contact_sensor_force(self, sensor: ContactSensor) -> torch.Tensor:
         force_matrix = sensor.data.force_matrix_w
         if force_matrix is None:
-            return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        force_magnitude = torch.linalg.vector_norm(
+            return torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        return torch.linalg.vector_norm(
             force_matrix.reshape(self.num_envs, -1, 3),
             dim=-1,
         ).amax(dim=-1)
-        return force_magnitude > self.cfg.contact_force_threshold
 
-    def _compute_pinch_contact(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        thumb_contact = self._contact_sensor_active(self._thumb_contact_sensor)
-        other_finger_contact = self._contact_sensor_active(self._other_finger_contact_sensor)
-        return thumb_contact, other_finger_contact, thumb_contact & other_finger_contact
+    def _compute_pinch_contact(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        thumb_force = self._contact_sensor_force(self._thumb_contact_sensor)
+        other_finger_force = self._contact_sensor_force(self._other_finger_contact_sensor)
+        thumb_contact = thumb_force > self.cfg.contact_force_threshold
+        other_finger_contact = other_finger_force > self.cfg.contact_force_threshold
+        return (
+            thumb_contact,
+            other_finger_contact,
+            thumb_contact & other_finger_contact,
+            thumb_force,
+            other_finger_force,
+        )
 
     def _get_rewards(self) -> torch.Tensor:
         self._compute_object_errors()
@@ -373,9 +382,18 @@ class ManoResidualEnv(DirectRLEnv):
             self.cfg.object_position_reward_weight * position_reward
             + self.cfg.object_rotation_reward_weight * rotation_reward
         )
-        thumb_contact, other_finger_contact, pinch_contact = self._compute_pinch_contact()
+        (
+            thumb_contact,
+            other_finger_contact,
+            pinch_contact,
+            thumb_force,
+            other_finger_force,
+        ) = self._compute_pinch_contact()
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
+        finger_residual = (
+            self.joint_targets[:, 6:] - self.reference_hand_q[self.phase_buf, 6:]
+        ).abs()
         self.extras["log"] = {
             "object_position_error_m": self._object_position_error.mean(),
             "object_rotation_error_rad": self._object_rotation_error.mean(),
@@ -385,6 +403,10 @@ class ManoResidualEnv(DirectRLEnv):
             "thumb_object_contact": thumb_contact.to(torch.float32).mean(),
             "other_finger_object_contact": other_finger_contact.to(torch.float32).mean(),
             "pinch_contact_reward": contact_reward.mean(),
+            "thumb_object_contact_force_n": thumb_force.mean(),
+            "other_finger_object_contact_force_n": other_finger_force.mean(),
+            "finger_residual_abs_mean_rad": finger_residual.mean(),
+            "finger_residual_abs_max_rad": finger_residual.amax(dim=-1).mean(),
         }
         return total_reward
 

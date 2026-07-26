@@ -34,10 +34,23 @@ def choose_reward_tag(tags: list[str]) -> str:
     return candidates[0]
 
 
+def scalar_summary(accumulator: EventAccumulator, tag: str) -> dict[str, float] | None:
+    if tag not in accumulator.Tags()["scalars"]:
+        return None
+    values = [sample.value for sample in accumulator.Scalars(tag)]
+    return {
+        "first": values[0],
+        "last": values[-1],
+        "mean": sum(values) / len(values),
+        "max": max(values),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--contact-weight", type=float)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -80,6 +93,31 @@ def main() -> None:
         "best_reward": max(values),
         "source_video": str(videos[-1]),
     }
+    auxiliary_tags = {
+        "pinch_contact_reward": "Info / pinch_contact_reward",
+        "thumb_contact_fraction": "Info / thumb_object_contact",
+        "other_finger_contact_fraction": "Info / other_finger_object_contact",
+        "thumb_contact_force_n": "Info / thumb_object_contact_force_n",
+        "other_finger_contact_force_n": "Info / other_finger_object_contact_force_n",
+        "finger_residual_abs_mean_rad": "Info / finger_residual_abs_mean_rad",
+        "finger_residual_abs_max_rad": "Info / finger_residual_abs_max_rad",
+        "object_position_error_m": "Info / object_position_error_m",
+        "object_rotation_error_rad": "Info / object_rotation_error_rad",
+    }
+    auxiliary = {
+        name: value
+        for name, tag_name in auxiliary_tags.items()
+        if (value := scalar_summary(accumulator, tag_name)) is not None
+    }
+    if args.contact_weight is not None:
+        summary["contact_weight"] = args.contact_weight
+        pinch_summary = auxiliary.get("pinch_contact_reward")
+        if pinch_summary is not None:
+            auxiliary["pinch_contact_fraction"] = {
+                key: value / args.contact_weight
+                for key, value in pinch_summary.items()
+            }
+    summary["training_auxiliary"] = auxiliary
     (args.output_dir / "training_summary.json").write_text(
         json.dumps(summary, indent=2) + "\n",
         encoding="utf-8",
