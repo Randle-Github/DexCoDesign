@@ -36,6 +36,7 @@ CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name '*.pt' -print | sort -
   --checkpoint "${CHECKPOINT}" \
   --video \
   --video_length 445 \
+  --disable_fabric \
   --headless
 
 python temp/hocap_mano_replay/isaaclab/export_training_artifacts.py \
