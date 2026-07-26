@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from replay_mujoco import (  # noqa: E402
     LOCAL_HAND_TO_MANO,
     SEQUENCE_ROOT,
     URDF_CANONICAL_ROTATION,
-    reduced_hand_trajectory,
+    surface_snapped_hand_trajectory,
 )
 
 
@@ -58,10 +59,12 @@ FINGER_JOINT_NAMES = (
 )
 
 
-def build_reference() -> dict[str, np.ndarray]:
+def build_reference() -> tuple[dict[str, np.ndarray], dict[str, object]]:
     mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
     object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
-    finger_q, _ = reduced_hand_trajectory(mano_pose, object_pose)
+    finger_q, projection_diagnostics = surface_snapped_hand_trajectory(
+        mano_pose, object_pose
+    )
 
     world_translation = mano_pose[:, 48:51] + HOCAP_MANO_ROOT_OFFSET_WORLD
     local_translation = URDF_CANONICAL_ROTATION.inv().apply(world_translation)
@@ -79,12 +82,15 @@ def build_reference() -> dict[str, np.ndarray]:
         ),
         axis=1,
     )
-    return {
-        "joint_names": np.asarray(ROOT_JOINT_NAMES + FINGER_JOINT_NAMES),
-        "hand_q": hand_q.astype(np.float32),
-        "object_pose_wxyz": object_pose_wxyz.astype(np.float32),
-        "fps": np.asarray(30.0, dtype=np.float32),
-    }
+    return (
+        {
+            "joint_names": np.asarray(ROOT_JOINT_NAMES + FINGER_JOINT_NAMES),
+            "hand_q": hand_q.astype(np.float32),
+            "object_pose_wxyz": object_pose_wxyz.astype(np.float32),
+            "fps": np.asarray(30.0, dtype=np.float32),
+        },
+        projection_diagnostics,
+    )
 
 
 def main() -> None:
@@ -96,12 +102,18 @@ def main() -> None:
     )
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    reference = build_reference()
+    reference, projection_diagnostics = build_reference()
     np.savez_compressed(args.output, **reference)
+    diagnostics_path = args.output.with_suffix(".surface_projection.json")
+    diagnostics_path.write_text(
+        json.dumps(projection_diagnostics, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(
         f"Saved {len(reference['hand_q'])} frames, "
         f"{reference['hand_q'].shape[1]} joints to {args.output}"
     )
+    print(diagnostics_path)
 
 
 if __name__ == "__main__":

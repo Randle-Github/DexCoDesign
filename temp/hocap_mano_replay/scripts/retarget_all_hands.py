@@ -47,7 +47,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay_mujoco import (  # noqa: E402
     HOCAP_MANO_ROOT_OFFSET_WORLD,
     LOCAL_HAND_TO_MANO,
-    reduced_hand_trajectory,
+    mano_fingertip_offsets,
+    surface_snapped_hand_trajectory,
 )
 
 
@@ -248,13 +249,20 @@ def relative_tip_poses(
     data: mujoco.MjData,
     wrist_id: int,
     tip_ids: dict[str, int],
+    tip_offsets: dict[str, np.ndarray] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Rotation]]:
     wrist_p = data.xpos[wrist_id].copy()
     wrist_r = rotation_matrix(data, wrist_id)
     positions = {}
     rotations = {}
     for finger, body_id in tip_ids.items():
-        positions[finger] = wrist_r.T @ (data.xpos[body_id] - wrist_p)
+        tip_world = data.xpos[body_id]
+        if tip_offsets is not None:
+            tip_world = (
+                tip_world
+                + rotation_matrix(data, body_id) @ tip_offsets[finger]
+            )
+        positions[finger] = wrist_r.T @ (tip_world - wrist_p)
         rotations[finger] = Rotation.from_matrix(
             wrist_r.T @ rotation_matrix(data, body_id)
         )
@@ -276,6 +284,7 @@ def reference_trajectory(
     data = mujoco.MjData(model)
     wrist_id = model.body("left_palm").id
     tip_ids = {f: model.body(name).id for f, name in MANO_TIPS.items()}
+    tip_offsets = mano_fingertip_offsets()
     root_names = (
         "left_pos_x", "left_pos_y", "left_pos_z",
         "left_rot_x", "left_rot_y", "left_rot_z",
@@ -296,7 +305,9 @@ def reference_trajectory(
     for q in finger_q:
         data.qpos[finger_qpos] = q
         mujoco.mj_forward(model, data)
-        p, r = relative_tip_poses(model, data, wrist_id, tip_ids)
+        p, r = relative_tip_poses(
+            model, data, wrist_id, tip_ids, tip_offsets
+        )
         for finger in FINGERS:
             positions[finger].append(p[finger])
             rotations[finger].append(r[finger].as_quat())
@@ -593,7 +604,9 @@ def main() -> None:
 
     mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
     object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
-    finger_q, _ = reduced_hand_trajectory(mano_pose, object_pose)
+    finger_q, projection_diagnostics = surface_snapped_hand_trajectory(
+        mano_pose, object_pose
+    )
     wrist_pos, wrist_quat, ref_positions, ref_rotations = reference_trajectory(
         mano_pose, finger_q
     )
@@ -610,7 +623,9 @@ def main() -> None:
     ]
 
     frame_ids = np.arange(0, len(mano_pose), args.stride, dtype=int)
-    diagnostics = {}
+    diagnostics = {
+        "mano_fingertip_surface_projection": projection_diagnostics
+    }
     for index, hand in enumerate(hands, 1):
         cache_path = CACHE_ROOT / f"{hand.hand_id}_ik.npz"
         if args.reuse_cache:
