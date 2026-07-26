@@ -16,6 +16,7 @@ OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_mano_residual"
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
 cd "${REPO_ROOT}"
+export OMNI_KIT_ACCEPT_EULA=YES
 
 mkdir -p "${OUTPUT_ROOT}"
 if ! python -c "import isaacsim" >/dev/null 2>&1; then
