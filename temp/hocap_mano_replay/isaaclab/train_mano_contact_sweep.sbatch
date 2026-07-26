@@ -15,8 +15,9 @@ REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_mano_residual"
 CONTACT_WEIGHT="${CONTACT_WEIGHT:?CONTACT_WEIGHT must be set}"
 RUN_SEED="${RUN_SEED:-42}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-300}"
 WEIGHT_LABEL="${CONTACT_WEIGHT//./p}"
-RUN_LABEL="contact_w${WEIGHT_LABEL}_seed${RUN_SEED}"
+RUN_LABEL="contact_w${WEIGHT_LABEL}_iter${MAX_ITERATIONS}_seed${RUN_SEED}"
 RESULT_DIR="${OUTPUT_ROOT}/sweeps/${RUN_LABEL}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
@@ -30,7 +31,7 @@ export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
   --task DexCoDesign-MANO-Residual-Direct-v0 \
   --algorithm PPO \
   --num_envs 1024 \
-  --max_iterations 300 \
+  --max_iterations "${MAX_ITERATIONS}" \
   --seed "${RUN_SEED}" \
   --headless \
   "env.contact_reward_weight=${CONTACT_WEIGHT}" \
