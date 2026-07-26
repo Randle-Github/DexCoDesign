@@ -62,6 +62,13 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1.0 / 120.0,
         render_interval=decimation,
+        log_dir=str(
+            REPO_ROOT
+            / "artifacts"
+            / "isaaclab_mano_residual"
+            / "until_success"
+            / "isaaclab_logs"
+        ),
         physics_material=sim_utils.RigidBodyMaterialCfg(
             static_friction=1.0,
             dynamic_friction=1.0,

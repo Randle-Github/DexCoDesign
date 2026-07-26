@@ -47,7 +47,6 @@ while true; do
   ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py \
     "${TRAIN_ARGS[@]}" \
     "env.contact_reward_weight=${CONTACT_WEIGHT}" \
-    "env.sim.log_dir=${ISAACLAB_LOG_DIR}" \
     "agent.agent.experiment.experiment_name=${RUN_LABEL}"
 
   RUN_DIR="$(find logs/skrl/mano_residual -mindepth 1 -maxdepth 1 -type d -name "*_${RUN_LABEL}" -print | sort | tail -n 1)"
@@ -62,8 +61,7 @@ while true; do
     --output "${EVAL_JSON}" \
     --seed "${RUN_SEED}" \
     --headless \
-    "env.contact_reward_weight=${CONTACT_WEIGHT}" \
-    "env.sim.log_dir=${ISAACLAB_LOG_DIR}"
+    "env.contact_reward_weight=${CONTACT_WEIGHT}"
   EVAL_EXIT=$?
   set -e
 
@@ -94,8 +92,7 @@ done
   --video \
   --video_length 445 \
   --headless \
-  "env.contact_reward_weight=${CONTACT_WEIGHT}" \
-  "env.sim.log_dir=${ISAACLAB_LOG_DIR}"
+  "env.contact_reward_weight=${CONTACT_WEIGHT}"
 
 python temp/hocap_mano_replay/isaaclab/export_training_artifacts.py \
   --run-dir "${RUN_DIR}" \
