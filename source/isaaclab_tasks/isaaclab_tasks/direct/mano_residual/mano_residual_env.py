@@ -91,7 +91,6 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Hand",
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(ASSET_ROOT / "mano_left.usd"),
-            activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=1.0,
@@ -118,6 +117,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Object",
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(ASSET_ROOT / "g04_1.usd"),
+            activate_contact_sensors=True,
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.92, 0.38, 0.08),
                 roughness=0.55,
@@ -234,16 +234,31 @@ class ManoResidualEnv(DirectRLEnv):
                     visual_cfg,
                 )
         self.object = RigidObject(self.cfg.object_cfg)
-        self._contact_sensors: dict[str, ContactSensor] = {}
-        for link_name in THUMB_CONTACT_LINK_NAMES + OTHER_FINGER_CONTACT_LINK_NAMES:
-            self._contact_sensors[link_name] = ContactSensor(
-                ContactSensorCfg(
-                    prim_path=f"/World/envs/env_.*/Hand/{link_name}",
-                    update_period=0.0,
-                    history_length=0,
-                    filter_prim_paths_expr=["/World/envs/env_.*/Object"],
-                )
+        # ContactSensor filtering is one-to-many: its prim_path must resolve to
+        # one reporting rigid body per environment.  Use the object as that
+        # body and filter its contacts against the two hand-link groups.
+        self._thumb_contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path="/World/envs/env_.*/Object",
+                update_period=0.0,
+                history_length=0,
+                filter_prim_paths_expr=[
+                    f"/World/envs/env_.*/Hand/{link_name}"
+                    for link_name in THUMB_CONTACT_LINK_NAMES
+                ],
             )
+        )
+        self._other_finger_contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path="/World/envs/env_.*/Object",
+                update_period=0.0,
+                history_length=0,
+                filter_prim_paths_expr=[
+                    f"/World/envs/env_.*/Hand/{link_name}"
+                    for link_name in OTHER_FINGER_CONTACT_LINK_NAMES
+                ],
+            )
+        )
         spawn_ground_plane(
             prim_path="/World/ground",
             cfg=GroundPlaneCfg(
@@ -258,8 +273,8 @@ class ManoResidualEnv(DirectRLEnv):
         self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
         self.scene.rigid_objects["object"] = self.object
-        for link_name, sensor in self._contact_sensors.items():
-            self.scene.sensors[f"{link_name}_object_contact"] = sensor
+        self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
+        self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
         light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
         light_cfg.func("/World/Light", light_cfg)
 
@@ -329,22 +344,19 @@ class ManoResidualEnv(DirectRLEnv):
             reference_pose[:, 3:7],
         )
 
-    def _contact_group_active(self, link_names: tuple[str, ...]) -> torch.Tensor:
-        active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        for link_name in link_names:
-            force_matrix = self._contact_sensors[link_name].data.force_matrix_w
-            if force_matrix is None:
-                continue
-            force_magnitude = torch.linalg.vector_norm(
-                force_matrix.reshape(self.num_envs, -1, 3),
-                dim=-1,
-            ).amax(dim=-1)
-            active |= force_magnitude > self.cfg.contact_force_threshold
-        return active
+    def _contact_sensor_active(self, sensor: ContactSensor) -> torch.Tensor:
+        force_matrix = sensor.data.force_matrix_w
+        if force_matrix is None:
+            return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        force_magnitude = torch.linalg.vector_norm(
+            force_matrix.reshape(self.num_envs, -1, 3),
+            dim=-1,
+        ).amax(dim=-1)
+        return force_magnitude > self.cfg.contact_force_threshold
 
     def _compute_pinch_contact(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        thumb_contact = self._contact_group_active(THUMB_CONTACT_LINK_NAMES)
-        other_finger_contact = self._contact_group_active(OTHER_FINGER_CONTACT_LINK_NAMES)
+        thumb_contact = self._contact_sensor_active(self._thumb_contact_sensor)
+        other_finger_contact = self._contact_sensor_active(self._other_finger_contact_sensor)
         return thumb_contact, other_finger_contact, thumb_contact & other_finger_contact
 
     def _get_rewards(self) -> torch.Tensor:
