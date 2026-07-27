@@ -54,6 +54,15 @@ if [[ "${SKIP_EVAL:-0}" != "1" ]]; then
   fi
 fi
 
+PLAY_OVERRIDES=()
+if [[ "${LEGACY_ACTION_SCALES:-0}" == "1" ]]; then
+  PLAY_OVERRIDES+=(
+    "env.residual_root_position_scale=0.04"
+    "env.residual_root_rotation_scale=0.025"
+    "env.residual_finger_scale=0.15"
+  )
+fi
+
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/play.py \
   --task DexCoDesign-MANO-Residual-Direct-Play-v0 \
   --algorithm PPO \
@@ -61,7 +70,8 @@ fi
   --checkpoint "${CHECKPOINT}" \
   --video \
   --video_length 445 \
-  --headless
+  --headless \
+  "${PLAY_OVERRIDES[@]}"
 
 python temp/hocap_mano_replay/isaaclab/export_training_artifacts.py \
   --run-dir "${RUN_DIR}" \
