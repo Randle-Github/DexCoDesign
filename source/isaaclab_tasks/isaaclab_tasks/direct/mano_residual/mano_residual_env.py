@@ -389,8 +389,6 @@ class ManoResidualEnv(DirectRLEnv):
             else None
         )
         self._best_rollout_phase = -1
-        self._capture_best_candidate_env_id: int | None = None
-        self._capture_success_env_id: int | None = None
         self._capture_enabled = (
             self._success_capture_path is not None
             or self._best_rollout_path is not None
@@ -728,11 +726,6 @@ class ManoResidualEnv(DirectRLEnv):
                 self.episode_length_buf[completed].to(torch.float32).mean()
             )
         self.extras["log"] = log
-        if self._capture_best_candidate_env_id is not None:
-            self._save_best_trajectory(self._capture_best_candidate_env_id)
-            self._capture_best_candidate_env_id = None
-        if self._capture_success_env_id is not None:
-            self._save_success_trajectory(self._capture_success_env_id)
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -765,10 +758,9 @@ class ManoResidualEnv(DirectRLEnv):
             )
             self._capture_object_pose[env_ids, self.phase_buf] = object_pose
             successful = end_of_reference & ~invalid & ~object_lost
-            if successful.any() and self._capture_success_env_id is None:
-                self._capture_success_env_id = int(
-                    successful.nonzero(as_tuple=False)[0, 0].item()
-                )
+            if successful.any():
+                success_env_id = int(successful.nonzero(as_tuple=False)[0, 0].item())
+                self._save_success_trajectory(success_env_id)
             finished = invalid | object_lost | end_of_reference
             if finished.any():
                 finished_ids = finished.nonzero(as_tuple=False).flatten()
@@ -777,7 +769,9 @@ class ManoResidualEnv(DirectRLEnv):
                 candidate_env_id = int(finished_ids[candidate_offset].item())
                 candidate_phase = int(self.phase_buf[candidate_env_id].item())
                 if candidate_phase > self._best_rollout_phase:
-                    self._capture_best_candidate_env_id = candidate_env_id
+                    # Save before DirectRLEnv resets the completed environment;
+                    # otherwise phase_buf and the captured episode are overwritten.
+                    self._save_best_trajectory(candidate_env_id)
         time_out = (self.episode_length_buf >= self.max_episode_length) | end_of_reference
         return invalid | object_lost, time_out
 
