@@ -26,6 +26,9 @@ RUNTIME_LIB_DIR="${OUTPUT_ROOT}/runtime_libs"
 mkdir -p "${RUNTIME_LIB_DIR}" "${RESULT_DIR}/results"
 ln -sfn "${CONDA_PREFIX}/lib/libGLU.so.1" "${RUNTIME_LIB_DIR}/libGLU.so.1"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
+if [[ "${CAPTURE_SUCCESS_TRAJECTORY:-0}" == "1" ]]; then
+  export MANO_SUCCESS_TRAJECTORY_PATH="${RESULT_DIR}/successful_rollout.npz"
+fi
 
 if [[ ! -f "${OUTPUT_ROOT}/assets/.egoengine_actuators_v3" ]]; then
   bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
@@ -42,6 +45,9 @@ RUN_LABEL="${RESULT_NAME}_${TRAIN_ITERATIONS}iter_seed${RUN_SEED}"
   "agent.agent.experiment.experiment_name=${RUN_LABEL}"
 
 RUN_DIR="$(find logs/skrl/mano_residual -mindepth 1 -maxdepth 1 -type d -name "*_${RUN_LABEL}" -print | sort | tail -n 1)"
+if [[ -n "${MANO_SUCCESS_TRAJECTORY_PATH:-}" && -f "${MANO_SUCCESS_TRAJECTORY_PATH}" ]]; then
+  printf 'MANO_SUCCESS_TRAJECTORY_READY path=%s\n' "${MANO_SUCCESS_TRAJECTORY_PATH}"
+fi
 CHECKPOINT="${RUN_DIR}/checkpoints/best_agent.pt"
 if [[ ! -f "${CHECKPOINT}" ]]; then
   CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name 'agent_*.pt' -print | sort -V | tail -n 1)"

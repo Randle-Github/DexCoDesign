@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -305,6 +306,37 @@ class ManoResidualEnv(DirectRLEnv):
         self._last_evaluated_phase = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
         )
+        success_capture_path = os.environ.get("MANO_SUCCESS_TRAJECTORY_PATH")
+        self._success_capture_path = (
+            Path(success_capture_path).expanduser().resolve()
+            if success_capture_path
+            else None
+        )
+        self._capture_success_env_id: int | None = None
+        if self._success_capture_path is not None:
+            capture_shape = (self.num_envs, self._reference_length)
+            self._capture_hand_q = torch.zeros(
+                (*capture_shape, self.hand.num_joints),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_object_pose = torch.zeros(
+                (*capture_shape, 7),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_actions = torch.zeros(
+                (*capture_shape, self.action_dim),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_joint_targets = torch.zeros_like(self._capture_actions)
+            self._capture_pose_reward = torch.zeros(
+                capture_shape, dtype=torch.float32, device=self.device
+            )
+            self._capture_contact_reward = torch.zeros_like(
+                self._capture_pose_reward
+            )
         self._last_diagnostic_phase = -1
         self._palm_body_index = self.hand.body_names.index("left_palm")
         self._middle_tip_body_index = self.hand.body_names.index("left_middle3")
@@ -442,6 +474,10 @@ class ManoResidualEnv(DirectRLEnv):
             self.joint_lower_limits,
             self.joint_upper_limits,
         )
+        if self._success_capture_path is not None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self._capture_actions[env_ids, self.phase_buf] = self.actions
+            self._capture_joint_targets[env_ids, self.phase_buf] = self.joint_targets
 
     def _apply_action(self) -> None:
         self.hand.set_joint_position_target(self.joint_targets)
@@ -573,6 +609,10 @@ class ManoResidualEnv(DirectRLEnv):
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
         self._pose_episode_return += pose_tracking_reward
+        if self._success_capture_path is not None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self._capture_pose_reward[env_ids, self.phase_buf] = pose_tracking_reward
+            self._capture_contact_reward[env_ids, self.phase_buf] = contact_reward
         finger_residual = (
             self.actions[:, 6:] * self.residual_scale[6:]
         ).abs()
@@ -603,6 +643,8 @@ class ManoResidualEnv(DirectRLEnv):
                 self.episode_length_buf[completed].to(torch.float32).mean()
             )
         self.extras["log"] = log
+        if self._capture_success_env_id is not None:
+            self._save_success_trajectory(self._capture_success_env_id)
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -624,8 +666,80 @@ class ManoResidualEnv(DirectRLEnv):
             | (self._object_rotation_error > self.cfg.object_failure_orientation)
         )
         end_of_reference = self.phase_buf >= self._reference_length - 1
+        if self._success_capture_path is not None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self._capture_hand_q[env_ids, self.phase_buf] = self.hand.data.joint_pos
+            object_position = (
+                self.object.data.root_pos_w - self.scene.env_origins
+            )
+            object_pose = torch.cat(
+                (object_position, self.object.data.root_quat_w), dim=-1
+            )
+            self._capture_object_pose[env_ids, self.phase_buf] = object_pose
+            successful = end_of_reference & ~invalid & ~object_lost
+            if successful.any() and self._capture_success_env_id is None:
+                self._capture_success_env_id = int(
+                    successful.nonzero(as_tuple=False)[0, 0].item()
+                )
         time_out = (self.episode_length_buf >= self.max_episode_length) | end_of_reference
         return invalid | object_lost, time_out
+
+    def _save_success_trajectory(self, env_id: int) -> None:
+        if self._success_capture_path is None:
+            return
+        output_path = self._success_capture_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        last_phase = self._reference_length - 1
+        metadata = {
+            "env_id": env_id,
+            "final_phase": last_phase,
+            "reference_last_phase": last_phase,
+            "position_error_m": float(self._object_position_error[env_id].item()),
+            "rotation_error_rad": float(self._object_rotation_error[env_id].item()),
+            "pose_tracking_return": float(
+                self._capture_pose_reward[env_id, : last_phase + 1].sum().item()
+            ),
+            "contact_return": float(
+                self._capture_contact_reward[env_id, : last_phase + 1].sum().item()
+            ),
+            "joint_names": list(self.hand.joint_names),
+            "residual_root_position_scale": self.cfg.residual_root_position_scale,
+            "residual_root_rotation_scale": self.cfg.residual_root_rotation_scale,
+            "residual_finger_scale": self.cfg.residual_finger_scale,
+        }
+        temporary_path = output_path.with_suffix(output_path.suffix + ".tmp")
+        with temporary_path.open("wb") as stream:
+            np.savez_compressed(
+                stream,
+                hand_q=self._capture_hand_q[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                object_pose_wxyz=self._capture_object_pose[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                actions=self._capture_actions[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                joint_targets=self._capture_joint_targets[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                pose_reward=self._capture_pose_reward[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                contact_reward=self._capture_contact_reward[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                metadata_json=np.asarray(json.dumps(metadata)),
+            )
+        temporary_path.replace(output_path)
+        print(
+            "MANO_SUCCESS_TRAJECTORY_CAPTURED "
+            f"path={output_path} env_id={env_id} phase={last_phase} "
+            f"position_error_m={metadata['position_error_m']:.9f} "
+            f"rotation_error_rad={metadata['rotation_error_rad']:.9f}",
+            flush=True,
+        )
+        raise SystemExit(0)
 
     def _reset_idx(self, env_ids: Sequence[int] | None) -> None:
         if env_ids is None:
@@ -662,3 +776,10 @@ class ManoResidualEnv(DirectRLEnv):
         self.object.write_root_velocity_to_sim(object_velocity, env_ids)
         self.actions[env_ids] = 0.0
         self._pose_episode_return[env_ids] = 0.0
+        if self._success_capture_path is not None:
+            self._capture_hand_q[env_ids, 0] = joint_pos
+            self._capture_object_pose[env_ids, 0] = self.reference_object_pose[0]
+            self._capture_actions[env_ids, 0] = 0.0
+            self._capture_joint_targets[env_ids, 0] = ctrl
+            self._capture_pose_reward[env_ids, 0] = 0.0
+            self._capture_contact_reward[env_ids, 0] = 0.0
