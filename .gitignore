@@ -43,6 +43,7 @@ docker/.container.cfg
 **/.neptune/*
 docker/artifacts/
 /artifacts/
+/MUJOCO_LOG.TXT
 *.tmp
 
 # Doc Outputs

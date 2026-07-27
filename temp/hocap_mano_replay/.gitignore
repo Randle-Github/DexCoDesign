@@ -5,3 +5,4 @@
 # Machine-specific MuJoCo exports contain absolute local mesh paths.
 /artifacts/*scene.xml
 /artifacts/all_hands_ik_cache/*.xml
+/artifacts/all_hands_physics_cache/*.xml

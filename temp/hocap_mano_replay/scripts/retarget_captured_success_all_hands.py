@@ -183,6 +183,11 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=720)
+    parser.add_argument(
+        "--solve-only",
+        action="store_true",
+        help="Write retargeted joint trajectories without rendering direct-state videos.",
+    )
     args = parser.parse_args()
 
     captured = np.load(args.capture)
@@ -318,25 +323,26 @@ def main() -> None:
                 mean_tip_position_error_m=np.asarray(position_errors),
                 mean_tip_orientation_error_rad=np.asarray(orientation_errors),
             )
-            render_hand_video(
-                hand,
-                object_pose,
-                q_trajectory,
-                solved_wrist_position,
-                solved_wrist_quaternion,
-                video_path,
-                preview_path,
-                args.fps,
-                args.width,
-                args.height,
-            )
-            result.update(
-                {
-                    "video": str(video_path),
-                    "preview": str(preview_path),
-                    "trajectory": str(cache_path),
-                }
-            )
+            result["trajectory"] = str(cache_path)
+            if not args.solve_only:
+                render_hand_video(
+                    hand,
+                    object_pose,
+                    q_trajectory,
+                    solved_wrist_position,
+                    solved_wrist_quaternion,
+                    video_path,
+                    preview_path,
+                    args.fps,
+                    args.width,
+                    args.height,
+                )
+                result.update(
+                    {
+                        "video": str(video_path),
+                        "preview": str(preview_path),
+                    }
+                )
             report["hands"][hand_id] = result
             print(
                 f"[{hand_index:02d}/{len(hand_ids)}] {hand_id}: success, "
