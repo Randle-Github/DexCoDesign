@@ -36,6 +36,7 @@ fi
 # environment. Isaac Lab itself does not depend on this directory.
 REFERENCE_PYTHON_DEPS="${OUTPUT_ROOT}/reference_python_deps"
 mkdir -p "${REFERENCE_PYTHON_DEPS}"
+ORIGINAL_PYTHONPATH="${PYTHONPATH:-}"
 export PYTHONPATH="${REFERENCE_PYTHON_DEPS}:${PYTHONPATH:-}"
 if ! python -c 'import mujoco' >/dev/null 2>&1; then
   python -m pip install \
@@ -52,6 +53,10 @@ python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/retarget_captured_success_al
 python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/prepare_all_hand_rl_references.py" \
   --capture "${CAPTURE}" \
   --output-dir "${PREPARED_ROOT}"
+
+# Do not expose the isolated reference-builder packages (notably its NumPy)
+# to Isaac Sim's tightly pinned Python runtime.
+export PYTHONPATH="${ORIGINAL_PYTHONPATH}"
 
 for hand_id in "${HAND_IDS[@]}"; do
   hand_root="${ASSET_ROOT}/${hand_id}"
