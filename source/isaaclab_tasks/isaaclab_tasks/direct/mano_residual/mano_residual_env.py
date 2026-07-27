@@ -18,6 +18,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
+from pxr import Usd, UsdPhysics
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -367,6 +368,10 @@ class ManoResidualEnv(DirectRLEnv):
                 ),
             ),
         )
+        self._filter_hand_support_collisions(
+            hand_root_path="/World/envs/env_0/Hand",
+            support_root_path="/World/ground",
+        )
         self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
         self.scene.rigid_objects["object"] = self.object
@@ -374,6 +379,56 @@ class ManoResidualEnv(DirectRLEnv):
         self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
         light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _filter_hand_support_collisions(
+        self,
+        hand_root_path: str,
+        support_root_path: str,
+    ) -> None:
+        """Disable only hand-support contacts while preserving object contacts.
+
+        EgoEngine lets the hand interact with the manipulated object but not
+        with the static table/support. The object is intentionally untouched,
+        so object-hand and object-support collision pairs remain active.
+        """
+        stage = self.scene.stage
+        hand_root = stage.GetPrimAtPath(hand_root_path)
+        support_root = stage.GetPrimAtPath(support_root_path)
+        if not hand_root.IsValid() or not support_root.IsValid():
+            raise RuntimeError(
+                "Cannot configure hand-support collision filtering: "
+                f"hand={hand_root_path}, support={support_root_path}"
+            )
+
+        support_colliders = [
+            prim.GetPath()
+            for prim in Usd.PrimRange(support_root)
+            if prim.HasAPI(UsdPhysics.CollisionAPI)
+        ]
+        if not support_colliders:
+            raise RuntimeError(f"No collision shapes found below {support_root_path}")
+
+        filtered_prims = 0
+        for prim in Usd.PrimRange(hand_root):
+            if not (
+                prim.HasAPI(UsdPhysics.RigidBodyAPI)
+                or prim.HasAPI(UsdPhysics.CollisionAPI)
+            ):
+                continue
+            relationship = (
+                UsdPhysics.FilteredPairsAPI.Apply(prim).CreateFilteredPairsRel()
+            )
+            for support_collider in support_colliders:
+                relationship.AddTarget(support_collider)
+            filtered_prims += 1
+
+        if filtered_prims == 0:
+            raise RuntimeError(f"No hand collision bodies found below {hand_root_path}")
+        print(
+            "[MANO_COLLISION_FILTER] "
+            f"disabled hand-support pairs for {filtered_prims} hand prims; "
+            "object-hand and object-support pairs remain enabled"
+        )
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = torch.clamp(actions, -1.0, 1.0)
