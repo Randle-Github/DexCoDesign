@@ -81,8 +81,13 @@ else:
     ROOT_ROTATION_JOINT_NAMES = ("root_rot_x", "root_rot_y", "root_rot_z")
 
 with np.load(REFERENCE_PATH) as _reference_schema:
-    ACTION_DIM = int(_reference_schema["hand_q"].shape[1])
-OBSERVATION_DIM = 2 * ACTION_DIM + 34
+    CONTROL_DIM = int(_reference_schema["hand_q"].shape[1])
+    ACTION_DIM = (
+        len(_reference_schema["action_joint_names"])
+        if "action_joint_names" in _reference_schema
+        else CONTROL_DIM
+    )
+OBSERVATION_DIM = 2 * CONTROL_DIM + 34
 ROOT_POSITION_EXPR = "left_pos_.*" if HAND_ID == "mano" else "root_pos_.*"
 ROOT_ROTATION_EXPR = "left_rot_.*" if HAND_ID == "mano" else "root_rot_.*"
 FINGER_JOINT_EXPR = "left_j_.*" if HAND_ID == "mano" else "finger__.*"
@@ -264,6 +269,16 @@ class ManoResidualEnv(DirectRLEnv):
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
         reference = np.load(REFERENCE_PATH)
         self._reference_joint_names = reference["joint_names"].tolist()
+        self._action_joint_names = (
+            reference["action_joint_names"].tolist()
+            if "action_joint_names" in reference
+            else list(self._reference_joint_names)
+        )
+        self._action_to_control_cpu = torch.from_numpy(
+            reference["action_to_control_matrix"]
+            if "action_to_control_matrix" in reference
+            else np.eye(len(self._reference_joint_names), dtype=np.float32)
+        )
         self._reference_hand_q_cpu = torch.from_numpy(reference["hand_q"])
         if "hand_ctrl" not in reference:
             raise RuntimeError(
@@ -297,10 +312,15 @@ class ManoResidualEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         self.action_dim = gym.spaces.flatdim(self.single_action_space)
-        if self.hand.num_joints != self.action_dim:
+        if self.action_dim != len(self._action_joint_names):
             raise RuntimeError(
-                f"Expected {self.action_dim} {HAND_ID} joints, found {self.hand.num_joints}: "
-                f"{self.hand.joint_names}"
+                f"Action space has {self.action_dim} dimensions but {HAND_ID} "
+                f"defines {len(self._action_joint_names)} active joints"
+            )
+        if self.hand.num_joints != len(self._reference_joint_names):
+            raise RuntimeError(
+                f"Expected {len(self._reference_joint_names)} controlled {HAND_ID} "
+                f"joints, found {self.hand.num_joints}: {self.hand.joint_names}"
             )
         missing = sorted(set(self._reference_joint_names) - set(self.hand.joint_names))
         if missing:
@@ -313,6 +333,18 @@ class ManoResidualEnv(DirectRLEnv):
         self.reference_hand_ctrl = self._reference_hand_ctrl_cpu[:, reference_order].to(
             self.device
         )
+        self.action_to_control = self._action_to_control_cpu[reference_order].to(
+            self.device
+        )
+        if self.action_to_control.shape != (
+            self.hand.num_joints,
+            self.action_dim,
+        ):
+            raise RuntimeError(
+                f"{HAND_ID} action-to-control map has shape "
+                f"{tuple(self.action_to_control.shape)}, expected "
+                f"({self.hand.num_joints}, {self.action_dim})"
+            )
         self.reference_object_pose = self._reference_object_pose_cpu.to(self.device)
         self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
             self.device
@@ -324,38 +356,38 @@ class ManoResidualEnv(DirectRLEnv):
         self.joint_upper_limits = limits[..., 1]
 
         self.residual_scale = torch.full(
-            (self.hand.num_joints,), self.cfg.residual_finger_scale, device=self.device
+            (self.action_dim,), self.cfg.residual_finger_scale, device=self.device
         )
-        self._root_position_joint_indices = torch.tensor(
+        self._root_position_action_indices = torch.tensor(
             [
-                self.hand.joint_names.index(name)
+                self._action_joint_names.index(name)
                 for name in ROOT_POSITION_JOINT_NAMES
             ],
             dtype=torch.long,
             device=self.device,
         )
-        self._root_rotation_joint_indices = torch.tensor(
+        self._root_rotation_action_indices = torch.tensor(
             [
-                self.hand.joint_names.index(name)
+                self._action_joint_names.index(name)
                 for name in ROOT_ROTATION_JOINT_NAMES
             ],
             dtype=torch.long,
             device=self.device,
         )
-        self._finger_joint_indices = torch.tensor(
+        self._finger_action_indices = torch.tensor(
             [
                 index
-                for index, name in enumerate(self.hand.joint_names)
+                for index, name in enumerate(self._action_joint_names)
                 if name
                 not in set(ROOT_POSITION_JOINT_NAMES + ROOT_ROTATION_JOINT_NAMES)
             ],
             dtype=torch.long,
             device=self.device,
         )
-        self.residual_scale[self._root_position_joint_indices] = (
+        self.residual_scale[self._root_position_action_indices] = (
             self.cfg.residual_root_position_scale
         )
-        self.residual_scale[self._root_rotation_joint_indices] = (
+        self.residual_scale[self._root_rotation_action_indices] = (
             self.cfg.residual_root_rotation_scale
         )
 
@@ -363,7 +395,11 @@ class ManoResidualEnv(DirectRLEnv):
         self.actions = torch.zeros(
             (self.num_envs, self.action_dim), dtype=torch.float, device=self.device
         )
-        self.joint_targets = torch.zeros_like(self.actions)
+        self.joint_targets = torch.zeros(
+            (self.num_envs, self.hand.num_joints),
+            dtype=torch.float,
+            device=self.device,
+        )
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
         # Evaluation curves report the accumulated C-error pose reward only.
@@ -410,7 +446,11 @@ class ManoResidualEnv(DirectRLEnv):
                 dtype=torch.float32,
                 device=self.device,
             )
-            self._capture_joint_targets = torch.zeros_like(self._capture_actions)
+            self._capture_joint_targets = torch.zeros(
+                (*capture_shape, self.hand.num_joints),
+                dtype=torch.float32,
+                device=self.device,
+            )
             self._capture_pose_reward = torch.zeros(
                 capture_shape, dtype=torch.float32, device=self.device
             )
@@ -550,7 +590,9 @@ class ManoResidualEnv(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = torch.clamp(actions, -1.0, 1.0)
         base_targets = self.reference_hand_ctrl[self.phase_buf]
-        targets = base_targets + self.residual_scale * self.actions
+        active_residual = self.residual_scale * self.actions
+        control_residual = active_residual @ self.action_to_control.T
+        targets = base_targets + control_residual
         self.joint_targets = torch.clamp(
             targets,
             self.joint_lower_limits,
@@ -696,8 +738,8 @@ class ManoResidualEnv(DirectRLEnv):
             self._capture_pose_reward[env_ids, self.phase_buf] = pose_tracking_reward
             self._capture_contact_reward[env_ids, self.phase_buf] = contact_reward
         finger_residual = (
-            self.actions[:, self._finger_joint_indices]
-            * self.residual_scale[self._finger_joint_indices]
+            self.actions[:, self._finger_action_indices]
+            * self.residual_scale[self._finger_action_indices]
         ).abs()
         log = {
             "object_position_error_m": self._object_position_error.mean(),
@@ -800,6 +842,7 @@ class ManoResidualEnv(DirectRLEnv):
                 self._capture_contact_reward[env_id, : last_phase + 1].sum().item()
             ),
             "joint_names": list(self.hand.joint_names),
+            "action_joint_names": list(self._action_joint_names),
             "residual_root_position_scale": self.cfg.residual_root_position_scale,
             "residual_root_rotation_scale": self.cfg.residual_root_rotation_scale,
             "residual_finger_scale": self.cfg.residual_finger_scale,

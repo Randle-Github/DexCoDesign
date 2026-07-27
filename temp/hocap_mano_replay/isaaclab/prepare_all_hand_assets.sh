@@ -21,6 +21,9 @@ HAND_IDS=(
   ruka_v2
   inspire_rh56dfx
 )
+if [[ -n "${HAND_IDS_OVERRIDE:-}" ]]; then
+  read -r -a HAND_IDS <<< "${HAND_IDS_OVERRIDE}"
+fi
 
 if [[ ! -f "${CAPTURE}" ]]; then
   printf 'Missing captured human trajectory: %s\n' "${CAPTURE}" >&2
@@ -69,9 +72,19 @@ for hand_id in "${HAND_IDS[@]}"; do
     --joint-damping 34.6410162 \
     --joint-target-type position \
     --headless
+  physics_usd="${hand_root}/configuration/hand_physics.usd"
+  if [[ ! -f "${physics_usd}" ]] || [[ "$(wc -c < "${physics_usd}")" -le 1024 ]]; then
+    printf 'HAND_ASSET_FAILED hand_id=%s physics_usd=%s\n' \
+      "${hand_id}" "${physics_usd}" >&2
+    exit 1
+  fi
   printf 'HAND_ASSET_READY hand_id=%s usd=%s\n' \
     "${hand_id}" "${hand_root}/hand.usd"
 done
 
-touch "${ASSET_ROOT}/.all_hands_residual_v1"
-printf 'ALL_HAND_ASSETS_READY count=%s\n' "${#HAND_IDS[@]}"
+if [[ -z "${HAND_IDS_OVERRIDE:-}" ]]; then
+  touch "${ASSET_ROOT}/.all_hands_residual_v1"
+  printf 'ALL_HAND_ASSETS_READY count=%s\n' "${#HAND_IDS[@]}"
+else
+  printf 'SELECTED_HAND_ASSETS_READY count=%s\n' "${#HAND_IDS[@]}"
+fi

@@ -146,6 +146,22 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
     joint_map = unique_mapping(
         [str(name) for name in original_joint_names], "finger__"
     )
+    mimic_relations: dict[str, dict[str, float | str]] = {}
+    for joint in joints:
+        mimic = joint.find("mimic")
+        if mimic is None:
+            continue
+        original = str(joint.get("name"))
+        source_joint = mimic.get("joint")
+        if source_joint not in joint_map:
+            raise ValueError(
+                f"Mimic source {source_joint!r} for {original!r} is missing in {source}"
+            )
+        mimic_relations[joint_map[original]] = {
+            "source": joint_map[source_joint],
+            "multiplier": float(mimic.get("multiplier", "1")),
+            "offset": float(mimic.get("offset", "0")),
+        }
 
     child_links = {
         joint.find("child").get("link")
@@ -159,6 +175,9 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
         raise ValueError(f"Expected one URDF root link in {source}, got {root_links}")
     original_root_link = root_links[0]
 
+    mesh_alias_root = output.parent / "mesh_aliases"
+    mesh_directory_aliases: dict[Path, Path] = {}
+    mesh_alias_index = 0
     for link in links:
         original = str(link.get("name"))
         link.set("name", link_map[original])
@@ -184,7 +203,31 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
             filename = mesh.get("filename")
             if not filename or filename.startswith("package://"):
                 continue
-            mesh.set("filename", str((source.parent / filename).resolve()))
+            mesh_source = (source.parent / filename).resolve()
+            source_directory = mesh_source.parent
+            if source_directory not in mesh_directory_aliases:
+                alias_directory = (
+                    mesh_alias_root / f"source_{len(mesh_directory_aliases):02d}"
+                )
+                alias_directory.mkdir(parents=True, exist_ok=True)
+                for sibling in source_directory.iterdir():
+                    if not sibling.is_file():
+                        continue
+                    sibling_alias = alias_directory / sibling.name
+                    if sibling_alias.is_symlink() or sibling_alias.exists():
+                        sibling_alias.unlink()
+                    sibling_alias.symlink_to(sibling.resolve())
+                mesh_directory_aliases[source_directory] = alias_directory
+            alias_directory = mesh_directory_aliases[source_directory]
+            mesh_alias = alias_directory / (
+                f"mesh_{mesh_alias_index:04d}_{sanitize(mesh_source.stem)}"
+                f"{mesh_source.suffix.lower()}"
+            )
+            mesh_alias_index += 1
+            if mesh_alias.is_symlink() or mesh_alias.exists():
+                mesh_alias.unlink()
+            mesh_alias.symlink_to(mesh_source)
+            mesh.set("filename", str(mesh_alias.absolute()))
         for element in link.findall(".//*[@name]"):
             element.set("name", sanitize(element.get("name")))
 
@@ -228,6 +271,7 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
         "link_map": link_map,
         "joint_map": joint_map,
         "root_link": link_map[original_root_link],
+        "mimic_relations": mimic_relations,
     }
 
 
@@ -314,6 +358,25 @@ def prepare_hand(
     ]
 
     q_trajectory = trajectory["qpos"][:frame_count].astype(np.float64)
+    q_column_by_joint = {
+        name: index for index, name in enumerate(finger_joint_names)
+    }
+    mimic_relations = mapping["mimic_relations"]
+    for mimic_joint, relation in mimic_relations.items():
+        if mimic_joint not in q_column_by_joint:
+            continue
+        source_joint = str(relation["source"])
+        if source_joint not in q_column_by_joint:
+            raise ValueError(
+                f"{hand_id}: retargeted trajectory lacks active mimic source "
+                f"{source_joint} for {mimic_joint}"
+            )
+        q_trajectory[:, q_column_by_joint[mimic_joint]] = (
+            float(relation["multiplier"])
+            * q_trajectory[:, q_column_by_joint[source_joint]]
+            + float(relation["offset"])
+        )
+
     wrist_positions = trajectory["wrist_position"][:frame_count].astype(np.float64)
     wrist_quaternions = trajectory["wrist_quaternion_xyzw"][:frame_count].astype(
         np.float64
@@ -338,9 +401,32 @@ def prepare_hand(
         wrapped_model.joint(joint_id).name
         for joint_id in range(wrapped_model.njnt)
     ]
-    hand_q = np.zeros(
-        (frame_count, len(all_joint_names)), dtype=np.float32
+    action_joint_names = [
+        name for name in all_joint_names if name not in mimic_relations
+    ]
+    action_index = {name: index for index, name in enumerate(action_joint_names)}
+    action_to_control = np.zeros(
+        (len(all_joint_names), len(action_joint_names)), dtype=np.float32
     )
+
+    def resolve_action_row(
+        joint_name: str, resolving: frozenset[str] = frozenset()
+    ) -> np.ndarray:
+        if joint_name in action_index:
+            row = np.zeros(len(action_joint_names), dtype=np.float32)
+            row[action_index[joint_name]] = 1.0
+            return row
+        if joint_name in resolving:
+            raise ValueError(f"{hand_id}: mimic cycle involving {joint_name}")
+        relation = mimic_relations[joint_name]
+        return float(relation["multiplier"]) * resolve_action_row(
+            str(relation["source"]), resolving | {joint_name}
+        )
+
+    for joint_index, name in enumerate(all_joint_names):
+        action_to_control[joint_index] = resolve_action_row(name)
+
+    hand_q = np.zeros((frame_count, len(all_joint_names)), dtype=np.float32)
     reference_values = {
         **{
             name: root_positions[:, index]
@@ -372,6 +458,8 @@ def prepare_hand(
         hand_id=np.asarray(hand_id),
         display_name=np.asarray(display_name),
         joint_names=np.asarray(all_joint_names),
+        action_joint_names=np.asarray(action_joint_names),
+        action_to_control_matrix=action_to_control,
         hand_q=hand_q,
         hand_ctrl=hand_q,
         object_pose_wxyz=capture["object_pose_wxyz"][:frame_count].astype(np.float32),
@@ -394,7 +482,10 @@ def prepare_hand(
         "urdf": str(urdf_path),
         "reference": str(reference_path),
         "frames": frame_count,
-        "action_dim": int(hand_q.shape[1]),
+        "action_dim": len(action_joint_names),
+        "control_dim": int(hand_q.shape[1]),
+        "active_finger_joint_count": len(action_joint_names) - len(ROOT_JOINT_NAMES),
+        "passive_mimic_joint_count": len(mimic_relations),
         "finger_joint_count": len(all_joint_names) - len(ROOT_JOINT_NAMES),
         "retargeted_joint_count": len(finger_joint_names),
         "default_zero_joint_names": [
