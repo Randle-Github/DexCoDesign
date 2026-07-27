@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Render a temporary HO-Cap MANO/object replay in MuJoCo.
-
-The object and wrist trajectories are replayed exactly. Until licensed MANO
-model files are supplied, the 45-D MANO PCA pose is mapped to the project's
-reduced-DOF MANO-style hand with an explicitly approximate, interaction-aware
-grasp signal.
-"""
+"""Render the 21-point-retargeted HO-Cap MANO/object replay in MuJoCo."""
 
 from __future__ import annotations
 
@@ -46,7 +40,6 @@ HAND_URDF = (
 )
 HAND_MESH_ROOT = HAND_URDF.parent
 ARTIFACT_ROOT = EXPERIMENT_ROOT / "artifacts"
-FINGERTIP_SURFACE_THRESHOLD_M = 0.01
 
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 MANO_TIP_LINKS = {
@@ -315,182 +308,6 @@ def mano_fingertip_world_positions(
     return positions
 
 
-def closest_object_surface_points(
-    world_points: np.ndarray,
-    object_pose: np.ndarray,
-    object_mesh: trimesh.Trimesh,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Find exact closest points on the posed object's triangle surface."""
-    object_rotation = Rotation.from_quat(object_pose[:4])
-    local_points = object_rotation.inv().apply(world_points - object_pose[4:])
-    closest_local, distances, _ = trimesh.proximity.closest_point_naive(
-        object_mesh, local_points
-    )
-    closest_world = object_rotation.apply(closest_local) + object_pose[4:]
-    return np.asarray(closest_world), np.asarray(distances)
-
-
-def surface_snapped_hand_trajectory(
-    mano_pose: np.ndarray,
-    object_pose: np.ndarray,
-    threshold_m: float = FINGERTIP_SURFACE_THRESHOLD_M,
-    iterations: int = 24,
-) -> tuple[np.ndarray, dict[str, object]]:
-    """Snap near-object MANO fingertip IK targets onto the object surface.
-
-    The recorded wrist pose is fixed.  Only the existing 22 finger joints are
-    optimized, without adding DOFs or changing joint properties.
-    """
-    base_q, _ = reduced_hand_trajectory(mano_pose, object_pose)
-    solved_q = base_q.copy()
-    model = mujoco.MjModel.from_xml_path(str(HAND_URDF))
-    data = mujoco.MjData(model)
-    tip_ids = {
-        finger: model.body(link_name).id
-        for finger, link_name in MANO_TIP_LINKS.items()
-    }
-    tip_offsets = mano_fingertip_offsets()
-    finger_qpos = np.asarray(
-        [model.joint(name).qposadr[0] for name in FINGER_JOINT_NAMES],
-        dtype=int,
-    )
-    finger_dofs = np.asarray(
-        [model.joint(name).dofadr[0] for name in FINGER_JOINT_NAMES],
-        dtype=int,
-    )
-    object_mesh = trimesh.load(
-        OBJECT_MESH, process=False, force="mesh"
-    )
-
-    snapped = {finger: 0 for finger in FINGERS}
-    initial_distances = {finger: [] for finger in FINGERS}
-    final_distances = {finger: [] for finger in FINGERS}
-    target_displacements = {finger: [] for finger in FINGERS}
-
-    for frame_id in range(len(mano_pose)):
-        world_translation = (
-            mano_pose[frame_id, 48:51] + HOCAP_MANO_ROOT_OFFSET_WORLD
-        )
-        world_rotation = (
-            Rotation.from_rotvec(mano_pose[frame_id, :3])
-            * LOCAL_HAND_TO_MANO
-        )
-        set_root_pose(model, data, world_translation, world_rotation)
-        data.qpos[finger_qpos] = base_q[frame_id]
-        mujoco.mj_forward(model, data)
-
-        initial = mano_fingertip_world_positions(data, tip_ids, tip_offsets)
-        initial_array = np.stack([initial[finger] for finger in FINGERS])
-        closest, distances = closest_object_surface_points(
-            initial_array, object_pose[frame_id], object_mesh
-        )
-        active = distances < threshold_m
-        targets = initial_array.copy()
-        targets[active] = closest[active]
-
-        for finger_id, finger in enumerate(FINGERS):
-            initial_distances[finger].append(float(distances[finger_id]))
-            displacement = (
-                float(distances[finger_id]) if active[finger_id] else 0.0
-            )
-            target_displacements[finger].append(displacement)
-            snapped[finger] += int(active[finger_id])
-
-        if np.any(active):
-            damping = 2e-3
-            regularization = 1e-4
-            for _ in range(iterations):
-                mujoco.mj_forward(model, data)
-                current = mano_fingertip_world_positions(
-                    data, tip_ids, tip_offsets
-                )
-                rows, errors = [], []
-                for finger_id, finger in enumerate(FINGERS):
-                    body_id = tip_ids[finger]
-                    point = current[finger]
-                    jac_p = np.zeros((3, model.nv))
-                    jac_r = np.zeros((3, model.nv))
-                    mujoco.mj_jac(
-                        model, data, jac_p, jac_r, point, body_id
-                    )
-                    rows.append(jac_p[:, finger_dofs])
-                    errors.append(targets[finger_id] - point)
-
-                jacobian = np.vstack(rows)
-                error = np.concatenate(errors)
-                q_error = base_q[frame_id] - data.qpos[finger_qpos]
-                root_regularization = np.sqrt(regularization)
-                augmented_jacobian = np.vstack(
-                    (
-                        jacobian,
-                        root_regularization * np.eye(len(finger_dofs)),
-                    )
-                )
-                augmented_error = np.concatenate(
-                    (error, root_regularization * q_error)
-                )
-                lhs = (
-                    augmented_jacobian.T @ augmented_jacobian
-                    + damping * damping * np.eye(len(finger_dofs))
-                )
-                dq = np.linalg.solve(
-                    lhs, augmented_jacobian.T @ augmented_error
-                )
-                max_abs = float(np.max(np.abs(dq)))
-                if max_abs > 0.08:
-                    dq *= 0.08 / max_abs
-                data.qpos[finger_qpos] += dq
-                for qpos_id, dof_id in zip(finger_qpos, finger_dofs):
-                    joint_id = int(model.dof_jntid[dof_id])
-                    if model.jnt_limited[joint_id]:
-                        data.qpos[qpos_id] = np.clip(
-                            data.qpos[qpos_id],
-                            model.jnt_range[joint_id, 0],
-                            model.jnt_range[joint_id, 1],
-                        )
-                if np.linalg.norm(error) < 2e-4:
-                    break
-
-        solved_q[frame_id] = data.qpos[finger_qpos]
-        mujoco.mj_forward(model, data)
-        final = mano_fingertip_world_positions(data, tip_ids, tip_offsets)
-        final_array = np.stack([final[finger] for finger in FINGERS])
-        _, distances_after = closest_object_surface_points(
-            final_array, object_pose[frame_id], object_mesh
-        )
-        for finger_id, finger in enumerate(FINGERS):
-            final_distances[finger].append(
-                float(distances_after[finger_id])
-            )
-
-    diagnostics: dict[str, object] = {
-        "threshold_m": float(threshold_m),
-        "frames": int(len(mano_pose)),
-        "wrist_pose_modified": False,
-        "finger_joint_count": int(len(finger_dofs)),
-        "per_finger": {},
-    }
-    for finger in FINGERS:
-        selected = np.asarray(target_displacements[finger]) > 0.0
-        after = np.asarray(final_distances[finger])
-        diagnostics["per_finger"][finger] = {
-            "snapped_frames": int(snapped[finger]),
-            "snapped_fraction": float(snapped[finger] / len(mano_pose)),
-            "mean_target_displacement_mm": (
-                1000.0
-                * float(np.mean(np.asarray(target_displacements[finger])[selected]))
-                if np.any(selected)
-                else 0.0
-            ),
-            "mean_final_surface_distance_mm_on_snapped_frames": (
-                1000.0 * float(np.mean(after[selected]))
-                if np.any(selected)
-                else 0.0
-            ),
-        }
-    return solved_q, diagnostics
-
-
 def configure_colors(model: mujoco.MjModel) -> None:
     for geom_id in range(model.ngeom):
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or ""
@@ -515,13 +332,14 @@ def main() -> None:
     diagnostics_path = ARTIFACT_ROOT / "replay_diagnostics.json"
     make_scene_xml(scene_xml)
 
-    mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
-    object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
-    finger_q, projection_diagnostics = surface_snapped_hand_trajectory(
-        mano_pose, object_pose
+    reference = np.load(SEQUENCE_ROOT / "isaaclab_reference.npz")
+    hand_q = reference["hand_q"]
+    hand_joints_world = np.load(
+        SEQUENCE_ROOT / "hand_joints_3d_left.npy"
     )
+    object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
     distances = surface_distance(
-        mano_pose[:, 48:51] + HOCAP_MANO_ROOT_OFFSET_WORLD,
+        hand_joints_world[:, 0],
         object_pose,
     )
 
@@ -529,9 +347,15 @@ def main() -> None:
     data = mujoco.MjData(model)
     configure_colors(model)
 
-    finger_qpos = [
+    joint_qpos = [
         model.joint(name).qposadr[0]
         for name in (
+            "left_pos_x",
+            "left_pos_y",
+            "left_pos_z",
+            "left_rot_x",
+            "left_rot_y",
+            "left_rot_z",
             "left_j_index1y",
             "left_j_index1z",
             "left_j_index2",
@@ -596,19 +420,9 @@ def main() -> None:
     )
 
     rendered = 0
-    preview_frame = len(mano_pose) // (2 * args.stride)
-    for output_frame, frame_id in enumerate(range(0, len(mano_pose), args.stride)):
-        pose = mano_pose[frame_id]
-        root_rotation = (
-            Rotation.from_rotvec(pose[:3]) * LOCAL_HAND_TO_MANO
-        )
-        set_root_pose(
-            model,
-            data,
-            pose[48:51] + HOCAP_MANO_ROOT_OFFSET_WORLD,
-            root_rotation,
-        )
-        data.qpos[finger_qpos] = finger_q[frame_id]
+    preview_frame = len(hand_q) // (2 * args.stride)
+    for output_frame, frame_id in enumerate(range(0, len(hand_q), args.stride)):
+        data.qpos[joint_qpos] = hand_q[frame_id]
 
         object_frame = object_pose[frame_id]
         data.mocap_pos[0] = object_frame[4:]
@@ -637,7 +451,7 @@ def main() -> None:
         raise RuntimeError(f"ffmpeg failed with exit code {return_code}")
 
     diagnostics = {
-        "source_frames": int(len(mano_pose)),
+        "source_frames": int(len(hand_q)),
         "rendered_frames": rendered,
         "fps": args.fps,
         "stride": args.stride,
@@ -648,26 +462,19 @@ def main() -> None:
             "max": float(distances.max()),
         },
         "exact_channels": [
-            "MANO wrist position = pose translation + subject-specific J0",
+            "HO-Cap official 21-point hand trajectory",
             "MANO wrist global orientation (with fixed local-axis convention transform)",
             "object translation",
             "object orientation",
         ],
         "selected_orientation_candidate": "B: -90 degrees around hand-local X",
-        "mano_root_offset_world_m": HOCAP_MANO_ROOT_OFFSET_WORLD.tolist(),
         "object_id": "G04_1",
-        "approximate_channel": (
-            "45-D MANO PCA hand pose -> 22-DoF local MANO-style hand"
-        ),
+        "retargeting": "EgoEngine-style wrist and fingertip pose IK",
+        "surface_projection": False,
         "hand_model": str(HAND_URDF.relative_to(REPO_ROOT)),
         "hand_model_nq": int(model.nq),
         "hand_model_nv": int(model.nv),
-        "exact_mano_requirement": [
-            "MANO_LEFT.pkl",
-            "MANO_RIGHT.pkl",
-        ],
     }
-    diagnostics["fingertip_surface_projection"] = projection_diagnostics
     diagnostics_path.write_text(
         json.dumps(diagnostics, indent=2) + "\n", encoding="utf-8"
     )

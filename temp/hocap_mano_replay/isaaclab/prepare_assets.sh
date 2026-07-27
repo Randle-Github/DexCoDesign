@@ -24,7 +24,7 @@ mkdir -p "${ASSET_ROOT}"
   "${REPO_ROOT}/temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj" \
   "${ASSET_ROOT}/g04_1.usd" \
   --collision-approximation convexHull \
-  --mass 0.15 \
+  --mass 0.015 \
   --headless
 
-touch "${ASSET_ROOT}/.fixed_base_non_instanceable_v1"
+touch "${ASSET_ROOT}/.egoengine_mass_scale_v2"

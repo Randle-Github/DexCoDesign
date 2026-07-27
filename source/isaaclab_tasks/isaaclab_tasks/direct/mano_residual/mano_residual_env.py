@@ -55,9 +55,11 @@ OTHER_FINGER_CONTACT_LINK_NAMES = (
 @configclass
 class ManoResidualEnvCfg(DirectRLEnvCfg):
     decimation = 4
-    episode_length_s = 14.8
+    # EgoEngine trains on randomly sampled 64-control-step windows and only
+    # uses a full sequence for evaluation.
+    episode_length_s = 64.0 / 30.0
     action_space = 28
-    observation_space = 105
+    observation_space = 63
     state_space = 0
 
     sim: SimulationCfg = SimulationCfg(
@@ -125,7 +127,9 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
                 solver_velocity_iteration_count=2,
                 max_depenetration_velocity=1.0,
             ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.15),
+            # Match EgoEngine's object_mass_scale=0.1 against this asset's
+            # original 0.15 kg nominal mass.
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.015),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(),
     )
@@ -139,9 +143,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         clone_in_fabric=False,
     )
 
-    residual_root_position_scale = 0.02
-    residual_root_rotation_scale = 0.30
-    residual_finger_scale = 0.30
+    # EgoEngine action scale = component_noise_scale * first_ctrl_noise_scale.
+    residual_root_position_scale = 0.08 * 0.5
+    residual_root_rotation_scale = 0.05 * 0.5
+    residual_finger_scale = 0.30 * 0.5
     object_position_sigma = 0.04
     object_rotation_sigma = 0.50
     # Match EgoEngine-MPC's Aria residual-RL reward geometry:
@@ -155,7 +160,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     contact_force_threshold = 0.0
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
-    randomize_start_phase = False
+    randomize_start_phase = True
     log_rollout_diagnostics = False
 
 
@@ -167,7 +172,7 @@ class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
         replicate_physics=True,
         clone_in_fabric=False,
     )
-    episode_length_s = 14.8
+    episode_length_s = 15.0
     # Evaluation must play the complete reference once. Training intentionally
     # terminates failed rollouts early, but inheriting that threshold here can
     # reset the one-environment video to frame zero on every failed step.
@@ -187,7 +192,7 @@ class ManoResidualEvalEnvCfg(ManoResidualEnvCfg):
         replicate_physics=True,
         clone_in_fabric=False,
     )
-    episode_length_s = 14.8
+    episode_length_s = 15.0
     randomize_start_phase = False
     log_rollout_diagnostics = False
 
@@ -199,6 +204,12 @@ class ManoResidualEnv(DirectRLEnv):
         reference = np.load(REFERENCE_PATH)
         self._reference_joint_names = reference["joint_names"].tolist()
         self._reference_hand_q_cpu = torch.from_numpy(reference["hand_q"])
+        if "hand_ctrl" not in reference:
+            raise RuntimeError(
+                f"{REFERENCE_PATH} has no hand_ctrl; regenerate the "
+                "EgoEngine-style reference before training"
+            )
+        self._reference_hand_ctrl_cpu = torch.from_numpy(reference["hand_ctrl"])
         self._reference_object_pose_cpu = torch.from_numpy(reference["object_pose_wxyz"])
         self._reference_length = len(self._reference_hand_q_cpu)
 
@@ -215,6 +226,9 @@ class ManoResidualEnv(DirectRLEnv):
 
         reference_order = [self._reference_joint_names.index(name) for name in self.hand.joint_names]
         self.reference_hand_q = self._reference_hand_q_cpu[:, reference_order].to(self.device)
+        self.reference_hand_ctrl = self._reference_hand_ctrl_cpu[:, reference_order].to(
+            self.device
+        )
         self.reference_object_pose = self._reference_object_pose_cpu.to(self.device)
 
         limits = self.hand.root_physx_view.get_dof_limits().to(self.device)
@@ -301,8 +315,7 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = torch.clamp(actions, -1.0, 1.0)
-        self.phase_buf = torch.clamp(self.phase_buf + 1, max=self._reference_length - 1)
-        base_targets = self.reference_hand_q[self.phase_buf]
+        base_targets = self.reference_hand_ctrl[self.phase_buf]
         targets = base_targets + self.residual_scale * self.actions
         self.joint_targets = torch.clamp(
             targets,
@@ -339,16 +352,11 @@ class ManoResidualEnv(DirectRLEnv):
                     f"object_reference_pos={reference_object_pos.detach().cpu().tolist()}"
                 )
                 self._last_diagnostic_phase = phase_index
-        phase = (self.phase_buf.float() / float(self._reference_length - 1)).unsqueeze(-1)
         observation = torch.cat(
             (
                 self.hand.data.joint_pos,
-                self.hand.data.joint_vel,
                 object_pose,
-                self.object.data.root_vel_w,
-                self.reference_hand_q[self.phase_buf],
-                self.reference_object_pose[self.phase_buf],
-                phase,
+                self.reference_hand_ctrl[self.phase_buf],
             ),
             dim=-1,
         )
@@ -426,7 +434,7 @@ class ManoResidualEnv(DirectRLEnv):
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
         finger_residual = (
-            self.joint_targets[:, 6:] - self.reference_hand_q[self.phase_buf, 6:]
+            self.actions[:, 6:] * self.residual_scale[6:]
         ).abs()
         self.extras["log"] = {
             "object_position_error_m": self._object_position_error.mean(),
@@ -451,6 +459,11 @@ class ManoResidualEnv(DirectRLEnv):
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+        # EgoEngine applies ctrl_ref[t] and evaluates against reference t+1.
+        self.phase_buf = torch.clamp(
+            self.phase_buf + 1,
+            max=self._reference_length - 1,
+        )
         self._compute_object_errors()
         # DirectRLEnv resets finished environments before returning from step().
         # Preserve the phase used for termination so external evaluation can
@@ -464,7 +477,7 @@ class ManoResidualEnv(DirectRLEnv):
             | (self._object_rotation_error > self.cfg.object_failure_orientation)
         )
         end_of_reference = self.phase_buf >= self._reference_length - 1
-        time_out = (self.episode_length_buf >= self.max_episode_length - 1) | end_of_reference
+        time_out = (self.episode_length_buf >= self.max_episode_length) | end_of_reference
         return invalid | object_lost, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None) -> None:
@@ -476,7 +489,7 @@ class ManoResidualEnv(DirectRLEnv):
             max_start = self._reference_length - self.max_episode_length - 2
             self.phase_buf[env_ids] = torch.randint(
                 low=0,
-                high=max(max_start, 1),
+                high=max(max_start + 1, 1),
                 size=(len(env_ids),),
                 device=self.device,
             )
@@ -491,8 +504,9 @@ class ManoResidualEnv(DirectRLEnv):
         self.hand.write_root_pose_to_sim(hand_root_state[:, :7], env_ids)
         self.hand.write_root_velocity_to_sim(hand_root_state[:, 7:], env_ids)
         self.hand.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
-        self.hand.set_joint_position_target(joint_pos, env_ids=env_ids)
-        self.joint_targets[env_ids] = joint_pos
+        ctrl = self.reference_hand_ctrl[self.phase_buf[env_ids]]
+        self.hand.set_joint_position_target(ctrl, env_ids=env_ids)
+        self.joint_targets[env_ids] = ctrl
 
         object_pose = self.reference_object_pose[self.phase_buf[env_ids]].clone()
         object_pose[:, :3] += self.scene.env_origins[env_ids]

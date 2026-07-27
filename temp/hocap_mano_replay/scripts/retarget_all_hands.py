@@ -45,10 +45,8 @@ CACHE_ROOT = ARTIFACT_ROOT / "all_hands_ik_cache"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay_mujoco import (  # noqa: E402
-    HOCAP_MANO_ROOT_OFFSET_WORLD,
     LOCAL_HAND_TO_MANO,
     mano_fingertip_offsets,
-    surface_snapped_hand_trajectory,
 )
 
 
@@ -60,6 +58,14 @@ MANO_TIPS = {
     "ring": "left_ring3",
     "pinky": "left_pinky3",
 }
+HOCAP_JOINTS = {
+    "thumb": (1, 2, 3, 4),
+    "index": (5, 6, 7, 8),
+    "middle": (9, 10, 11, 12),
+    "ring": (13, 14, 15, 16),
+    "pinky": (17, 18, 19, 20),
+}
+HAND_JOINTS_WORLD = SEQUENCE_ROOT / "hand_joints_3d_left.npy"
 TIP_LINKS: dict[str, dict[str, str]] = {
     "mano": MANO_TIPS,
     "ability_hand": {
@@ -143,6 +149,7 @@ class HandIK:
     data: mujoco.MjData
     wrist_id: int
     tip_ids: dict[str, int]
+    tip_offsets: dict[str, np.ndarray] | None
     dof_ids: np.ndarray
     qpos_ids: np.ndarray
     map_rotation: Rotation
@@ -271,54 +278,63 @@ def relative_tip_poses(
 
 def reference_trajectory(
     mano_pose: np.ndarray,
-    finger_q: np.ndarray,
+    hand_joints_world: np.ndarray,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
     dict[str, np.ndarray],
     dict[str, np.ndarray],
 ]:
-    """Return exact wrist world poses and MANO tip poses in wrist coordinates."""
-    urdf = DIRECT_ROOT / "mano" / "left" / "hand.urdf"
-    model = mujoco.MjModel.from_xml_path(str(urdf))
-    data = mujoco.MjData(model)
-    wrist_id = model.body("left_palm").id
-    tip_ids = {f: model.body(name).id for f, name in MANO_TIPS.items()}
-    tip_offsets = mano_fingertip_offsets()
-    root_names = (
-        "left_pos_x", "left_pos_y", "left_pos_z",
-        "left_rot_x", "left_rot_y", "left_rot_z",
-    )
-    finger_names = (
-        "left_j_index1y", "left_j_index1z", "left_j_index2", "left_j_index3",
-        "left_j_middle1y", "left_j_middle1z", "left_j_middle2", "left_j_middle3",
-        "left_j_pinky1y", "left_j_pinky1z", "left_j_pinky2", "left_j_pinky3",
-        "left_j_ring1y", "left_j_ring1z", "left_j_ring2", "left_j_ring3",
-        "left_j_thumb1x", "left_j_thumb1y", "left_j_thumb1z",
-        "left_j_thumb2y", "left_j_thumb2z", "left_j_thumb3",
-    )
-    for name in root_names:
-        data.qpos[model.joint(name).qposadr[0]] = 0.0
-    finger_qpos = [model.joint(name).qposadr[0] for name in finger_names]
+    """Build EgoEngine-style wrist and fingertip targets from official 21 points.
+
+    HO-Cap's first three MANO channels provide the exact global wrist
+    orientation.  Finger positions and distal directions come from the
+    official ``hand_joints_3d`` labels, avoiding any interpretation of the
+    45 PCA coefficients.
+    """
+    if hand_joints_world.shape != (len(mano_pose), 21, 3):
+        raise ValueError(
+            "Expected hand_joints_world with shape "
+            f"({len(mano_pose)}, 21, 3), got {hand_joints_world.shape}"
+        )
+    wrist_pos = hand_joints_world[:, 0].astype(np.float64)
+    wrist_rotations = [
+        Rotation.from_rotvec(pose[:3]) * LOCAL_HAND_TO_MANO
+        for pose in mano_pose
+    ]
+    wrist_quat = np.asarray([rotation.as_quat() for rotation in wrist_rotations])
     positions = {finger: [] for finger in FINGERS}
     rotations = {finger: [] for finger in FINGERS}
-    for q in finger_q:
-        data.qpos[finger_qpos] = q
-        mujoco.mj_forward(model, data)
-        p, r = relative_tip_poses(
-            model, data, wrist_id, tip_ids, tip_offsets
-        )
-        for finger in FINGERS:
-            positions[finger].append(p[finger])
-            rotations[finger].append(r[finger].as_quat())
 
-    wrist_pos = mano_pose[:, 48:51] + HOCAP_MANO_ROOT_OFFSET_WORLD
-    wrist_quat = np.asarray(
-        [
-            (Rotation.from_rotvec(pose[:3]) * LOCAL_HAND_TO_MANO).as_quat()
-            for pose in mano_pose
-        ]
-    )
+    for frame_id, wrist_rotation in enumerate(wrist_rotations):
+        wrist_y = wrist_rotation.apply(np.array([0.0, 1.0, 0.0]))
+        points = hand_joints_world[frame_id]
+        for finger in FINGERS:
+            _, _, distal_id, tip_id = HOCAP_JOINTS[finger]
+            if finger == "thumb":
+                x_axis = points[tip_id] - points[distal_id]
+                x_axis /= np.linalg.norm(x_axis) + 1e-12
+                z_axis = np.cross(x_axis, wrist_y)
+                z_axis /= np.linalg.norm(z_axis) + 1e-12
+                y_axis = np.cross(z_axis, x_axis)
+                y_axis /= np.linalg.norm(y_axis) + 1e-12
+            else:
+                z_axis = points[distal_id] - points[tip_id]
+                z_axis /= np.linalg.norm(z_axis) + 1e-12
+                x_axis = np.cross(wrist_y, z_axis)
+                x_axis /= np.linalg.norm(x_axis) + 1e-12
+                y_axis = np.cross(z_axis, x_axis)
+                y_axis /= np.linalg.norm(y_axis) + 1e-12
+            tip_rotation = Rotation.from_matrix(
+                np.column_stack((x_axis, y_axis, z_axis))
+            )
+            positions[finger].append(
+                wrist_rotation.inv().apply(points[tip_id] - wrist_pos[frame_id])
+            )
+            rotations[finger].append(
+                (wrist_rotation.inv() * tip_rotation).as_quat()
+            )
+
     return (
         wrist_pos,
         wrist_quat,
@@ -355,6 +371,8 @@ def build_hand(
     display_name: str,
     ref_pos0: dict[str, np.ndarray],
     ref_rot0: dict[str, np.ndarray],
+    *,
+    identity_wrist_map: bool = False,
 ) -> HandIK:
     scene = make_scene(hand_id)
     model = mujoco.MjModel.from_xml_path(str(scene))
@@ -362,9 +380,16 @@ def build_hand(
     tip_ids = {
         finger: model.body(link).id for finger, link in TIP_LINKS[hand_id].items()
     }
+    tip_offsets = mano_fingertip_offsets() if hand_id == "mano" else None
     wrist_id = lowest_common_ancestor(model, list(tip_ids.values()))
     mujoco.mj_forward(model, data)
-    neutral_p, neutral_r = relative_tip_poses(model, data, wrist_id, tip_ids)
+    neutral_p, neutral_r = relative_tip_poses(
+        model,
+        data,
+        wrist_id,
+        tip_ids,
+        tip_offsets,
+    )
     fingers = tuple(tip_ids)
     reference_vectors = np.stack([ref_pos0[f] for f in fingers])
     robot_vectors = np.stack([neutral_p[f] for f in fingers])
@@ -373,6 +398,8 @@ def build_hand(
     )
     unit_robot = robot_vectors / np.linalg.norm(robot_vectors, axis=1, keepdims=True)
     map_rotation, _ = Rotation.align_vectors(unit_robot, unit_reference)
+    if identity_wrist_map:
+        map_rotation = Rotation.identity()
     size_ratio = float(
         np.median(
             np.linalg.norm(robot_vectors, axis=1)
@@ -390,6 +417,7 @@ def build_hand(
         data=data,
         wrist_id=wrist_id,
         tip_ids=tip_ids,
+        tip_offsets=tip_offsets,
         dof_ids=dof_ids,
         qpos_ids=qpos_ids,
         map_rotation=map_rotation,
@@ -455,46 +483,47 @@ def solve_frame(
         mapped_delta = hand.map_rotation * delta * hand.map_rotation.inv()
         target_local_r[f] = mapped_delta * hand.neutral_tip_rot[f]
 
-    damping = 0.035
-    orientation_length = 0.025
+    # The wrist orientation is an observed target, while wrist translation is
+    # deliberately left free.  EgoEngine's retargeting uses the same
+    # semantics: optimize translation and articulated joints against the
+    # fingertip poses while preserving the measured wrist frame.
+    wrist_rotation = target_wrist_r
+    frame_start_q = data.qpos[hand.qpos_ids].copy()
+    damping = 0.025
+    orientation_length = 0.012
+    temporal_regularization = 0.035
+    max_frame_joint_delta = 0.20
     for _ in range(iterations):
         assign_wrist_pose(hand, wrist_position, wrist_rotation)
         mujoco.mj_forward(model, data)
-        rows = [
-            np.hstack(
-                (
-                    np.zeros((3, 3)),
-                    orientation_length * np.eye(3),
-                    np.zeros((3, len(hand.dof_ids))),
-                )
-            )
-        ]
-        errors = [
-            orientation_length
-            * orientation_error(target_wrist_r, rotation_matrix(data, hand.wrist_id))
-        ]
+        rows = []
+        errors = []
         for f in fingers:
             body_id = hand.tip_ids[f]
+            point = data.xpos[body_id].copy()
+            if hand.tip_offsets is not None:
+                point += (
+                    rotation_matrix(data, body_id)
+                    @ hand.tip_offsets[f]
+                )
             jac_p = np.zeros((3, model.nv))
             jac_r = np.zeros((3, model.nv))
-            mujoco.mj_jacBody(model, data, jac_p, jac_r, body_id)
-            lever = data.xpos[body_id] - data.xpos[hand.wrist_id]
+            mujoco.mj_jac(model, data, jac_p, jac_r, point, body_id)
+            lever = point - data.xpos[hand.wrist_id]
             rows.append(
                 np.hstack(
                     (
                         np.eye(3),
-                        -skew(lever),
                         jac_p[:, hand.dof_ids],
                     )
                 )
             )
-            errors.append(target_p[f] - data.xpos[body_id])
+            errors.append(target_p[f] - point)
             target_world_r = target_wrist_r * target_local_r[f]
             rows.append(
                 np.hstack(
                     (
                         np.zeros((3, 3)),
-                        orientation_length * np.eye(3),
                         orientation_length * jac_r[:, hand.dof_ids],
                     )
                 )
@@ -505,6 +534,18 @@ def solve_frame(
                     target_world_r, rotation_matrix(data, body_id)
                 )
             )
+        rows.append(
+            np.hstack(
+                (
+                    np.zeros((len(hand.dof_ids), 3)),
+                    temporal_regularization * np.eye(len(hand.dof_ids)),
+                )
+            )
+        )
+        errors.append(
+            temporal_regularization
+            * (frame_start_q - data.qpos[hand.qpos_ids])
+        )
         jacobian = np.vstack(rows)
         error = np.concatenate(errors)
         lhs = jacobian @ jacobian.T
@@ -512,11 +553,15 @@ def solve_frame(
             lhs + damping * damping * np.eye(len(error)), error
         )
         max_abs = float(np.max(np.abs(dq))) if len(dq) else 0.0
-        if max_abs > 0.18:
-            dq *= 0.18 / max_abs
+        if max_abs > 0.12:
+            dq *= 0.12 / max_abs
         wrist_position += dq[:3]
-        wrist_rotation = Rotation.from_rotvec(dq[3:6]) * wrist_rotation
-        data.qpos[hand.qpos_ids] += dq[6:]
+        data.qpos[hand.qpos_ids] += dq[3:]
+        data.qpos[hand.qpos_ids] = np.clip(
+            data.qpos[hand.qpos_ids],
+            frame_start_q - max_frame_joint_delta,
+            frame_start_q + max_frame_joint_delta,
+        )
         for qpos_id, dof_id in zip(hand.qpos_ids, hand.dof_ids):
             joint_id = int(model.dof_jntid[dof_id])
             if model.jnt_limited[joint_id]:
@@ -533,8 +578,11 @@ def solve_frame(
     position_errors, rotation_errors = [], []
     for f in fingers:
         body_id = hand.tip_ids[f]
+        point = data.xpos[body_id].copy()
+        if hand.tip_offsets is not None:
+            point += rotation_matrix(data, body_id) @ hand.tip_offsets[f]
         target_world_r = target_wrist_r * target_local_r[f]
-        position_errors.append(np.linalg.norm(target_p[f] - data.xpos[body_id]))
+        position_errors.append(np.linalg.norm(target_p[f] - point))
         rotation_errors.append(
             np.linalg.norm(
                 orientation_error(
@@ -603,12 +651,10 @@ def main() -> None:
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 
     mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
+    hand_joints_world = np.load(HAND_JOINTS_WORLD)
     object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
-    finger_q, projection_diagnostics = surface_snapped_hand_trajectory(
-        mano_pose, object_pose
-    )
     wrist_pos, wrist_quat, ref_positions, ref_rotations = reference_trajectory(
-        mano_pose, finger_q
+        mano_pose, hand_joints_world
     )
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
     hand_ids = [hand_id for hand_id in registry["hands"] if hand_id != "mano"]
@@ -624,7 +670,8 @@ def main() -> None:
 
     frame_ids = np.arange(0, len(mano_pose), args.stride, dtype=int)
     diagnostics = {
-        "mano_fingertip_surface_projection": projection_diagnostics
+        "reference_source": "HO-Cap official hand_joints_3d",
+        "surface_projection": False,
     }
     for index, hand in enumerate(hands, 1):
         cache_path = CACHE_ROOT / f"{hand.hand_id}_ik.npz"

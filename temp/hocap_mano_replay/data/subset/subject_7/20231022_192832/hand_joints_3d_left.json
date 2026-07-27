@@ -1,0 +1,63 @@
+{
+  "source": "HO-Cap official labels.zip",
+  "archive_url": "https://utdallas.box.com/shared/static/ayd4st2wo588z2yqbuxalptxnz2qxlj5.zip",
+  "sequence": "subject_7/20231022_192832",
+  "camera": "043422252387",
+  "hand_slot": 1,
+  "source_coordinate_frame": "camera/043422252387",
+  "output_coordinate_frame": "HO-Cap world",
+  "camera_to_world": [
+    [
+      0.0364115647068256,
+      0.9287987276884736,
+      -0.36879200307065596,
+      0.4164634334130288
+    ],
+    [
+      0.9992042527200271,
+      -0.027828142153742675,
+      0.028569235404365154,
+      0.028583866968927035
+    ],
+    [
+      0.016272632690911153,
+      -0.3695384573914051,
+      -0.9290724554974765,
+      0.9659245046096505
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "joint_order": [
+    "wrist",
+    "thumb_mcp",
+    "thumb_pip",
+    "thumb_dip",
+    "thumb_tip",
+    "index_mcp",
+    "index_pip",
+    "index_dip",
+    "index_tip",
+    "middle_mcp",
+    "middle_pip",
+    "middle_dip",
+    "middle_tip",
+    "ring_mcp",
+    "ring_pip",
+    "ring_dip",
+    "ring_tip",
+    "pinky_mcp",
+    "pinky_pip",
+    "pinky_dip",
+    "pinky_tip"
+  ],
+  "shape": [
+    446,
+    21,
+    3
+  ]
+}

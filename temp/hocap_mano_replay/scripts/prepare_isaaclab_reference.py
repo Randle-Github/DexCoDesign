@@ -17,11 +17,16 @@ REPO_ROOT = EXPERIMENT_ROOT.parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from replay_mujoco import (  # noqa: E402
-    HOCAP_MANO_ROOT_OFFSET_WORLD,
-    LOCAL_HAND_TO_MANO,
     SEQUENCE_ROOT,
     URDF_CANONICAL_ROTATION,
-    surface_snapped_hand_trajectory,
+)
+from retarget_all_hands import (  # noqa: E402
+    CACHE_ROOT,
+    FINGERS,
+    HAND_JOINTS_WORLD,
+    build_hand,
+    reference_trajectory,
+    solve_frame,
 )
 
 
@@ -59,19 +64,74 @@ FINGER_JOINT_NAMES = (
 )
 
 
-def build_reference() -> tuple[dict[str, np.ndarray], dict[str, object]]:
+def build_reference(
+    iterations: int = 32,
+) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
+    hand_joints_world = np.load(HAND_JOINTS_WORLD)
     object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
-    finger_q, projection_diagnostics = surface_snapped_hand_trajectory(
-        mano_pose, object_pose
+    wrist_pos, wrist_quat, ref_positions, ref_rotations = reference_trajectory(
+        mano_pose, hand_joints_world
     )
 
-    world_translation = mano_pose[:, 48:51] + HOCAP_MANO_ROOT_OFFSET_WORLD
-    local_translation = URDF_CANONICAL_ROTATION.inv().apply(world_translation)
-    world_rotation = Rotation.from_rotvec(mano_pose[:, :3]) * LOCAL_HAND_TO_MANO
-    local_rotation = URDF_CANONICAL_ROTATION.inv() * world_rotation
-    local_euler_xyz = local_rotation.as_euler("XYZ")
-    hand_q = np.concatenate((local_translation, local_euler_xyz, finger_q), axis=1)
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    hand = build_hand(
+        "mano",
+        "MANO",
+        {finger: ref_positions[finger][0] for finger in FINGERS},
+        {finger: ref_rotations[finger][0] for finger in FINGERS},
+        identity_wrist_map=True,
+    )
+    finger_qpos = np.asarray(
+        [
+            hand.model.joint(name).qposadr[0]
+            for name in FINGER_JOINT_NAMES
+        ],
+        dtype=int,
+    )
+    solved_finger_q = []
+    solved_wrist_pos = []
+    solved_wrist_quat = []
+    position_errors = []
+    rotation_errors = []
+    wrist_errors = []
+    wrist_position = wrist_pos[0].astype(np.float64).copy()
+    wrist_rotation = Rotation.from_quat(wrist_quat[0])
+
+    for frame_id in range(len(mano_pose)):
+        (
+            position_error,
+            rotation_error,
+            wrist_error,
+            wrist_position,
+            wrist_rotation,
+        ) = solve_frame(
+            hand,
+            wrist_pos[frame_id],
+            Rotation.from_quat(wrist_quat[frame_id]),
+            {finger: ref_positions[finger][frame_id] for finger in FINGERS},
+            {finger: ref_rotations[finger][frame_id] for finger in FINGERS},
+            iterations,
+            wrist_position,
+            wrist_rotation,
+        )
+        solved_finger_q.append(hand.data.qpos[finger_qpos].copy())
+        solved_wrist_pos.append(wrist_position.copy())
+        solved_wrist_quat.append(wrist_rotation.as_quat())
+        position_errors.append(position_error)
+        rotation_errors.append(rotation_error)
+        wrist_errors.append(wrist_error)
+
+    solved_finger_q = np.asarray(solved_finger_q)
+    solved_wrist_pos = np.asarray(solved_wrist_pos)
+    solved_wrist_rotation = Rotation.from_quat(np.asarray(solved_wrist_quat))
+    local_translation = URDF_CANONICAL_ROTATION.inv().apply(solved_wrist_pos)
+    local_rotation = URDF_CANONICAL_ROTATION.inv() * solved_wrist_rotation
+    local_euler_xyz = np.unwrap(local_rotation.as_euler("XYZ"), axis=0)
+    hand_q = np.concatenate(
+        (local_translation, local_euler_xyz, solved_finger_q),
+        axis=1,
+    )
 
     # HO-Cap stores object pose as xyzw quaternion followed by translation.
     object_pose_wxyz = np.concatenate(
@@ -86,10 +146,30 @@ def build_reference() -> tuple[dict[str, np.ndarray], dict[str, object]]:
         {
             "joint_names": np.asarray(ROOT_JOINT_NAMES + FINGER_JOINT_NAMES),
             "hand_q": hand_q.astype(np.float32),
+            # EgoEngine uses a separately named control reference.  The MANO
+            # articulation has position actuators, so the temporally
+            # warm-started IK target is the initial ctrl_ref.
+            "hand_ctrl": hand_q.astype(np.float32),
             "object_pose_wxyz": object_pose_wxyz.astype(np.float32),
             "fps": np.asarray(30.0, dtype=np.float32),
         },
-        projection_diagnostics,
+        {
+            "source": "HO-Cap official hand_joints_3d",
+            "surface_projection": False,
+            "ik_iterations_per_frame": iterations,
+            "mean_fingertip_position_error_mm": (
+                1000.0 * float(np.mean(position_errors))
+            ),
+            "max_fingertip_position_error_mm": (
+                1000.0 * float(np.max(position_errors))
+            ),
+            "mean_fingertip_orientation_error_rad": float(
+                np.mean(rotation_errors)
+            ),
+            "mean_wrist_orientation_error_rad": float(
+                np.mean(wrist_errors)
+            ),
+        },
     )
 
 
@@ -100,13 +180,14 @@ def main() -> None:
         type=Path,
         default=SEQUENCE_ROOT / "isaaclab_reference.npz",
     )
+    parser.add_argument("--iterations", type=int, default=32)
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    reference, projection_diagnostics = build_reference()
+    reference, diagnostics = build_reference(iterations=args.iterations)
     np.savez_compressed(args.output, **reference)
-    diagnostics_path = args.output.with_suffix(".surface_projection.json")
+    diagnostics_path = args.output.with_suffix(".retargeting.json")
     diagnostics_path.write_text(
-        json.dumps(projection_diagnostics, indent=2) + "\n",
+        json.dumps(diagnostics, indent=2) + "\n",
         encoding="utf-8",
     )
     print(

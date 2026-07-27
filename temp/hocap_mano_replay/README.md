@@ -6,8 +6,11 @@ for a small hand-object replay:
 - `models.zip`: object meshes
 - `poses.zip`: MANO and object trajectories
 - `calibration.zip`: per-subject MANO shape parameters (10 KB archive)
+- selected byte ranges from `labels.zip`: official 21-point hand trajectory
 
-No RGB, depth, segmentation, or label archives are required.
+The full 1.5 GB label archive is not downloaded.  The subset downloader uses
+HTTP byte ranges to extract one camera's 446 small label records, then applies
+the official camera-to-world extrinsic.
 
 ## Selected subset
 
@@ -27,33 +30,27 @@ the replay code. Pose arrays are copied without modification.
 ```bash
 .venv-morphology/bin/python temp/hocap_mano_replay/scripts/download_minimal.py
 .venv-morphology/bin/python temp/hocap_mano_replay/scripts/prepare_subset.py
+.venv-morphology/bin/python temp/hocap_mano_replay/scripts/download_label_subset.py
+.venv-morphology/bin/python temp/hocap_mano_replay/scripts/prepare_isaaclab_reference.py
 .venv-morphology/bin/mjpython temp/hocap_mano_replay/scripts/replay_mujoco.py
 ```
 
 ## Retarget all direct-motor hands
 
-Before retargeting, the physical distal point of each MANO fingertip mesh is
-compared with the current-frame object triangle surface. If the true
-point-to-surface distance is below `0.01 m`, that fingertip position target is
-replaced by its nearest surface point. The MANO wrist pose remains exact and
-only the existing 22 finger joints are used to reach the adjusted target.
-
-`scripts/retarget_all_hands.py` then retargets the adjusted MANO reference to
-the other 13 normalized left hands. Its damped least-squares IK optimizes the
-free 6-DoF wrist and finger joints together. The objective has only these
-terms:
+`scripts/retarget_all_hands.py` follows EgoEngine's semantic path: official
+21-point hand labels are converted into a wrist pose and five fingertip poses,
+then temporally warm-started IK retargets those poses to each normalized hand.
+No object-surface snapping is used. The objective has only these terms:
 
 - bottom-wrist orientation;
 - four or five fingertip positions;
 - the corresponding terminal-link/mesh orientations.
 
 Wrist translation deliberately has no target. There are no intermediate-link,
-contact or collision terms in the per-hand solve; the object-surface adjustment
-has already been applied to the MANO source targets. Allegro V5 and MIDAS use
-four tips; the other hands use five.
+contact, collision, or object-surface terms in the per-hand solve. Allegro V5
+and MIDAS use four tips; the other hands use five.
 
-The Isaac Lab reference and its surface-projection diagnostics are regenerated
-with:
+The Isaac Lab reference and retargeting diagnostics are regenerated with:
 
 ```bash
 .venv-morphology/bin/python \
@@ -61,7 +58,24 @@ with:
 ```
 
 This writes `isaaclab_reference.npz` and
-`isaaclab_reference.surface_projection.json` beside the selected trajectory.
+`isaaclab_reference.retargeting.json` beside the selected trajectory.
+
+Before training, replay that reference with exactly zero residual on Skynet:
+
+```bash
+sbatch temp/hocap_mano_replay/isaaclab/diagnose_zero_residual.sbatch
+```
+
+The Isaac Lab task follows EgoEngine's residual formulation:
+
+```text
+ctrl[t] = ctrl_ref[t] + action[t] * action_scale
+observation[t] = [hand_q[t], object_pose[t], ctrl_ref[t]]
+```
+
+Training samples 64-control-step windows. The action scales, object-mass
+scaling, object-pose C-error reward, binary thumb-plus-other-fingertip contact
+reward, and PPO hyperparameters match the Aria residual-RL configuration.
 
 ```bash
 # Solve and save per-hand trajectories.
@@ -84,7 +98,7 @@ artifacts/all_hands_ik_diagnostics.json
 artifacts/all_hands_ik_cache/*_ik.npz
 ```
 
-## MANO mapping status
+## MANO mapping semantics
 
 HO-Cap stores each hand frame as 51 values:
 
@@ -92,23 +106,22 @@ HO-Cap stores each hand frame as 51 values:
 global rotation vector (3) + MANO PCA hand pose (45) + translation (3)
 ```
 
-Exact 778-vertex reconstruction requires the separately licensed
-`MANO_LEFT.pkl` and `MANO_RIGHT.pkl`, as documented by the official HO-Cap
-toolkit. Those files are not present in this repository.
+The 45 PCA channels are not assigned directly to robot joints.  Exact hand
+semantics come from HO-Cap's official `hand_joints_3d` labels in MediaPipe/MANO
+21-joint order.  Wrist position and all finger positions therefore remain
+independent of the separately licensed MANO PCA basis.  The known global
+rotation vector supplies wrist orientation, and the distal bone directions
+supply terminal-link orientation targets.
 
-The temporary video therefore replays object pose and wrist pose exactly, then
-maps the hand PCA motion to the repository's current generated direct-motor
-MANO URDF:
+Those targets are retargeted to the current generated direct-motor MANO URDF:
 
 ```text
 assets/robot_hands/direct_motor/mano/left/hand.urdf
 ```
 
-The older `assets/robot_hands/mano/source/*.xml` entry points are not used by
-this experiment. The direct-motor URDF has 28 scalar DoFs: 6 world-root DoFs
-and 22 articulated finger DoFs. Once licensed MANO files are provided, the
-approximate finger mapping can be replaced by direct MANO vertex generation;
-no point-to-point retargeting is needed for MANO-to-MANO replay.
+The older `assets/robot_hands/mano/source/*.xml` entry points are not used.
+The direct-motor URDF has 28 scalar DoFs: 6 world-root DoFs and 22 articulated
+finger DoFs.
 
 ### Root-frame alignment
 

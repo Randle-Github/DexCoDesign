@@ -29,6 +29,9 @@ export OMNI_KIT_ACCEPT_EULA=YES
 RUNTIME_LIB_DIR="${OUTPUT_ROOT}/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${RESULT_DIR}/evaluations" "${ISAACLAB_LOG_DIR}"
+if [[ ! -f "${OUTPUT_ROOT}/assets/.egoengine_mass_scale_v2" ]]; then
+  bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
+fi
 
 while true; do
   TOTAL_ITERATIONS=$((TOTAL_ITERATIONS + CHUNK_ITERATIONS))
