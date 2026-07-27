@@ -425,6 +425,25 @@ class ManoResidualEnv(DirectRLEnv):
             else None
         )
         self._best_rollout_phase = -1
+        if self._best_rollout_path is not None and self._best_rollout_path.is_file():
+            try:
+                with np.load(self._best_rollout_path) as previous_rollout:
+                    previous_metadata = json.loads(
+                        str(previous_rollout["metadata_json"])
+                    )
+                self._best_rollout_phase = int(
+                    previous_metadata.get("final_phase", -1)
+                )
+                print(
+                    "HAND_BEST_ROLLOUT_RESUMED "
+                    f"hand_id={HAND_ID} path={self._best_rollout_path} "
+                    f"phase={self._best_rollout_phase}",
+                    flush=True,
+                )
+            except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+                # A malformed prior capture must not prevent training. It will
+                # be replaced as soon as the resumed run records a valid phase.
+                self._best_rollout_phase = -1
         self._capture_enabled = (
             self._success_capture_path is not None
             or self._best_rollout_path is not None

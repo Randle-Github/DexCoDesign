@@ -33,8 +33,10 @@ OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
 RESULT_SET="${RESULT_SET:-results}"
 RESULT_DIR="${OUTPUT_ROOT}/${RESULT_SET}/${HAND_ID}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-300}"
+TOTAL_ITERATIONS_BUDGET="${TOTAL_ITERATIONS_BUDGET:-${MAX_ITERATIONS}}"
+RESUME_FROM_RESULT="${RESUME_FROM_RESULT:-0}"
 RUN_SEED="${RUN_SEED:-42}"
-RUN_LABEL="${HAND_ID}_max${MAX_ITERATIONS}_seed${RUN_SEED}"
+RUN_LABEL="${HAND_ID}_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
 SUCCESS_TRAJECTORY="${RESULT_DIR}/successful_rollout.npz"
 BEST_TRAJECTORY="${RESULT_DIR}/farthest_rollout.npz"
 
@@ -54,6 +56,28 @@ if [[ ! -f "${OUTPUT_ROOT}/assets/.all_hands_original_human_v2" ]]; then
   exit 1
 fi
 
+TRAIN_ARGS=()
+if [[ "${RESUME_FROM_RESULT}" == "1" ]]; then
+  PREVIOUS_RUN_DIR="$(<"${RESULT_DIR}/run_dir.txt")"
+  INITIAL_CHECKPOINT="${PREVIOUS_RUN_DIR}/checkpoints/best_agent.pt"
+  if [[ ! -f "${INITIAL_CHECKPOINT}" ]]; then
+    INITIAL_CHECKPOINT="$(
+      find "${PREVIOUS_RUN_DIR}/checkpoints" -type f -name 'agent_*.pt' -print \
+        | sort -V | tail -n 1
+    )"
+  fi
+  if [[ -z "${INITIAL_CHECKPOINT}" || ! -f "${INITIAL_CHECKPOINT}" ]]; then
+    printf 'No checkpoint available to resume %s from %s.\n' \
+      "${HAND_ID}" "${PREVIOUS_RUN_DIR}" >&2
+    exit 1
+  fi
+  TRAIN_ARGS+=(--checkpoint "${INITIAL_CHECKPOINT}")
+  RUN_LABEL="${HAND_ID}_continued_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
+  printf 'HAND_RESUME hand_id=%s checkpoint=%s additional_iterations=%s total_budget=%s\n' \
+    "${HAND_ID}" "${INITIAL_CHECKPOINT}" "${MAX_ITERATIONS}" \
+    "${TOTAL_ITERATIONS_BUDGET}"
+fi
+
 set +e
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py \
   --task DexCoDesign-Hand-Residual-Direct-v0 \
@@ -62,6 +86,7 @@ set +e
   --max_iterations "${MAX_ITERATIONS}" \
   --seed "${RUN_SEED}" \
   --headless \
+  "${TRAIN_ARGS[@]}" \
   "agent.agent.experiment.experiment_name=${RUN_LABEL}"
 TRAIN_EXIT=$?
 set -e
@@ -81,7 +106,7 @@ python temp/hocap_mano_replay/isaaclab/summarize_hand_training.py \
   --success "${SUCCESS_TRAJECTORY}" \
   --best "${BEST_TRAJECTORY}" \
   --run-dir "${RUN_DIR}" \
-  --iterations "${MAX_ITERATIONS}" \
+  --iterations "${TOTAL_ITERATIONS_BUDGET}" \
   --output "${RESULT_DIR}/training_status.json"
 
 printf 'HAND_TRAINING_COMPLETE hand_id=%s exit=%s status=%s\n' \
