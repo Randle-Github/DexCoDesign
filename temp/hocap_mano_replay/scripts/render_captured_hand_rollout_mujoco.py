@@ -14,7 +14,6 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
-import imageio_ffmpeg
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
@@ -132,7 +131,7 @@ def render(
     preview_path = output_dir / "farthest_rollout_preview.png"
     ffmpeg = subprocess.Popen(
         [
-            imageio_ffmpeg.get_ffmpeg_exe(),
+            "ffmpeg",
             "-y",
             "-loglevel",
             "error",
