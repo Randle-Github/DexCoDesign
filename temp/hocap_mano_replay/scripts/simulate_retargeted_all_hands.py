@@ -37,10 +37,13 @@ REGISTRY = DIRECT_ROOT / "registry.json"
 RETARGET_ROOT = REPO_ROOT / "artifacts" / "all_hands_success_action_retarget"
 DEFAULT_CAPTURE = (
     REPO_ROOT
-    / "artifacts"
-    / "isaaclab_mano_residual"
-    / "success_capture_fixed_clamp_reset0"
-    / "successful_rollout.npz"
+    / "temp"
+    / "hocap_mano_replay"
+    / "data"
+    / "subset"
+    / "subject_7"
+    / "20231022_192832"
+    / "isaaclab_reference.npz"
 )
 DEFAULT_OUTPUT = REPO_ROOT / "artifacts" / "all_hands_physical_rollouts"
 PHYSICS_CACHE = EXPERIMENT_ROOT / "artifacts" / "all_hands_physics_cache"

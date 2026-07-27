@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
 PREPARED_ROOT="${OUTPUT_ROOT}/prepared"
 ASSET_ROOT="${OUTPUT_ROOT}/assets"
-CAPTURE="${REPO_ROOT}/artifacts/isaaclab_mano_residual/success_capture_fixed_clamp_reset0/successful_rollout.npz"
+CAPTURE="${REPO_ROOT}/temp/hocap_mano_replay/data/subset/subject_7/20231022_192832/isaaclab_reference.npz"
 HAND_IDS=(
   ability_hand
   schunk_svh
@@ -26,7 +26,7 @@ if [[ -n "${HAND_IDS_OVERRIDE:-}" ]]; then
 fi
 
 if [[ ! -f "${CAPTURE}" ]]; then
-  printf 'Missing captured human trajectory: %s\n' "${CAPTURE}" >&2
+  printf 'Missing original Human/MANO reference: %s\n' "${CAPTURE}" >&2
   exit 1
 fi
 
@@ -83,7 +83,7 @@ for hand_id in "${HAND_IDS[@]}"; do
 done
 
 if [[ -z "${HAND_IDS_OVERRIDE:-}" ]]; then
-  touch "${ASSET_ROOT}/.all_hands_residual_v1"
+  touch "${ASSET_ROOT}/.all_hands_original_human_v2"
   printf 'ALL_HAND_ASSETS_READY count=%s\n' "${#HAND_IDS[@]}"
 else
   printf 'SELECTED_HAND_ASSETS_READY count=%s\n' "${#HAND_IDS[@]}"

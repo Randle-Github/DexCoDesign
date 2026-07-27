@@ -28,10 +28,13 @@ REGISTRY = DIRECT_ROOT / "registry.json"
 RETARGET_ROOT = REPO_ROOT / "artifacts" / "all_hands_success_action_retarget"
 DEFAULT_CAPTURE = (
     REPO_ROOT
-    / "artifacts"
-    / "isaaclab_mano_residual"
-    / "success_capture_fixed_clamp_reset0"
-    / "successful_rollout.npz"
+    / "temp"
+    / "hocap_mano_replay"
+    / "data"
+    / "subset"
+    / "subject_7"
+    / "20231022_192832"
+    / "isaaclab_reference.npz"
 )
 DEFAULT_OUTPUT = (
     REPO_ROOT / "artifacts" / "isaaclab_all_hands_residual" / "prepared"
@@ -40,6 +43,7 @@ DEFAULT_OUTPUT = (
 sys.path.insert(0, str(SCRIPT_ROOT))
 from retarget_all_hands import (  # noqa: E402
     TIP_LINKS,
+    assign_full_qpos,
     assign_wrist_pose,
     build_hand,
 )
@@ -286,7 +290,7 @@ def fingertip_reference(
     wrapper_positions = np.empty((len(q_trajectory), 3), dtype=np.float64)
     wrapper_quaternions = np.empty((len(q_trajectory), 4), dtype=np.float64)
     for frame_index, q in enumerate(q_trajectory):
-        hand.data.qpos[hand.qpos_ids] = q
+        assign_full_qpos(hand, q)
         assign_wrist_pose(
             hand,
             wrist_positions[frame_index],

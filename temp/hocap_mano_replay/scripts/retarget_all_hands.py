@@ -150,8 +150,15 @@ class HandIK:
     wrist_id: int
     tip_ids: dict[str, int]
     tip_offsets: dict[str, np.ndarray] | None
+    full_dof_ids: np.ndarray
+    full_qpos_ids: np.ndarray
     dof_ids: np.ndarray
     qpos_ids: np.ndarray
+    active_to_full: np.ndarray
+    full_qpos_offset: np.ndarray
+    active_lower_limits: np.ndarray
+    active_upper_limits: np.ndarray
+    mimic_relations: dict[str, tuple[str, float, float]]
     map_rotation: Rotation
     size_ratio: float
     neutral_tip_rot: dict[str, Rotation]
@@ -343,11 +350,44 @@ def reference_trajectory(
     )
 
 
+def urdf_mimic_relations(
+    hand_id: str,
+) -> dict[str, tuple[str, float, float]]:
+    """Return ``mimic = multiplier * source + offset`` relations."""
+    urdf = DIRECT_ROOT / hand_id / "left" / "hand.urdf"
+    root = ET.parse(urdf).getroot()
+    relations: dict[str, tuple[str, float, float]] = {}
+    for joint in root.findall("joint"):
+        mimic = joint.find("mimic")
+        if mimic is None:
+            continue
+        joint_name = joint.get("name")
+        source_name = mimic.get("joint")
+        if not joint_name or not source_name:
+            raise ValueError(f"{hand_id}: malformed mimic joint in {urdf}")
+        relations[joint_name] = (
+            source_name,
+            float(mimic.get("multiplier", "1")),
+            float(mimic.get("offset", "0")),
+        )
+    return relations
+
+
 def path_dofs(
     model: mujoco.MjModel,
     wrist_id: int,
     tip_ids: dict[str, int],
-) -> tuple[np.ndarray, np.ndarray]:
+    mimic_relations: dict[str, tuple[str, float, float]],
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     joint_ids: set[int] = set()
     for tip_id in tip_ids.values():
         body_id = tip_id
@@ -356,14 +396,138 @@ def path_dofs(
             count = int(model.body_jntnum[body_id])
             joint_ids.update(range(start, start + count))
             body_id = int(model.body_parentid[body_id])
-    dofs, qpos = [], []
+    path_joint_ids = []
     for joint_id in sorted(joint_ids):
         joint_type = model.jnt_type[joint_id]
         if joint_type not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
             continue
-        dofs.append(int(model.jnt_dofadr[joint_id]))
-        qpos.append(int(model.jnt_qposadr[joint_id]))
-    return np.asarray(dofs, dtype=int), np.asarray(qpos, dtype=int)
+        path_joint_ids.append(joint_id)
+
+    full_joint_names = [model.joint(joint_id).name for joint_id in path_joint_ids]
+    full_name_set = set(full_joint_names)
+    active_joint_names = [
+        name for name in full_joint_names if name not in mimic_relations
+    ]
+    active_index = {
+        name: index for index, name in enumerate(active_joint_names)
+    }
+
+    def resolve_affine(
+        joint_name: str,
+        resolving: frozenset[str] = frozenset(),
+    ) -> tuple[np.ndarray, float]:
+        if joint_name in active_index:
+            row = np.zeros(len(active_joint_names), dtype=np.float64)
+            row[active_index[joint_name]] = 1.0
+            return row, 0.0
+        if joint_name in resolving:
+            raise ValueError(
+                f"mimic cycle while resolving {joint_name}: {sorted(resolving)}"
+            )
+        if joint_name not in mimic_relations:
+            raise ValueError(f"{joint_name} is neither active nor a mimic joint")
+        source_name, multiplier, offset = mimic_relations[joint_name]
+        if source_name not in full_name_set:
+            raise ValueError(
+                f"mimic source {source_name!r} for {joint_name!r} "
+                "is outside the fingertip kinematic paths"
+            )
+        source_row, source_offset = resolve_affine(
+            source_name, resolving | {joint_name}
+        )
+        return (
+            multiplier * source_row,
+            multiplier * source_offset + offset,
+        )
+
+    active_to_full = np.empty(
+        (len(full_joint_names), len(active_joint_names)), dtype=np.float64
+    )
+    full_qpos_offset = np.empty(len(full_joint_names), dtype=np.float64)
+    for index, name in enumerate(full_joint_names):
+        active_to_full[index], full_qpos_offset[index] = resolve_affine(name)
+
+    full_dof_ids = np.asarray(
+        [int(model.jnt_dofadr[joint_id]) for joint_id in path_joint_ids],
+        dtype=int,
+    )
+    full_qpos_ids = np.asarray(
+        [int(model.jnt_qposadr[joint_id]) for joint_id in path_joint_ids],
+        dtype=int,
+    )
+    active_joint_ids = [
+        path_joint_ids[full_joint_names.index(name)]
+        for name in active_joint_names
+    ]
+    active_dof_ids = np.asarray(
+        [int(model.jnt_dofadr[joint_id]) for joint_id in active_joint_ids],
+        dtype=int,
+    )
+    active_qpos_ids = np.asarray(
+        [int(model.jnt_qposadr[joint_id]) for joint_id in active_joint_ids],
+        dtype=int,
+    )
+
+    active_lower = np.full(len(active_joint_names), -np.inf, dtype=np.float64)
+    active_upper = np.full(len(active_joint_names), np.inf, dtype=np.float64)
+    for full_index, joint_id in enumerate(path_joint_ids):
+        if not model.jnt_limited[joint_id]:
+            continue
+        nonzero = np.flatnonzero(np.abs(active_to_full[full_index]) > 1e-12)
+        if len(nonzero) != 1:
+            raise ValueError(
+                f"{full_joint_names[full_index]} does not resolve to one active joint"
+            )
+        active_id = int(nonzero[0])
+        coefficient = active_to_full[full_index, active_id]
+        offset = full_qpos_offset[full_index]
+        lower, upper = model.jnt_range[joint_id]
+        mapped_lower = (lower - offset) / coefficient
+        mapped_upper = (upper - offset) / coefficient
+        if mapped_lower > mapped_upper:
+            mapped_lower, mapped_upper = mapped_upper, mapped_lower
+        active_lower[active_id] = max(active_lower[active_id], mapped_lower)
+        active_upper[active_id] = min(active_upper[active_id], mapped_upper)
+    if np.any(active_lower > active_upper):
+        bad = np.flatnonzero(active_lower > active_upper)
+        raise ValueError(
+            "mimic-constrained joint limits are empty for "
+            f"{[active_joint_names[index] for index in bad]}"
+        )
+    return (
+        full_dof_ids,
+        full_qpos_ids,
+        active_dof_ids,
+        active_qpos_ids,
+        active_to_full,
+        full_qpos_offset,
+        active_lower,
+        active_upper,
+    )
+
+
+def apply_mimic_positions(hand: HandIK) -> None:
+    """Expand active coordinates into all path joints before FK."""
+    active_q = hand.data.qpos[hand.qpos_ids]
+    hand.data.qpos[hand.full_qpos_ids] = (
+        hand.active_to_full @ active_q + hand.full_qpos_offset
+    )
+
+
+def assign_full_qpos(hand: HandIK, full_qpos: np.ndarray) -> None:
+    """Assign a stored full trajectory while preserving active coordinates."""
+    if full_qpos.shape != (len(hand.full_qpos_ids),):
+        raise ValueError(
+            f"{hand.hand_id}: expected {len(hand.full_qpos_ids)} qpos values, "
+            f"got {full_qpos.shape}"
+        )
+    hand.data.qpos[hand.full_qpos_ids] = full_qpos
+    apply_mimic_positions(hand)
+
+
+def expanded_qpos(hand: HandIK) -> np.ndarray:
+    apply_mimic_positions(hand)
+    return hand.data.qpos[hand.full_qpos_ids].copy()
 
 
 def build_hand(
@@ -382,6 +546,20 @@ def build_hand(
     }
     tip_offsets = mano_fingertip_offsets() if hand_id == "mano" else None
     wrist_id = lowest_common_ancestor(model, list(tip_ids.values()))
+    mimic_relations = urdf_mimic_relations(hand_id)
+    (
+        full_dof_ids,
+        full_qpos_ids,
+        dof_ids,
+        qpos_ids,
+        active_to_full,
+        full_qpos_offset,
+        active_lower_limits,
+        active_upper_limits,
+    ) = path_dofs(model, wrist_id, tip_ids, mimic_relations)
+    data.qpos[full_qpos_ids] = (
+        active_to_full @ data.qpos[qpos_ids] + full_qpos_offset
+    )
     mujoco.mj_forward(model, data)
     neutral_p, neutral_r = relative_tip_poses(
         model,
@@ -406,7 +584,6 @@ def build_hand(
             / np.linalg.norm(reference_vectors, axis=1)
         )
     )
-    dof_ids, qpos_ids = path_dofs(model, wrist_id, tip_ids)
     wrapper_mocap_id = int(model.body_mocapid[model.body("retarget_wrapper").id])
     object_mocap_id = int(model.body_mocapid[model.body("hocap_object_body").id])
     return HandIK(
@@ -418,8 +595,15 @@ def build_hand(
         wrist_id=wrist_id,
         tip_ids=tip_ids,
         tip_offsets=tip_offsets,
+        full_dof_ids=full_dof_ids,
+        full_qpos_ids=full_qpos_ids,
         dof_ids=dof_ids,
         qpos_ids=qpos_ids,
+        active_to_full=active_to_full,
+        full_qpos_offset=full_qpos_offset,
+        active_lower_limits=active_lower_limits,
+        active_upper_limits=active_upper_limits,
+        mimic_relations=mimic_relations,
         map_rotation=map_rotation,
         size_ratio=size_ratio,
         neutral_tip_rot=neutral_r,
@@ -495,6 +679,7 @@ def solve_frame(
     max_frame_joint_delta = 0.20
     for _ in range(iterations):
         assign_wrist_pose(hand, wrist_position, wrist_rotation)
+        apply_mimic_positions(hand)
         mujoco.mj_forward(model, data)
         rows = []
         errors = []
@@ -514,7 +699,8 @@ def solve_frame(
                 np.hstack(
                     (
                         np.eye(3),
-                        jac_p[:, hand.dof_ids],
+                        jac_p[:, hand.full_dof_ids]
+                        @ hand.active_to_full,
                     )
                 )
             )
@@ -524,7 +710,11 @@ def solve_frame(
                 np.hstack(
                     (
                         np.zeros((3, 3)),
-                        orientation_length * jac_r[:, hand.dof_ids],
+                        orientation_length
+                        * (
+                            jac_r[:, hand.full_dof_ids]
+                            @ hand.active_to_full
+                        ),
                     )
                 )
             )
@@ -562,18 +752,16 @@ def solve_frame(
             frame_start_q - max_frame_joint_delta,
             frame_start_q + max_frame_joint_delta,
         )
-        for qpos_id, dof_id in zip(hand.qpos_ids, hand.dof_ids):
-            joint_id = int(model.dof_jntid[dof_id])
-            if model.jnt_limited[joint_id]:
-                data.qpos[qpos_id] = np.clip(
-                    data.qpos[qpos_id],
-                    model.jnt_range[joint_id, 0],
-                    model.jnt_range[joint_id, 1],
-                )
+        data.qpos[hand.qpos_ids] = np.clip(
+            data.qpos[hand.qpos_ids],
+            hand.active_lower_limits,
+            hand.active_upper_limits,
+        )
         if np.linalg.norm(error) < 5e-4:
             break
 
     assign_wrist_pose(hand, wrist_position, wrist_rotation)
+    apply_mimic_positions(hand)
     mujoco.mj_forward(model, data)
     position_errors, rotation_errors = [], []
     for f in fingers:
@@ -703,7 +891,7 @@ def main() -> None:
                 wrist_position,
                 wrist_rotation,
             )
-            q_trajectory.append(hand.data.qpos[hand.qpos_ids].copy())
+            q_trajectory.append(expanded_qpos(hand))
             solved_wrist_p.append(wrist_position.copy())
             solved_wrist_q.append(wrist_rotation.as_quat())
             p_errors.append(p_error)
@@ -713,7 +901,8 @@ def main() -> None:
         np.savez_compressed(
             cache_path,
             frame_ids=frame_ids,
-            qpos_ids=hand.qpos_ids,
+            qpos_ids=hand.full_qpos_ids,
+            active_qpos_ids=hand.qpos_ids,
             qpos=q_trajectory,
             wrist_position=np.asarray(solved_wrist_p),
             wrist_quaternion_xyzw=np.asarray(solved_wrist_q),
@@ -808,7 +997,7 @@ def main() -> None:
         canvas = np.full((height, width, 3), 13, dtype=np.uint8)
         object_frame = object_pose[frame_id]
         for index, hand in enumerate(hands):
-            hand.data.qpos[hand.qpos_ids] = trajectories[index][output_frame]
+            assign_full_qpos(hand, trajectories[index][output_frame])
             assign_wrist_pose(
                 hand,
                 solved_wrist_positions[index][output_frame],

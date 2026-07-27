@@ -49,7 +49,7 @@ RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${RESULT_DIR}" "${OUTPUT_ROOT}/slurm"
 
-if [[ ! -f "${OUTPUT_ROOT}/assets/.all_hands_residual_v1" ]]; then
+if [[ ! -f "${OUTPUT_ROOT}/assets/.all_hands_original_human_v2" ]]; then
   printf 'All-hand assets are not ready: %s\n' "${OUTPUT_ROOT}/assets" >&2
   exit 1
 fi

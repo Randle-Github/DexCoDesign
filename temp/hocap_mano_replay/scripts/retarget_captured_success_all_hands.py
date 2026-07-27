@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Retarget a captured successful MANO rollout to every robot hand.
+"""Retarget the original HO-Cap MANO reference to every robot hand.
 
-The source targets are obtained by forward kinematics of the saved MANO
-simulator states. Each target hand is solved independently for at most the
+The source targets are obtained by forward kinematics of the pre-RL MANO
+reference states. Each target hand is solved independently for at most the
 requested number of trajectory frames. Only finite, geometrically valid IK
 solutions are rendered.
 """
@@ -28,10 +28,13 @@ DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
 REGISTRY = DIRECT_ROOT / "registry.json"
 DEFAULT_CAPTURE = (
     REPO_ROOT
-    / "artifacts"
-    / "isaaclab_mano_residual"
-    / "success_capture_fixed_clamp_reset0"
-    / "successful_rollout.npz"
+    / "temp"
+    / "hocap_mano_replay"
+    / "data"
+    / "subset"
+    / "subject_7"
+    / "20231022_192832"
+    / "isaaclab_reference.npz"
 )
 DEFAULT_OUTPUT = (
     REPO_ROOT
@@ -44,6 +47,7 @@ from retarget_all_hands import (  # noqa: E402
     FINGERS,
     MANO_TIPS,
     TIP_LINKS,
+    assign_full_qpos,
     assign_wrist_pose,
     build_hand,
     configure_colors,
@@ -53,7 +57,17 @@ from retarget_all_hands import (  # noqa: E402
     relative_tip_poses,
     rotation_matrix,
     solve_frame,
+    expanded_qpos,
 )
+
+
+def source_joint_names(source: np.lib.npyio.NpzFile) -> list[str]:
+    if "joint_names" in source:
+        return source["joint_names"].tolist()
+    if "metadata_json" in source:
+        metadata = json.loads(str(source["metadata_json"]))
+        return list(metadata["joint_names"])
+    raise ValueError("MANO source contains neither joint_names nor metadata_json")
 
 
 def captured_mano_targets(
@@ -65,11 +79,12 @@ def captured_mano_targets(
     dict[str, np.ndarray],
     dict[str, np.ndarray],
 ]:
-    metadata = json.loads(str(captured["metadata_json"]))
     scene = make_scene("mano")
     model = mujoco.MjModel.from_xml_path(str(scene))
     data = mujoco.MjData(model)
-    qpos_ids = [model.joint(name).qposadr[0] for name in metadata["joint_names"]]
+    qpos_ids = [
+        model.joint(name).qposadr[0] for name in source_joint_names(captured)
+    ]
     tip_ids = {finger: model.body(link).id for finger, link in MANO_TIPS.items()}
     tip_offsets = mano_fingertip_offsets()
     wrist_id = lowest_common_ancestor(model, list(tip_ids.values()))
@@ -150,7 +165,7 @@ def render_hand_video(
     )
     preview_index = len(qpos) // 2
     for frame_index in range(len(qpos)):
-        hand.data.qpos[hand.qpos_ids] = qpos[frame_index]
+        assign_full_qpos(hand, qpos[frame_index])
         assign_wrist_pose(
             hand,
             wrist_position[frame_index],
@@ -191,7 +206,11 @@ def main() -> None:
     args = parser.parse_args()
 
     captured = np.load(args.capture)
-    source_metadata = json.loads(str(captured["metadata_json"]))
+    source_metadata = {
+        "kind": "original_hocap_mano_reference",
+        "pre_rl": True,
+        "joint_names": source_joint_names(captured),
+    }
     frame_count = min(args.max_frames, len(captured["hand_q"]))
     object_pose = captured["object_pose_wxyz"][:frame_count].astype(np.float64)
     (
@@ -205,8 +224,8 @@ def main() -> None:
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
     hand_ids = [hand_id for hand_id in registry["hands"] if hand_id != "mano"]
     report = {
-        "source_capture": str(args.capture),
-        "source_success_metadata": source_metadata,
+        "source_reference": str(args.capture),
+        "source_metadata": source_metadata,
         "frames_attempted": frame_count,
         "ik_iterations_per_frame": args.ik_iterations,
         "success_threshold_mean_tip_position_m": args.max_mean_tip_error_m,
@@ -269,7 +288,7 @@ def main() -> None:
                     raise FloatingPointError(
                         f"non-finite IK result at frame {frame_index}"
                     )
-                q_trajectory.append(hand.data.qpos[hand.qpos_ids].copy())
+                q_trajectory.append(expanded_qpos(hand))
                 solved_wrist_position.append(wrist_position.copy())
                 solved_wrist_quaternion.append(wrist_rotation.as_quat())
                 position_errors.append(position_error)
@@ -286,6 +305,13 @@ def main() -> None:
                 "frames_solved": frame_count,
                 "fingers": list(hand.tip_ids),
                 "ik_dofs": int(len(hand.dof_ids)),
+                "mimic_joint_count": int(
+                    len(hand.full_qpos_ids) - len(hand.qpos_ids)
+                ),
+                "mimic_semantics": (
+                    "mimic joints excluded from IK variables and expanded as "
+                    "multiplier * active_source + offset before every FK"
+                ),
                 "mean_tip_position_error_mm": 1000.0 * mean_position_error,
                 "max_tip_position_error_mm": 1000.0
                 * float(np.max(position_errors)),
@@ -315,7 +341,8 @@ def main() -> None:
             np.savez_compressed(
                 cache_path,
                 frame_ids=np.arange(frame_count),
-                qpos_ids=hand.qpos_ids,
+                qpos_ids=hand.full_qpos_ids,
+                active_qpos_ids=hand.qpos_ids,
                 qpos=q_trajectory,
                 wrist_position=solved_wrist_position,
                 wrist_quaternion_xyzw=solved_wrist_quaternion,
