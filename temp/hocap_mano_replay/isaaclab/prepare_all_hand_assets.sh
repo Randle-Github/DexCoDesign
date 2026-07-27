@@ -28,7 +28,21 @@ if [[ ! -f "${CAPTURE}" ]]; then
 fi
 
 mkdir -p "${PREPARED_ROOT}" "${ASSET_ROOT}"
-bash "${REPO_ROOT}/temp/hocap_mano_replay/isaaclab/prepare_assets.sh"
+if [[ ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/.egoengine_actuators_v3" ]]; then
+  bash "${REPO_ROOT}/temp/hocap_mano_replay/isaaclab/prepare_assets.sh"
+fi
+
+# Keep the MuJoCo-only reference builder isolated from the user's conda
+# environment. Isaac Lab itself does not depend on this directory.
+REFERENCE_PYTHON_DEPS="${OUTPUT_ROOT}/reference_python_deps"
+mkdir -p "${REFERENCE_PYTHON_DEPS}"
+export PYTHONPATH="${REFERENCE_PYTHON_DEPS}:${PYTHONPATH:-}"
+if ! python -c 'import mujoco' >/dev/null 2>&1; then
+  python -m pip install \
+    --disable-pip-version-check \
+    --target "${REFERENCE_PYTHON_DEPS}" \
+    "mujoco==3.3.7"
+fi
 
 python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/retarget_captured_success_all_hands.py" \
   --capture "${CAPTURE}" \
