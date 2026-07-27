@@ -165,10 +165,12 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         clone_in_fabric=False,
     )
 
-    # EgoEngine action scale = component_noise_scale * first_ctrl_noise_scale.
-    residual_root_position_scale = 0.08 * 0.5
-    residual_root_rotation_scale = 0.05 * 0.5
-    residual_finger_scale = 0.30 * 0.5
+    # Residual bounds are applied directly to the reference controller target.
+    # The reference is already close, so root translation remains conservative;
+    # wrist rotation and finger joints retain the requested +/-0.30 rad range.
+    residual_root_position_scale = 0.06
+    residual_root_rotation_scale = 0.30
+    residual_finger_scale = 0.30
     object_position_sigma = 0.04
     object_rotation_sigma = 0.50
     # Match EgoEngine-MPC's Aria residual-RL reward geometry:

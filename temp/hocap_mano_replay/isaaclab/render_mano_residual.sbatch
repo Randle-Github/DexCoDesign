@@ -38,18 +38,20 @@ if [[ ! -f "${CHECKPOINT}" ]]; then
   CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name 'agent_*.pt' -print | sort -V | tail -n 1)"
 fi
 
-set +e
-./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/evaluate_mano_checkpoint.py \
-  --task DexCoDesign-MANO-Residual-Direct-Eval-v0 \
-  --algorithm PPO \
-  --checkpoint "${CHECKPOINT}" \
-  --output "${RESULT_DIR}/evaluation_diagnostics.json" \
-  --seed 42 \
-  --headless
-EVAL_EXIT=$?
-set -e
-if [[ "${EVAL_EXIT}" -ne 0 && "${EVAL_EXIT}" -ne 2 ]]; then
-  exit "${EVAL_EXIT}"
+if [[ "${SKIP_EVAL:-0}" != "1" ]]; then
+  set +e
+  ./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/evaluate_mano_checkpoint.py \
+    --task DexCoDesign-MANO-Residual-Direct-Eval-v0 \
+    --algorithm PPO \
+    --checkpoint "${CHECKPOINT}" \
+    --output "${RESULT_DIR}/evaluation_diagnostics.json" \
+    --seed 42 \
+    --headless
+  EVAL_EXIT=$?
+  set -e
+  if [[ "${EVAL_EXIT}" -ne 0 && "${EVAL_EXIT}" -ne 2 ]]; then
+    exit "${EVAL_EXIT}"
+  fi
 fi
 
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/play.py \
@@ -65,4 +67,6 @@ python temp/hocap_mano_replay/isaaclab/export_training_artifacts.py \
   --run-dir "${RUN_DIR}" \
   --output-dir "${RESULT_DIR}/results" \
   --contact-weight 2.0
-cp "${RESULT_DIR}/evaluation_diagnostics.json" "${RESULT_DIR}/results/evaluation_diagnostics.json"
+if [[ -f "${RESULT_DIR}/evaluation_diagnostics.json" ]]; then
+  cp "${RESULT_DIR}/evaluation_diagnostics.json" "${RESULT_DIR}/results/evaluation_diagnostics.json"
+fi

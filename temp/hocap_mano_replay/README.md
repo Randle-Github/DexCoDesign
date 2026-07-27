@@ -73,9 +73,11 @@ ctrl[t] = ctrl_ref[t] + action[t] * action_scale
 observation[t] = [hand_q[t], object_pose[t], ctrl_ref[t]]
 ```
 
-Training samples 64-control-step windows. The action scales, object-mass
-scaling, object-pose C-error reward, binary thumb-plus-other-fingertip contact
-reward, and PPO hyperparameters match the Aria residual-RL configuration.
+Training samples 64-control-step windows. Residual actions allow up to 6 cm
+of wrist translation and 0.30 rad for both wrist rotation and finger joints.
+The object-mass scaling, object-pose C-error reward, binary
+thumb-plus-other-fingertip contact reward, and PPO hyperparameters follow the
+Aria residual-RL configuration.
 
 ```bash
 # Solve and save per-hand trajectories.
