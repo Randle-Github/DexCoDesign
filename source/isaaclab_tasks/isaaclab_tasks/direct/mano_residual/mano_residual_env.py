@@ -1,7 +1,7 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Residual RL over the reviewed HO-Cap/MANO reference trajectory.
+"""Residual RL over a reviewed HO-Cap hand reference trajectory.
 
 The command is exactly ``q_target = q_reference + scale * residual``. The
 training reward combines object-pose tracking with EgoEngine-MPC's binary
@@ -35,7 +35,7 @@ from isaaclab.utils.math import quat_apply, quat_error_magnitude
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 ASSET_ROOT = REPO_ROOT / "artifacts" / "isaaclab_mano_residual" / "assets"
-REFERENCE_PATH = (
+MANO_REFERENCE_PATH = (
     REPO_ROOT
     / "temp"
     / "hocap_mano_replay"
@@ -45,14 +45,47 @@ REFERENCE_PATH = (
     / "20231022_192832"
     / "isaaclab_reference.npz"
 )
+ALL_HAND_ROOT = REPO_ROOT / "artifacts" / "isaaclab_all_hands_residual"
+HAND_ID = os.environ.get("DEXCODESIGN_HAND_ID", "mano")
+if HAND_ID == "mano":
+    REFERENCE_PATH = MANO_REFERENCE_PATH
+    HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
+    ROOT_POSITION_JOINT_NAMES = ("left_pos_x", "left_pos_y", "left_pos_z")
+    ROOT_ROTATION_JOINT_NAMES = ("left_rot_x", "left_rot_y", "left_rot_z")
+    THUMB_CONTACT_LINK_NAMES = ("left_thumb3",)
+    OTHER_FINGER_CONTACT_LINK_NAMES = (
+        "left_index3",
+        "left_middle3",
+        "left_ring3",
+        "left_pinky3",
+    )
+    PALM_BODY_NAME = "left_palm"
+    MIDDLE_TIP_BODY_NAME = "left_middle3"
+else:
+    REFERENCE_PATH = ALL_HAND_ROOT / "prepared" / HAND_ID / "reference.npz"
+    HAND_USD_PATH = ALL_HAND_ROOT / "assets" / HAND_ID / "hand.usd"
+    if not REFERENCE_PATH.is_file():
+        raise FileNotFoundError(
+            f"Missing prepared reference for {HAND_ID}: {REFERENCE_PATH}"
+        )
+    with np.load(REFERENCE_PATH) as _schema:
+        THUMB_CONTACT_LINK_NAMES = tuple(
+            _schema["thumb_contact_link_names"].tolist()
+        )
+        OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
+            _schema["other_finger_contact_link_names"].tolist()
+        )
+        PALM_BODY_NAME = str(_schema["palm_body_name"])
+        MIDDLE_TIP_BODY_NAME = str(_schema["middle_tip_body_name"])
+    ROOT_POSITION_JOINT_NAMES = ("root_pos_x", "root_pos_y", "root_pos_z")
+    ROOT_ROTATION_JOINT_NAMES = ("root_rot_x", "root_rot_y", "root_rot_z")
 
-THUMB_CONTACT_LINK_NAMES = ("left_thumb3",)
-OTHER_FINGER_CONTACT_LINK_NAMES = (
-    "left_index3",
-    "left_middle3",
-    "left_ring3",
-    "left_pinky3",
-)
+with np.load(REFERENCE_PATH) as _reference_schema:
+    ACTION_DIM = int(_reference_schema["hand_q"].shape[1])
+OBSERVATION_DIM = 2 * ACTION_DIM + 34
+ROOT_POSITION_EXPR = "left_pos_.*" if HAND_ID == "mano" else "root_pos_.*"
+ROOT_ROTATION_EXPR = "left_rot_.*" if HAND_ID == "mano" else "root_rot_.*"
+FINGER_JOINT_EXPR = "left_j_.*" if HAND_ID == "mano" else "finger__.*"
 
 
 @configclass
@@ -64,12 +97,14 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # The PPO action is the normalized residual itself. Keep its declared
     # bounds identical to the residual executed by _pre_physics_step so the
     # policy likelihood is evaluated on the action that reaches the robot.
-    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(28,), dtype=np.float32)
+    action_space = gym.spaces.Box(
+        low=-1.0, high=1.0, shape=(ACTION_DIM,), dtype=np.float32
+    )
     # EgoEngine-style goal conditioning:
-    # current q (28), current thumb/index tip positions (6), current object
-    # pose (7), goal thumb/index tip poses (14), goal q (28), goal object
-    # pose (7).
-    observation_space = 90
+    # current q (N), current thumb/index tip positions (6), current object
+    # pose (7), goal thumb/index tip poses (14), goal q (N), goal object
+    # pose (7): 2N + 34 values.
+    observation_space = OBSERVATION_DIM
     state_space = 0
 
     sim: SimulationCfg = SimulationCfg(
@@ -78,7 +113,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         log_dir=str(
             REPO_ROOT
             / "artifacts"
-            / "isaaclab_mano_residual"
+            / "isaaclab_all_hands_residual"
             / "until_success"
             / "isaaclab_logs"
         ),
@@ -98,13 +133,13 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     hand_cfg: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/Hand",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=str(ASSET_ROOT / "mano_left.usd"),
+            usd_path=str(HAND_USD_PATH),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=1.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
+                enabled_self_collisions=HAND_ID == "mano",
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=2,
             ),
@@ -116,7 +151,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
             # joints have unit armature and position actuators use a critical
             # damping ratio.
             "wrist": ImplicitActuatorCfg(
-                joint_names_expr=["left_pos_.*", "left_rot_.*"],
+                joint_names_expr=[ROOT_POSITION_EXPR, ROOT_ROTATION_EXPR],
                 stiffness=1000.0,
                 damping=63.2455532,
                 effort_limit_sim=1000.0,
@@ -124,7 +159,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
                 armature=1.0,
             ),
             "fingers": ImplicitActuatorCfg(
-                joint_names_expr=["left_j_.*"],
+                joint_names_expr=[FINGER_JOINT_EXPR],
                 stiffness=300.0,
                 damping=34.6410162,
                 effort_limit_sim=1000.0,
@@ -264,12 +299,14 @@ class ManoResidualEnv(DirectRLEnv):
         self.action_dim = gym.spaces.flatdim(self.single_action_space)
         if self.hand.num_joints != self.action_dim:
             raise RuntimeError(
-                f"Expected {self.action_dim} MANO joints, found {self.hand.num_joints}: "
+                f"Expected {self.action_dim} {HAND_ID} joints, found {self.hand.num_joints}: "
                 f"{self.hand.joint_names}"
             )
         missing = sorted(set(self._reference_joint_names) - set(self.hand.joint_names))
         if missing:
-            raise RuntimeError(f"Reference joints missing from imported MANO articulation: {missing}")
+            raise RuntimeError(
+                f"Reference joints missing from imported {HAND_ID} articulation: {missing}"
+            )
 
         reference_order = [self._reference_joint_names.index(name) for name in self.hand.joint_names]
         self.reference_hand_q = self._reference_hand_q_cpu[:, reference_order].to(self.device)
@@ -289,8 +326,38 @@ class ManoResidualEnv(DirectRLEnv):
         self.residual_scale = torch.full(
             (self.hand.num_joints,), self.cfg.residual_finger_scale, device=self.device
         )
-        self.residual_scale[:3] = self.cfg.residual_root_position_scale
-        self.residual_scale[3:6] = self.cfg.residual_root_rotation_scale
+        self._root_position_joint_indices = torch.tensor(
+            [
+                self.hand.joint_names.index(name)
+                for name in ROOT_POSITION_JOINT_NAMES
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self._root_rotation_joint_indices = torch.tensor(
+            [
+                self.hand.joint_names.index(name)
+                for name in ROOT_ROTATION_JOINT_NAMES
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self._finger_joint_indices = torch.tensor(
+            [
+                index
+                for index, name in enumerate(self.hand.joint_names)
+                if name
+                not in set(ROOT_POSITION_JOINT_NAMES + ROOT_ROTATION_JOINT_NAMES)
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self.residual_scale[self._root_position_joint_indices] = (
+            self.cfg.residual_root_position_scale
+        )
+        self.residual_scale[self._root_rotation_joint_indices] = (
+            self.cfg.residual_root_rotation_scale
+        )
 
         self.phase_buf = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.actions = torch.zeros(
@@ -306,14 +373,29 @@ class ManoResidualEnv(DirectRLEnv):
         self._last_evaluated_phase = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
         )
-        success_capture_path = os.environ.get("MANO_SUCCESS_TRAJECTORY_PATH")
+        success_capture_path = os.environ.get(
+            "HAND_SUCCESS_TRAJECTORY_PATH",
+            os.environ.get("MANO_SUCCESS_TRAJECTORY_PATH"),
+        )
+        best_rollout_path = os.environ.get("HAND_BEST_ROLLOUT_PATH")
         self._success_capture_path = (
             Path(success_capture_path).expanduser().resolve()
             if success_capture_path
             else None
         )
+        self._best_rollout_path = (
+            Path(best_rollout_path).expanduser().resolve()
+            if best_rollout_path
+            else None
+        )
+        self._best_rollout_phase = -1
+        self._capture_best_candidate_env_id: int | None = None
         self._capture_success_env_id: int | None = None
-        if self._success_capture_path is not None:
+        self._capture_enabled = (
+            self._success_capture_path is not None
+            or self._best_rollout_path is not None
+        )
+        if self._capture_enabled:
             capture_shape = (self.num_envs, self._reference_length)
             self._capture_hand_q = torch.zeros(
                 (*capture_shape, self.hand.num_joints),
@@ -338,14 +420,16 @@ class ManoResidualEnv(DirectRLEnv):
                 self._capture_pose_reward
             )
         self._last_diagnostic_phase = -1
-        self._palm_body_index = self.hand.body_names.index("left_palm")
-        self._middle_tip_body_index = self.hand.body_names.index("left_middle3")
+        self._palm_body_index = self.hand.body_names.index(PALM_BODY_NAME)
+        self._middle_tip_body_index = self.hand.body_names.index(
+            MIDDLE_TIP_BODY_NAME
+        )
         missing_fingertip_links = sorted(
             set(self._reference_fingertip_link_names) - set(self.hand.body_names)
         )
         if missing_fingertip_links:
             raise RuntimeError(
-                "Reference fingertip links missing from imported MANO articulation: "
+                f"Reference fingertip links missing from imported {HAND_ID} articulation: "
                 f"{missing_fingertip_links}"
             )
         self._fingertip_body_indices = [
@@ -356,7 +440,7 @@ class ManoResidualEnv(DirectRLEnv):
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
         visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
-        if visual_manifest_path.is_file():
+        if HAND_ID == "mano" and visual_manifest_path.is_file():
             visual_manifest = json.loads(visual_manifest_path.read_text(encoding="utf-8"))
             for link_name, relative_usd_path in visual_manifest.items():
                 visual_cfg = sim_utils.UsdFileCfg(
@@ -460,7 +544,7 @@ class ManoResidualEnv(DirectRLEnv):
         if filtered_prims == 0:
             raise RuntimeError(f"No hand collision bodies found below {hand_root_path}")
         print(
-            "[MANO_COLLISION_FILTER] "
+            f"[HAND_COLLISION_FILTER:{HAND_ID}] "
             f"disabled hand-support pairs for {filtered_prims} hand prims; "
             "object-hand and object-support pairs remain enabled"
         )
@@ -474,7 +558,7 @@ class ManoResidualEnv(DirectRLEnv):
             self.joint_lower_limits,
             self.joint_upper_limits,
         )
-        if self._success_capture_path is not None:
+        if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_actions[env_ids, self.phase_buf] = self.actions
             self._capture_joint_targets[env_ids, self.phase_buf] = self.joint_targets
@@ -513,7 +597,7 @@ class ManoResidualEnv(DirectRLEnv):
                 palm_pos = self.hand.data.body_pos_w[0, self._palm_body_index]
                 middle_tip_pos = self.hand.data.body_pos_w[0, self._middle_tip_body_index]
                 print(
-                    "[MANO_ROLLOUT] "
+                    f"[HAND_ROLLOUT:{HAND_ID}] "
                     f"phase={phase_index} "
                     f"hand_actual_root={actual_q[:6].detach().cpu().tolist()} "
                     f"hand_target_root={target_q[:6].detach().cpu().tolist()} "
@@ -609,12 +693,13 @@ class ManoResidualEnv(DirectRLEnv):
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
         self._pose_episode_return += pose_tracking_reward
-        if self._success_capture_path is not None:
+        if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_pose_reward[env_ids, self.phase_buf] = pose_tracking_reward
             self._capture_contact_reward[env_ids, self.phase_buf] = contact_reward
         finger_residual = (
-            self.actions[:, 6:] * self.residual_scale[6:]
+            self.actions[:, self._finger_joint_indices]
+            * self.residual_scale[self._finger_joint_indices]
         ).abs()
         log = {
             "object_position_error_m": self._object_position_error.mean(),
@@ -643,6 +728,9 @@ class ManoResidualEnv(DirectRLEnv):
                 self.episode_length_buf[completed].to(torch.float32).mean()
             )
         self.extras["log"] = log
+        if self._capture_best_candidate_env_id is not None:
+            self._save_best_trajectory(self._capture_best_candidate_env_id)
+            self._capture_best_candidate_env_id = None
         if self._capture_success_env_id is not None:
             self._save_success_trajectory(self._capture_success_env_id)
         return total_reward
@@ -666,7 +754,7 @@ class ManoResidualEnv(DirectRLEnv):
             | (self._object_rotation_error > self.cfg.object_failure_orientation)
         )
         end_of_reference = self.phase_buf >= self._reference_length - 1
-        if self._success_capture_path is not None:
+        if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_hand_q[env_ids, self.phase_buf] = self.hand.data.joint_pos
             object_position = (
@@ -681,19 +769,34 @@ class ManoResidualEnv(DirectRLEnv):
                 self._capture_success_env_id = int(
                     successful.nonzero(as_tuple=False)[0, 0].item()
                 )
+            finished = invalid | object_lost | end_of_reference
+            if finished.any():
+                finished_ids = finished.nonzero(as_tuple=False).flatten()
+                finished_phases = self.phase_buf[finished_ids]
+                candidate_offset = int(torch.argmax(finished_phases).item())
+                candidate_env_id = int(finished_ids[candidate_offset].item())
+                candidate_phase = int(self.phase_buf[candidate_env_id].item())
+                if candidate_phase > self._best_rollout_phase:
+                    self._capture_best_candidate_env_id = candidate_env_id
         time_out = (self.episode_length_buf >= self.max_episode_length) | end_of_reference
         return invalid | object_lost, time_out
 
-    def _save_success_trajectory(self, env_id: int) -> None:
-        if self._success_capture_path is None:
-            return
-        output_path = self._success_capture_path
+    def _save_rollout_trajectory(
+        self,
+        output_path: Path,
+        env_id: int,
+        last_phase: int,
+        *,
+        success: bool,
+    ) -> dict[str, object]:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        last_phase = self._reference_length - 1
         metadata = {
+            "hand_id": HAND_ID,
+            "status": "success" if success else "farthest",
+            "success": success,
             "env_id": env_id,
             "final_phase": last_phase,
-            "reference_last_phase": last_phase,
+            "reference_last_phase": self._reference_length - 1,
             "position_error_m": float(self._object_position_error[env_id].item()),
             "rotation_error_rad": float(self._object_rotation_error[env_id].item()),
             "pose_tracking_return": float(
@@ -732,9 +835,44 @@ class ManoResidualEnv(DirectRLEnv):
                 metadata_json=np.asarray(json.dumps(metadata)),
             )
         temporary_path.replace(output_path)
+        return metadata
+
+    def _save_best_trajectory(self, env_id: int) -> None:
+        if self._best_rollout_path is None:
+            return
+        last_phase = int(self.phase_buf[env_id].item())
+        if last_phase <= self._best_rollout_phase:
+            return
+        metadata = self._save_rollout_trajectory(
+            self._best_rollout_path,
+            env_id,
+            last_phase,
+            success=last_phase >= self._reference_length - 1,
+        )
+        self._best_rollout_phase = last_phase
         print(
-            "MANO_SUCCESS_TRAJECTORY_CAPTURED "
-            f"path={output_path} env_id={env_id} phase={last_phase} "
+            "HAND_BEST_ROLLOUT_CAPTURED "
+            f"hand_id={HAND_ID} path={self._best_rollout_path} "
+            f"env_id={env_id} phase={last_phase} "
+            f"position_error_m={metadata['position_error_m']:.9f} "
+            f"rotation_error_rad={metadata['rotation_error_rad']:.9f}",
+            flush=True,
+        )
+
+    def _save_success_trajectory(self, env_id: int) -> None:
+        if self._success_capture_path is None:
+            return
+        last_phase = self._reference_length - 1
+        metadata = self._save_rollout_trajectory(
+            self._success_capture_path,
+            env_id,
+            last_phase,
+            success=True,
+        )
+        print(
+            "HAND_SUCCESS_TRAJECTORY_CAPTURED "
+            f"hand_id={HAND_ID} path={self._success_capture_path} "
+            f"env_id={env_id} phase={last_phase} "
             f"position_error_m={metadata['position_error_m']:.9f} "
             f"rotation_error_rad={metadata['rotation_error_rad']:.9f}",
             flush=True,
@@ -776,7 +914,7 @@ class ManoResidualEnv(DirectRLEnv):
         self.object.write_root_velocity_to_sim(object_velocity, env_ids)
         self.actions[env_ids] = 0.0
         self._pose_episode_return[env_ids] = 0.0
-        if self._success_capture_path is not None:
+        if self._capture_enabled:
             self._capture_hand_q[env_ids, 0] = joint_pos
             self._capture_object_pose[env_ids, 0] = self.reference_object_pose[0]
             self._capture_actions[env_ids, 0] = 0.0
