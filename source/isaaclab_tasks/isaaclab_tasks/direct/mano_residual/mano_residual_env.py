@@ -57,9 +57,9 @@ OTHER_FINGER_CONTACT_LINK_NAMES = (
 @configclass
 class ManoResidualEnvCfg(DirectRLEnvCfg):
     decimation = 4
-    # EgoEngine trains on randomly sampled 64-control-step windows and only
-    # uses a full sequence for evaluation.
-    episode_length_s = 64.0 / 30.0
+    # Every training episode follows the reference from phase zero. PPO rollout
+    # boundaries must not reset or randomly seek within the reference.
+    episode_length_s = 15.0
     # The PPO action is the normalized residual itself. Keep its declared
     # bounds identical to the residual executed by _pre_physics_step so the
     # policy likelihood is evaluated on the action that reaches the robot.
@@ -185,7 +185,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     contact_force_threshold = 0.0
     object_failure_distance = 0.05
     object_failure_orientation = 1.50
-    randomize_start_phase = True
+    randomize_start_phase = False
     log_rollout_diagnostics = False
 
 
