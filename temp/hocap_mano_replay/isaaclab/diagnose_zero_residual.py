@@ -56,6 +56,12 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     with torch.inference_mode():
         for _ in range(raw._reference_length + 2):
             _, reward, terminated, truncated, _ = env.step(actions)
+            evaluated_phase = raw._last_evaluated_phase[0]
+            hand_q_error = (
+                raw.hand.data.joint_pos[0]
+                - raw.reference_hand_q[evaluated_phase]
+            ).abs()
+            max_error_joint_id = int(hand_q_error.argmax().item())
             (
                 thumb_contact,
                 other_contact,
@@ -65,7 +71,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
             ) = raw._compute_pinch_contact()
             trace.append(
                 {
-                    "phase": int(raw._last_evaluated_phase[0].item()),
+                    "phase": int(evaluated_phase.item()),
                     "position_error_m": float(
                         raw._object_position_error[0].item()
                     ),
@@ -79,23 +85,24 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                     "thumb_force_n": float(thumb_force[0].item()),
                     "other_force_n": float(other_force[0].item()),
                     "hand_q_abs_error_mean_rad": float(
-                        (
-                            raw.hand.data.joint_pos[0]
-                            - raw.reference_hand_q[raw._last_evaluated_phase[0]]
-                        )
-                        .abs()
-                        .mean()
-                        .item()
+                        hand_q_error.mean().item()
                     ),
                     "hand_q_abs_error_max_rad": float(
-                        (
-                            raw.hand.data.joint_pos[0]
-                            - raw.reference_hand_q[raw._last_evaluated_phase[0]]
-                        )
-                        .abs()
-                        .max()
-                        .item()
+                        hand_q_error.max().item()
                     ),
+                    "root_q_abs_error_mean": float(
+                        hand_q_error[:6].mean().item()
+                    ),
+                    "root_q_abs_error_max": float(
+                        hand_q_error[:6].max().item()
+                    ),
+                    "finger_q_abs_error_mean": float(
+                        hand_q_error[6:].mean().item()
+                    ),
+                    "finger_q_abs_error_max": float(
+                        hand_q_error[6:].max().item()
+                    ),
+                    "max_error_joint": raw.hand.joint_names[max_error_joint_id],
                 }
             )
             if bool(torch.as_tensor(terminated).any().item()) or bool(
