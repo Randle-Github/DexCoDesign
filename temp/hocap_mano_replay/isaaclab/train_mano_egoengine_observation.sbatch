@@ -47,6 +47,11 @@ if [[ ! -f "${CHECKPOINT}" ]]; then
   CHECKPOINT="$(find "${RUN_DIR}/checkpoints" -type f -name 'agent_*.pt' -print | sort -V | tail -n 1)"
 fi
 
+if [[ "${TRAIN_ONLY:-0}" == "1" ]]; then
+  printf 'MANO_TRAINING_COMPLETE run_dir=%s checkpoint=%s\n' "${RUN_DIR}" "${CHECKPOINT}"
+  exit 0
+fi
+
 set +e
 ./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/evaluate_mano_checkpoint.py \
   --task DexCoDesign-MANO-Residual-Direct-Eval-v0 \
