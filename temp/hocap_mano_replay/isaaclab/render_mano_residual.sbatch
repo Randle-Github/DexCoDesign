@@ -54,6 +54,12 @@ if [[ "${SKIP_EVAL:-0}" != "1" ]]; then
   fi
 fi
 
+if [[ "${EVAL_ONLY:-0}" == "1" ]]; then
+  cp "${RESULT_DIR}/evaluation_diagnostics.json" "${RESULT_DIR}/results/evaluation_diagnostics.json"
+  printf 'MANO_EVALUATION_COMPLETE result=%s\n' "${RESULT_DIR}/evaluation_diagnostics.json"
+  exit 0
+fi
+
 PLAY_OVERRIDES=()
 if [[ "${LEGACY_ACTION_SCALES:-0}" == "1" ]]; then
   PLAY_OVERRIDES+=(
