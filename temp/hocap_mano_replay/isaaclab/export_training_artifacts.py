@@ -13,25 +13,43 @@ import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 
-def choose_reward_tag(tags: list[str]) -> str:
-    preferred = (
-        "Info / pose_tracking_reward",
-        "Reward / Total reward (mean)",
-        "Reward/Total",
-        "Environment/Return",
-        "Episode / Total reward (mean)",
+def scalar_by_step(
+    accumulator: EventAccumulator, tag: str
+) -> dict[int, float]:
+    if tag not in accumulator.Tags()["scalars"]:
+        return {}
+    return {sample.step: sample.value for sample in accumulator.Scalars(tag)}
+
+
+def accumulated_pose_return(
+    accumulator: EventAccumulator,
+) -> tuple[list[int], list[float], str]:
+    exact_tag = "Info / pose_tracking_return"
+    exact = scalar_by_step(accumulator, exact_tag)
+    if exact:
+        return (
+            list(exact),
+            list(exact.values()),
+            "exact completed-episode pose return (contact excluded)",
+        )
+
+    # Legacy runs only recorded the mean per-step pose reward and the mean
+    # completed episode length. Their product is the closest recoverable
+    # contact-free accumulated return; label it explicitly as an estimate.
+    pose = scalar_by_step(accumulator, "Info / pose_tracking_reward")
+    length = scalar_by_step(accumulator, "Episode / Total timesteps (mean)")
+    common_steps = sorted(pose.keys() & length.keys())
+    if common_steps:
+        return (
+            common_steps,
+            [pose[step] * length[step] for step in common_steps],
+            "estimated pose return = mean pose reward × mean episode length (contact excluded)",
+        )
+
+    raise RuntimeError(
+        "No pose-only accumulated return can be recovered. Available scalar tags: "
+        f"{accumulator.Tags()['scalars']}"
     )
-    for tag in preferred:
-        if tag in tags:
-            return tag
-    candidates = [
-        tag
-        for tag in tags
-        if "reward" in tag.lower() or "return" in tag.lower()
-    ]
-    if not candidates:
-        raise RuntimeError(f"No reward/return scalar found. Available scalar tags: {tags}")
-    return candidates[0]
 
 
 def scalar_summary(accumulator: EventAccumulator, tag: str) -> dict[str, float] | None:
@@ -59,21 +77,28 @@ def main() -> None:
         raise FileNotFoundError(f"No TensorBoard event file below {args.run_dir}")
     accumulator = EventAccumulator(str(event_files[-1]))
     accumulator.Reload()
-    tag = choose_reward_tag(accumulator.Tags()["scalars"])
-    samples = accumulator.Scalars(tag)
-    steps = [sample.step for sample in samples]
-    values = [sample.value for sample in samples]
+    steps, values, reward_semantics = accumulated_pose_return(accumulator)
 
     csv_path = args.output_dir / "reward.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
-        writer.writerow(("step", "reward"))
+        writer.writerow(("step", "accumulated_pose_reward"))
         writer.writerows(zip(steps, values))
 
     plt.figure(figsize=(8, 4.5))
-    plt.plot(steps, values, color="#2563eb", linewidth=2)
+    plt.plot(steps, values, color="#93c5fd", linewidth=1, alpha=0.75, label="raw")
+    smoothing_window = min(7, len(values))
+    if smoothing_window > 1:
+        smoothed = [
+            sum(values[max(0, index - smoothing_window + 1) : index + 1])
+            / min(index + 1, smoothing_window)
+            for index in range(len(values))
+        ]
+        plt.plot(steps, smoothed, color="#2563eb", linewidth=2.4, label="moving average")
     plt.xlabel("training step")
-    plt.ylabel(tag)
+    plt.ylabel("accumulated pose reward")
+    plt.title("Pose-only episode return (contact reward excluded)")
+    plt.legend(frameon=False)
     plt.grid(alpha=0.25)
     plt.tight_layout()
     plt.savefig(args.output_dir / "reward.png", dpi=180)
@@ -86,8 +111,8 @@ def main() -> None:
 
     summary = {
         "run_dir": str(args.run_dir),
-        "reward_tag": tag,
-        "samples": len(samples),
+        "reward_semantics": reward_semantics,
+        "samples": len(values),
         "first_reward": values[0],
         "last_reward": values[-1],
         "best_reward": max(values),

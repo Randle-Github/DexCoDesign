@@ -266,6 +266,10 @@ class ManoResidualEnv(DirectRLEnv):
         self.joint_targets = torch.zeros_like(self.actions)
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
+        # Evaluation curves report the accumulated C-error pose reward only.
+        # Contact remains part of the optimization reward but is intentionally
+        # excluded from this episode-return diagnostic.
+        self._pose_episode_return = torch.zeros(self.num_envs, device=self.device)
         self._last_evaluated_phase = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
         )
@@ -451,10 +455,11 @@ class ManoResidualEnv(DirectRLEnv):
         ) = self._compute_pinch_contact()
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
+        self._pose_episode_return += pose_tracking_reward
         finger_residual = (
             self.actions[:, 6:] * self.residual_scale[6:]
         ).abs()
-        self.extras["log"] = {
+        log = {
             "object_position_error_m": self._object_position_error.mean(),
             "object_rotation_error_rad": self._object_rotation_error.mean(),
             "weighted_object_position_error": weighted_position_error.mean(),
@@ -474,6 +479,13 @@ class ManoResidualEnv(DirectRLEnv):
                 / float(self._reference_length - 1)
             ),
         }
+        completed = self.reset_buf
+        if completed.any():
+            log["pose_tracking_return"] = self._pose_episode_return[completed].mean()
+            log["completed_episode_steps"] = (
+                self.episode_length_buf[completed].to(torch.float32).mean()
+            )
+        self.extras["log"] = log
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -532,3 +544,4 @@ class ManoResidualEnv(DirectRLEnv):
         self.object.write_root_pose_to_sim(object_pose, env_ids)
         self.object.write_root_velocity_to_sim(object_velocity, env_ids)
         self.actions[env_ids] = 0.0
+        self._pose_episode_return[env_ids] = 0.0
