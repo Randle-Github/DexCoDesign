@@ -236,7 +236,7 @@ def make_scene(hand_id: str) -> Path:
         },
     )
     visual = ET.SubElement(root, "visual")
-    ET.SubElement(visual, "global", {"offwidth": "360", "offheight": "270"})
+    ET.SubElement(visual, "global", {"offwidth": "960", "offheight": "720"})
     ET.SubElement(
         visual,
         "headlight",
