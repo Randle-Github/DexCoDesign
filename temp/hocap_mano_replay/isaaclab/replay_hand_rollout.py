@@ -78,7 +78,14 @@ def main(env_cfg, _agent_cfg) -> None:
         macro_block_size=None,
     )
     try:
+        # Viewer capture is asynchronous with direct state writes.  Updating
+        # Kit and the renderer explicitly keeps rgb_array from returning the
+        # stale black swapchain that headless jobs otherwise record.
+        simulation_app.update()
+        raw.sim.render()
         raw.render(recompute=True)
+        simulation_app.update()
+        raw.sim.render()
         raw.render(recompute=True)
         for frame_index in range(len(hand_q)):
             q = torch.as_tensor(
@@ -95,7 +102,17 @@ def main(env_cfg, _agent_cfg) -> None:
             raw.scene.write_data_to_sim()
             raw.sim.forward()
             raw.scene.update(dt=0.0)
-            writer.append_data(raw.render(recompute=True))
+            simulation_app.update()
+            raw.sim.render()
+            frame = np.asarray(raw.render(recompute=True)).copy()
+            if frame_index == 0:
+                print(
+                    "HAND_RENDER_FRAME "
+                    f"shape={frame.shape} min={int(frame.min())} "
+                    f"max={int(frame.max())} mean={float(frame.mean()):.3f}",
+                    flush=True,
+                )
+            writer.append_data(frame)
     finally:
         writer.close()
 
