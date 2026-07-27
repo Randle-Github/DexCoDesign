@@ -4,13 +4,16 @@ models:
   separate: False
   policy:
     class: GaussianMixin
-    # DirectRLEnv exposes an unbounded Box for integer action-space declarations.
-    # The environment clamps residuals to [-1, 1] in _pre_physics_step.
-    clip_actions: False
+    # Keep the sampled/stored PPO action identical to the normalized residual
+    # executed by the environment.
+    clip_actions: True
+    clip_mean_actions: True
     clip_log_std: True
-    min_log_std: -20.0
-    max_log_std: 2.0
-    initial_log_std: 0.0
+    # The reference already tracks well. Start with small residual exploration
+    # and prevent the policy from inflating its variance into action saturation.
+    min_log_std: -5.0
+    max_log_std: -1.0
+    initial_log_std: -2.0
     network:
       - name: net
         input: OBSERVATIONS
@@ -52,7 +55,7 @@ agent:
   ratio_clip: 0.2
   value_clip: 0.2
   clip_predicted_values: True
-  entropy_loss_scale: 0.01
+  entropy_loss_scale: 0.001
   value_loss_scale: 1.0
   kl_threshold: 0.0
   rewards_shaper_scale: 1.0

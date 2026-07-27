@@ -15,6 +15,7 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
+import gymnasium as gym
 import numpy as np
 import torch
 
@@ -58,7 +59,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # EgoEngine trains on randomly sampled 64-control-step windows and only
     # uses a full sequence for evaluation.
     episode_length_s = 64.0 / 30.0
-    action_space = 28
+    # The PPO action is the normalized residual itself. Keep its declared
+    # bounds identical to the residual executed by _pre_physics_step so the
+    # policy likelihood is evaluated on the action that reaches the robot.
+    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(28,), dtype=np.float32)
     observation_space = 63
     state_space = 0
 
