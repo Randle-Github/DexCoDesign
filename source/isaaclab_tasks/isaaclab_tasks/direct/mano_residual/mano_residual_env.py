@@ -232,9 +232,10 @@ class ManoResidualEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
-        if self.hand.num_joints != self.cfg.action_space:
+        self.action_dim = gym.spaces.flatdim(self.single_action_space)
+        if self.hand.num_joints != self.action_dim:
             raise RuntimeError(
-                f"Expected {self.cfg.action_space} MANO joints, found {self.hand.num_joints}: "
+                f"Expected {self.action_dim} MANO joints, found {self.hand.num_joints}: "
                 f"{self.hand.joint_names}"
             )
         missing = sorted(set(self._reference_joint_names) - set(self.hand.joint_names))
@@ -260,7 +261,7 @@ class ManoResidualEnv(DirectRLEnv):
 
         self.phase_buf = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.actions = torch.zeros(
-            (self.num_envs, self.cfg.action_space), dtype=torch.float, device=self.device
+            (self.num_envs, self.action_dim), dtype=torch.float, device=self.device
         )
         self.joint_targets = torch.zeros_like(self.actions)
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
