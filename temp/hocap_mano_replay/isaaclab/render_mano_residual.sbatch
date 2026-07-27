@@ -22,7 +22,7 @@ mkdir -p "${RUNTIME_LIB_DIR}"
 ln -sfn "${CONDA_PREFIX}/lib/libGLU.so.1" "${RUNTIME_LIB_DIR}/libGLU.so.1"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
-if [[ ! -f "${OUTPUT_ROOT}/assets/.egoengine_mass_scale_v2" ]]; then
+if [[ ! -f "${OUTPUT_ROOT}/assets/.egoengine_actuators_v3" ]]; then
   bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
 fi
 

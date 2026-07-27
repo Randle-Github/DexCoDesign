@@ -101,12 +101,25 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         ),
         init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
         actuators={
-            "all_joints": ImplicitActuatorCfg(
-                joint_names_expr=[".*"],
-                stiffness=120.0,
-                damping=8.0,
+            # EgoEngine's MANO model uses kp=1000 for the six virtual wrist
+            # joints and kp=300 for all articulated finger joints.  Its
+            # joints have unit armature and position actuators use a critical
+            # damping ratio.
+            "wrist": ImplicitActuatorCfg(
+                joint_names_expr=["left_pos_.*", "left_rot_.*"],
+                stiffness=1000.0,
+                damping=63.2455532,
                 effort_limit_sim=1000.0,
                 velocity_limit_sim=20.0,
+                armature=1.0,
+            ),
+            "fingers": ImplicitActuatorCfg(
+                joint_names_expr=["left_j_.*"],
+                stiffness=300.0,
+                damping=34.6410162,
+                effort_limit_sim=1000.0,
+                velocity_limit_sim=20.0,
+                armature=1.0,
             ),
         },
     )

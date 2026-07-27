@@ -9,8 +9,8 @@ mkdir -p "${ASSET_ROOT}"
   "${REPO_ROOT}/assets/robot_hands/direct_motor/mano/left/hand.urdf" \
   "${ASSET_ROOT}/mano_left.usd" \
   --fix-base \
-  --joint-stiffness 120 \
-  --joint-damping 8 \
+  --joint-stiffness 300 \
+  --joint-damping 34.6410162 \
   --joint-target-type position \
   --headless
 
@@ -27,4 +27,4 @@ mkdir -p "${ASSET_ROOT}"
   --mass 0.015 \
   --headless
 
-touch "${ASSET_ROOT}/.egoengine_mass_scale_v2"
+touch "${ASSET_ROOT}/.egoengine_actuators_v3"
