@@ -30,7 +30,8 @@ HAND_IDS=(
 HAND_ID="${HAND_IDS[${SLURM_ARRAY_TASK_ID}]}"
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
-RESULT_DIR="${OUTPUT_ROOT}/results/${HAND_ID}"
+RESULT_SET="${RESULT_SET:-results}"
+RESULT_DIR="${OUTPUT_ROOT}/${RESULT_SET}/${HAND_ID}"
 STATUS="${RESULT_DIR}/training_status.json"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
