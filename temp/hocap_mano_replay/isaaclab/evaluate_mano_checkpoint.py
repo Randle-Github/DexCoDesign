@@ -72,9 +72,6 @@ def main(env_cfg, experiment_cfg: dict) -> None:
     action_abs_sum = torch.zeros(raw_env.unwrapped.action_dim, device=raw_env.unwrapped.device)
     action_abs_max = torch.zeros_like(action_abs_sum)
     action_near_limit_count = torch.zeros_like(action_abs_sum)
-    residual_abs_max = torch.zeros_like(action_abs_sum)
-    residual_scale_fraction_sum = torch.zeros_like(action_abs_sum)
-    residual_reduced_direction_count = torch.zeros_like(action_abs_sum)
     reference_joint_limit_clip_count = torch.zeros_like(action_abs_sum)
     residual_joint_limit_clip_count = torch.zeros_like(action_abs_sum)
     target_joint_limit_clip_count = torch.zeros_like(action_abs_sum)
@@ -94,21 +91,9 @@ def main(env_cfg, experiment_cfg: dict) -> None:
             action_near_limit_count += (action_abs >= 0.95).to(torch.float32)
             phase_before_step = raw_env.unwrapped.phase_buf[0]
             reference_targets = raw_env.unwrapped.reference_hand_ctrl[phase_before_step]
-            applied_residual, selected_scale = (
-                raw_env.unwrapped._scale_residual_to_joint_limits(
-                    reference_targets[None, :],
-                    executed_actions,
-                )
+            unclamped_targets = (
+                reference_targets + raw_env.unwrapped.residual_scale * executed_actions[0]
             )
-            applied_residual = applied_residual[0]
-            selected_scale = selected_scale[0]
-            unclamped_targets = reference_targets + applied_residual
-            residual_abs_max = torch.maximum(residual_abs_max, applied_residual.abs())
-            scale_fraction = selected_scale / raw_env.unwrapped.residual_scale
-            residual_scale_fraction_sum += scale_fraction
-            residual_reduced_direction_count += (
-                scale_fraction < 1.0 - 1.0e-6
-            ).to(torch.float32)
             reference_outside_limits = (
                 (reference_targets < raw_env.unwrapped.joint_lower_limits[0])
                 | (reference_targets > raw_env.unwrapped.joint_upper_limits[0])
@@ -161,12 +146,7 @@ def main(env_cfg, experiment_cfg: dict) -> None:
     residual_joint_limit_clip_fraction = (
         residual_joint_limit_clip_count / max(action_sample_count, 1)
     )
-    residual_scale_fraction = (
-        residual_scale_fraction_sum / max(action_sample_count, 1)
-    )
-    residual_reduced_direction_fraction = (
-        residual_reduced_direction_count / max(action_sample_count, 1)
-    )
+    residual_abs_max = action_abs_max * raw_env.unwrapped.residual_scale
     joint_names = list(raw_env.unwrapped.hand.joint_names)
 
     def group_summary(start: int, stop: int) -> dict[str, float]:
@@ -177,12 +157,6 @@ def main(env_cfg, experiment_cfg: dict) -> None:
                 action_near_limit_fraction[start:stop].mean().item()
             ),
             "residual_abs_max": float(residual_abs_max[start:stop].amax().item()),
-            "residual_scale_fraction": float(
-                residual_scale_fraction[start:stop].mean().item()
-            ),
-            "residual_reduced_direction_fraction": float(
-                residual_reduced_direction_fraction[start:stop].mean().item()
-            ),
             "joint_limit_clip_fraction": float(
                 target_joint_limit_clip_fraction[start:stop].mean().item()
             ),
@@ -207,12 +181,6 @@ def main(env_cfg, experiment_cfg: dict) -> None:
                     action_near_limit_fraction[index].item()
                 ),
                 "residual_abs_max": float(residual_abs_max[index].item()),
-                "residual_scale_fraction": float(
-                    residual_scale_fraction[index].item()
-                ),
-                "residual_reduced_direction_fraction": float(
-                    residual_reduced_direction_fraction[index].item()
-                ),
                 "joint_limit_clip_fraction": float(
                     target_joint_limit_clip_fraction[index].item()
                 ),

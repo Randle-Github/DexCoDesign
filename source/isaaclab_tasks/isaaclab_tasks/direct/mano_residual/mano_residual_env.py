@@ -295,8 +295,6 @@ class ManoResidualEnv(DirectRLEnv):
         self.actions = torch.zeros(
             (self.num_envs, self.action_dim), dtype=torch.float, device=self.device
         )
-        self.applied_residual = torch.zeros_like(self.actions)
-        self.applied_residual_scale = torch.zeros_like(self.actions)
         self.joint_targets = torch.zeros_like(self.actions)
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
@@ -435,32 +433,10 @@ class ManoResidualEnv(DirectRLEnv):
             "object-hand and object-support pairs remain enabled"
         )
 
-    def _scale_residual_to_joint_limits(
-        self,
-        base_targets: torch.Tensor,
-        actions: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Scale each action direction by the feasible residual to its joint limit."""
-        positive_margin = torch.clamp(
-            self.joint_upper_limits - base_targets,
-            min=0.0,
-        )
-        negative_margin = torch.clamp(
-            base_targets - self.joint_lower_limits,
-            min=0.0,
-        )
-        positive_scale = torch.minimum(self.residual_scale, positive_margin)
-        negative_scale = torch.minimum(self.residual_scale, negative_margin)
-        selected_scale = torch.where(actions >= 0.0, positive_scale, negative_scale)
-        return actions * selected_scale, selected_scale
-
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = torch.clamp(actions, -1.0, 1.0)
         base_targets = self.reference_hand_ctrl[self.phase_buf]
-        self.applied_residual, self.applied_residual_scale = (
-            self._scale_residual_to_joint_limits(base_targets, self.actions)
-        )
-        targets = base_targets + self.applied_residual
+        targets = base_targets + self.residual_scale * self.actions
         self.joint_targets = torch.clamp(
             targets,
             self.joint_lower_limits,
@@ -597,10 +573,9 @@ class ManoResidualEnv(DirectRLEnv):
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
         self._pose_episode_return += pose_tracking_reward
-        finger_residual = self.applied_residual[:, 6:].abs()
-        finger_scale_fraction = (
-            self.applied_residual_scale[:, 6:] / self.residual_scale[None, 6:]
-        )
+        finger_residual = (
+            self.actions[:, 6:] * self.residual_scale[6:]
+        ).abs()
         log = {
             "object_position_error_m": self._object_position_error.mean(),
             "object_rotation_error_rad": self._object_rotation_error.mean(),
@@ -616,10 +591,6 @@ class ManoResidualEnv(DirectRLEnv):
             "other_finger_object_contact_force_n": other_finger_force.mean(),
             "finger_residual_abs_mean_rad": finger_residual.mean(),
             "finger_residual_abs_max_rad": finger_residual.amax(dim=-1).mean(),
-            "finger_residual_scale_fraction": finger_scale_fraction.mean(),
-            "finger_residual_reduced_direction_fraction": (
-                finger_scale_fraction < 1.0 - 1.0e-6
-            ).to(torch.float32).mean(),
             "reference_phase_fraction": (
                 self.phase_buf.to(torch.float32).mean()
                 / float(self._reference_length - 1)

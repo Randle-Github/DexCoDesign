@@ -73,18 +73,6 @@ ctrl[t] = ctrl_ref[t] + action[t] * action_scale
 observation[t] = [hand_q[t], object_pose[t], ctrl_ref[t]]
 ```
 
-The scale is computed independently for each joint and action direction:
-
-```text
-positive_scale = min(action_scale, joint_upper - ctrl_ref[t])
-negative_scale = min(action_scale, ctrl_ref[t] - joint_lower)
-```
-
-Positive actions use `positive_scale`; negative actions use `negative_scale`.
-Directions with sufficient joint-limit margin keep the nominal residual range,
-while only the direction approaching a physical limit is reduced. The final
-joint-limit clamp remains as a numerical safety guard.
-
 Training samples 64-control-step windows. Residual actions allow up to 4 cm
 of wrist translation, 0.30 rad of wrist rotation, and 0.15 rad for finger
 joints.
