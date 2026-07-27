@@ -73,8 +73,9 @@ ctrl[t] = ctrl_ref[t] + action[t] * action_scale
 observation[t] = [hand_q[t], object_pose[t], ctrl_ref[t]]
 ```
 
-Training samples 64-control-step windows. Residual actions allow up to 5 cm
-of wrist translation and 0.30 rad for both wrist rotation and finger joints.
+Training samples 64-control-step windows. Residual actions allow up to 4 cm
+of wrist translation, 0.30 rad of wrist rotation, and 0.15 rad for finger
+joints.
 The object-mass scaling, object-pose C-error reward, binary
 thumb-plus-other-fingertip contact reward, and PPO hyperparameters follow the
 Aria residual-RL configuration.
