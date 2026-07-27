@@ -14,6 +14,7 @@ set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_mano_residual"
 RESULT_PATH="${OUTPUT_ROOT}/diagnostics/zero_residual_official_joints.json"
+FULL_REFERENCE="${FULL_REFERENCE:-0}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -29,6 +30,13 @@ if [[ ! -f "${OUTPUT_ROOT}/assets/.egoengine_mass_scale_v2" ]]; then
   bash temp/hocap_mano_replay/isaaclab/prepare_assets.sh
 fi
 
+EXTRA_ARGS=()
+if [[ "${FULL_REFERENCE}" == "1" ]]; then
+  RESULT_PATH="${OUTPUT_ROOT}/diagnostics/zero_residual_official_joints_full.json"
+  EXTRA_ARGS+=(--ignore-early-termination)
+fi
+
 ./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/diagnose_zero_residual.py \
   --output "${RESULT_PATH}" \
+  "${EXTRA_ARGS[@]}" \
   --headless

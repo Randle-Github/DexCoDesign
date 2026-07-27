@@ -15,6 +15,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--task", default="DexCoDesign-MANO-Residual-Direct-Eval-v0")
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument(
+    "--ignore-early-termination",
+    action="store_true",
+    help="Replay the full reference while still reporting the first threshold failure.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 sys.argv = [sys.argv[0]] + hydra_args
@@ -33,6 +38,11 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 def main(env_cfg, _experiment_cfg: dict) -> None:
     env_cfg.scene.num_envs = 1
     env_cfg.seed = args_cli.seed
+    position_threshold = float(env_cfg.object_failure_distance)
+    orientation_threshold = float(env_cfg.object_failure_orientation)
+    if args_cli.ignore_early_termination:
+        env_cfg.object_failure_distance = float("inf")
+        env_cfg.object_failure_orientation = float("inf")
     env = gym.make(args_cli.task, cfg=env_cfg)
     raw = env.unwrapped
     env.reset()
@@ -68,6 +78,24 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                     "pinch_contact": bool(pinch_contact[0].item()),
                     "thumb_force_n": float(thumb_force[0].item()),
                     "other_force_n": float(other_force[0].item()),
+                    "hand_q_abs_error_mean_rad": float(
+                        (
+                            raw.hand.data.joint_pos[0]
+                            - raw.reference_hand_q[raw._last_evaluated_phase[0]]
+                        )
+                        .abs()
+                        .mean()
+                        .item()
+                    ),
+                    "hand_q_abs_error_max_rad": float(
+                        (
+                            raw.hand.data.joint_pos[0]
+                            - raw.reference_hand_q[raw._last_evaluated_phase[0]]
+                        )
+                        .abs()
+                        .max()
+                        .item()
+                    ),
                 }
             )
             if bool(torch.as_tensor(terminated).any().item()) or bool(
@@ -76,17 +104,42 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                 break
 
     last = trace[-1]
+    threshold_failures = [
+        row
+        for row in trace
+        if row["position_error_m"] > position_threshold
+        or row["rotation_error_rad"] > orientation_threshold
+    ]
     result = {
         "steps": len(trace),
         "last_phase": last["phase"],
-        "terminated": bool(
-            last["position_error_m"] > raw.cfg.object_failure_distance
-            or last["rotation_error_rad"]
-            > raw.cfg.object_failure_orientation
+        "position_threshold_m": position_threshold,
+        "orientation_threshold_rad": orientation_threshold,
+        "first_threshold_failure_phase": (
+            threshold_failures[0]["phase"] if threshold_failures else None
         ),
         "pinch_contact_steps": sum(row["pinch_contact"] for row in trace),
         "thumb_contact_steps": sum(row["thumb_contact"] for row in trace),
         "other_contact_steps": sum(row["other_contact"] for row in trace),
+        "first_thumb_contact_phase": next(
+            (row["phase"] for row in trace if row["thumb_contact"]),
+            None,
+        ),
+        "first_other_contact_phase": next(
+            (row["phase"] for row in trace if row["other_contact"]),
+            None,
+        ),
+        "first_pinch_contact_phase": next(
+            (row["phase"] for row in trace if row["pinch_contact"]),
+            None,
+        ),
+        "mean_hand_q_abs_error_rad": sum(
+            row["hand_q_abs_error_mean_rad"] for row in trace
+        )
+        / len(trace),
+        "max_hand_q_abs_error_rad": max(
+            row["hand_q_abs_error_max_rad"] for row in trace
+        ),
         "last": last,
         "trace": trace,
     }
