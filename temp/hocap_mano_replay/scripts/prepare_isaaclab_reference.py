@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 
+import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -17,8 +18,11 @@ REPO_ROOT = EXPERIMENT_ROOT.parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from replay_mujoco import (  # noqa: E402
+    HAND_URDF,
+    MANO_TIP_LINKS,
     SEQUENCE_ROOT,
     URDF_CANONICAL_ROTATION,
+    mano_fingertip_offsets,
 )
 from retarget_all_hands import (  # noqa: E402
     CACHE_ROOT,
@@ -62,6 +66,36 @@ FINGER_JOINT_NAMES = (
     "left_j_thumb2z",
     "left_j_thumb3",
 )
+POLICY_FINGERS = ("thumb", "index")
+
+
+def reference_fingertip_poses(
+    hand_q: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate the reference thumb/index tip poses in the direct-motor model."""
+    model = mujoco.MjModel.from_xml_path(str(HAND_URDF))
+    data = mujoco.MjData(model)
+    joint_names = ROOT_JOINT_NAMES + FINGER_JOINT_NAMES
+    qpos_ids = np.asarray(
+        [model.joint(name).qposadr[0] for name in joint_names],
+        dtype=int,
+    )
+    link_names = np.asarray([MANO_TIP_LINKS[finger] for finger in POLICY_FINGERS])
+    body_ids = [model.body(link_name).id for link_name in link_names]
+    offsets_by_finger = mano_fingertip_offsets()
+    offsets = np.stack([offsets_by_finger[finger] for finger in POLICY_FINGERS])
+    poses = np.empty((len(hand_q), len(POLICY_FINGERS), 7), dtype=np.float32)
+
+    for frame_id, q in enumerate(hand_q):
+        data.qpos[qpos_ids] = q
+        mujoco.mj_forward(model, data)
+        for tip_id, (body_id, offset) in enumerate(zip(body_ids, offsets)):
+            rotation = np.asarray(data.xmat[body_id]).reshape(3, 3)
+            poses[frame_id, tip_id, :3] = data.xpos[body_id] + rotation @ offset
+            # MuJoCo and Isaac Lab both expose body quaternions as wxyz.
+            poses[frame_id, tip_id, 3:] = data.xquat[body_id]
+
+    return poses, link_names, offsets.astype(np.float32)
 
 
 def build_reference(
@@ -132,6 +166,9 @@ def build_reference(
         (local_translation, local_euler_xyz, solved_finger_q),
         axis=1,
     )
+    fingertip_pose_wxyz, fingertip_link_names, fingertip_offsets = (
+        reference_fingertip_poses(hand_q)
+    )
 
     # HO-Cap stores object pose as xyzw quaternion followed by translation.
     object_pose_wxyz = np.concatenate(
@@ -151,6 +188,9 @@ def build_reference(
             # warm-started IK target is the initial ctrl_ref.
             "hand_ctrl": hand_q.astype(np.float32),
             "object_pose_wxyz": object_pose_wxyz.astype(np.float32),
+            "fingertip_pose_wxyz": fingertip_pose_wxyz,
+            "fingertip_link_names": fingertip_link_names,
+            "fingertip_offsets": fingertip_offsets,
             "fps": np.asarray(30.0, dtype=np.float32),
         },
         {

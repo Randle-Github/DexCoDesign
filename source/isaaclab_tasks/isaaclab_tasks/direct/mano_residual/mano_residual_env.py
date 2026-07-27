@@ -28,7 +28,7 @@ from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.utils.math import quat_error_magnitude
+from isaaclab.utils.math import quat_apply, quat_error_magnitude
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -63,7 +63,11 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # bounds identical to the residual executed by _pre_physics_step so the
     # policy likelihood is evaluated on the action that reaches the robot.
     action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(28,), dtype=np.float32)
-    observation_space = 63
+    # EgoEngine-style goal conditioning:
+    # current q (28), current thumb/index tip positions (6), current object
+    # pose (7), goal thumb/index tip poses (14), goal q (28), goal object
+    # pose (7).
+    observation_space = 90
     state_space = 0
 
     sim: SimulationCfg = SimulationCfg(
@@ -228,6 +232,26 @@ class ManoResidualEnv(DirectRLEnv):
             )
         self._reference_hand_ctrl_cpu = torch.from_numpy(reference["hand_ctrl"])
         self._reference_object_pose_cpu = torch.from_numpy(reference["object_pose_wxyz"])
+        required_fingertip_keys = (
+            "fingertip_pose_wxyz",
+            "fingertip_link_names",
+            "fingertip_offsets",
+        )
+        missing_fingertip_keys = [
+            key for key in required_fingertip_keys if key not in reference
+        ]
+        if missing_fingertip_keys:
+            raise RuntimeError(
+                f"{REFERENCE_PATH} is missing {missing_fingertip_keys}; regenerate "
+                "the EgoEngine-style reference before training"
+            )
+        self._reference_fingertip_pose_cpu = torch.from_numpy(
+            reference["fingertip_pose_wxyz"]
+        )
+        self._reference_fingertip_link_names = reference[
+            "fingertip_link_names"
+        ].tolist()
+        self._fingertip_offsets_cpu = torch.from_numpy(reference["fingertip_offsets"])
         self._reference_length = len(self._reference_hand_q_cpu)
 
         super().__init__(cfg, render_mode, **kwargs)
@@ -248,6 +272,10 @@ class ManoResidualEnv(DirectRLEnv):
             self.device
         )
         self.reference_object_pose = self._reference_object_pose_cpu.to(self.device)
+        self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
+            self.device
+        )
+        self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
 
         limits = self.hand.root_physx_view.get_dof_limits().to(self.device)
         self.joint_lower_limits = limits[..., 0]
@@ -276,6 +304,18 @@ class ManoResidualEnv(DirectRLEnv):
         self._last_diagnostic_phase = -1
         self._palm_body_index = self.hand.body_names.index("left_palm")
         self._middle_tip_body_index = self.hand.body_names.index("left_middle3")
+        missing_fingertip_links = sorted(
+            set(self._reference_fingertip_link_names) - set(self.hand.body_names)
+        )
+        if missing_fingertip_links:
+            raise RuntimeError(
+                "Reference fingertip links missing from imported MANO articulation: "
+                f"{missing_fingertip_links}"
+            )
+        self._fingertip_body_indices = [
+            self.hand.body_names.index(name)
+            for name in self._reference_fingertip_link_names
+        ]
 
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
@@ -351,6 +391,22 @@ class ManoResidualEnv(DirectRLEnv):
     def _get_observations(self) -> dict[str, torch.Tensor]:
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
         object_pose = torch.cat((object_pos, self.object.data.root_quat_w), dim=-1)
+        fingertip_body_quat = self.hand.data.body_quat_w[
+            :, self._fingertip_body_indices
+        ]
+        fingertip_body_pos = (
+            self.hand.data.body_pos_w[:, self._fingertip_body_indices]
+            - self.scene.env_origins[:, None, :]
+        )
+        fingertip_offset_w = quat_apply(
+            fingertip_body_quat.reshape(-1, 4),
+            self.fingertip_offsets[None, :, :]
+            .expand(self.num_envs, -1, -1)
+            .reshape(-1, 3),
+        ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
+        fingertip_pos = fingertip_body_pos + fingertip_offset_w
+        goal_fingertip_pose = self.reference_fingertip_pose[self.phase_buf]
+        goal_object_pose = self.reference_object_pose[self.phase_buf]
         if self.cfg.log_rollout_diagnostics and self.num_envs == 1:
             phase_index = int(self.phase_buf[0].item())
             if phase_index != self._last_diagnostic_phase and (
@@ -377,8 +433,11 @@ class ManoResidualEnv(DirectRLEnv):
         observation = torch.cat(
             (
                 self.hand.data.joint_pos,
+                fingertip_pos.flatten(start_dim=1),
                 object_pose,
-                self.reference_hand_ctrl[self.phase_buf],
+                goal_fingertip_pose.flatten(start_dim=1),
+                self.reference_hand_q[self.phase_buf],
+                goal_object_pose,
             ),
             dim=-1,
         )
