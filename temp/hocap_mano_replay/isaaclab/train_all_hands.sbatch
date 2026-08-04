@@ -37,9 +37,23 @@ MAX_ITERATIONS="${MAX_ITERATIONS:-300}"
 TOTAL_ITERATIONS_BUDGET="${TOTAL_ITERATIONS_BUDGET:-${MAX_ITERATIONS}}"
 RESUME_FROM_RESULT="${RESUME_FROM_RESULT:-0}"
 RUN_SEED="${RUN_SEED:-42}"
+NUM_ENVS_PER_HAND="${NUM_ENVS_PER_HAND:-1024}"
+ALLOW_UNSAFE_HIGH_ENVS="${ALLOW_UNSAFE_HIGH_ENVS:-0}"
 RUN_LABEL="${HAND_ID}_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
 SUCCESS_TRAJECTORY="${RESULT_DIR}/successful_rollout.npz"
 BEST_TRAJECTORY="${RESULT_DIR}/farthest_rollout.npz"
+
+if [[ ! "${NUM_ENVS_PER_HAND}" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'NUM_ENVS_PER_HAND must be a positive integer, got %s.\n' \
+    "${NUM_ENVS_PER_HAND}" >&2
+  exit 2
+fi
+if (( NUM_ENVS_PER_HAND > 8192 )) && [[ "${ALLOW_UNSAFE_HIGH_ENVS}" != "1" ]]; then
+  printf 'Refusing NUM_ENVS_PER_HAND=%s: MANO at 16384 overflowed the PhysX GPU patch buffer. ' \
+    "${NUM_ENVS_PER_HAND}" >&2
+  printf 'Increase and validate the PhysX contact buffers first, or explicitly set ALLOW_UNSAFE_HIGH_ENVS=1.\n' >&2
+  exit 2
+fi
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -51,6 +65,11 @@ export HAND_BEST_ROLLOUT_PATH="${BEST_TRAJECTORY}"
 RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${RESULT_DIR}" "${OUTPUT_ROOT}/slurm"
+printf '{"hand_id":"%s","num_envs":%s,"max_iterations":%s,"total_iterations_budget":%s,"seed":%s,"gpu_concurrency":%s,"slurm_job_id":"%s","slurm_array_task_id":"%s"}\n' \
+  "${HAND_ID}" "${NUM_ENVS_PER_HAND}" "${MAX_ITERATIONS}" \
+  "${TOTAL_ITERATIONS_BUDGET}" "${RUN_SEED}" "${GPU_CONCURRENCY:-1}" \
+  "${SLURM_JOB_ID:-}" \
+  "${SLURM_ARRAY_TASK_ID}" > "${RESULT_DIR}/training_config.json"
 
 if [[ ! -f "${OUTPUT_ROOT}/assets/.all_hands_original_human_v2" ]]; then
   printf 'All-hand assets are not ready: %s\n' "${OUTPUT_ROOT}/assets" >&2
@@ -87,7 +106,7 @@ set +e
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py \
   --task DexCoDesign-Hand-Residual-Direct-v0 \
   --algorithm PPO \
-  --num_envs 1024 \
+  --num_envs "${NUM_ENVS_PER_HAND}" \
   --max_iterations "${MAX_ITERATIONS}" \
   --seed "${RUN_SEED}" \
   --headless \

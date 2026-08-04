@@ -26,6 +26,7 @@ export OMNI_KIT_ACCEPT_EULA=YES
 export DEXCODESIGN_HAND_ID=mano
 export NCCL_DEBUG=WARN
 export PYTHONUNBUFFERED=1
+export TERM=xterm
 RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${RESULT_DIR}" "${RESULT_ROOT}/slurm"
@@ -78,6 +79,9 @@ kill "${GPU_MONITOR_PID}" >/dev/null 2>&1 || true
 trap - EXIT
 
 ELAPSED_SECONDS=$((END_SECONDS - START_SECONDS))
+if (( ELAPSED_SECONDS < 1 )); then
+  ELAPSED_SECONDS=1
+fi
 GLOBAL_ENVS=$((WORLD_SIZE * ENVS_PER_RANK))
 TRANSITIONS=$((GLOBAL_ENVS * 16 * MAX_ITERATIONS))
 # DDP creates one experiment directory per rank. Only rank zero owns the saved
