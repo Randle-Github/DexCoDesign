@@ -53,6 +53,10 @@ if [[ "${WORLD_SIZE}" == "1" ]]; then
     "agent.agent.experiment.experiment_name=${RUN_LABEL}"
   TRAIN_EXIT=$?
 else
+  # Isaac Lab's documented workaround for restricted / virtualized GPU peer access.
+  # It is required on the Skynet nodes used by this benchmark; NCCL still performs
+  # the official DDP collectives through its supported fallback transport.
+  export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
   ./isaaclab.sh -p -m torch.distributed.run \
     --standalone \
     --nnodes=1 \
@@ -76,8 +80,11 @@ trap - EXIT
 ELAPSED_SECONDS=$((END_SECONDS - START_SECONDS))
 GLOBAL_ENVS=$((WORLD_SIZE * ENVS_PER_RANK))
 TRANSITIONS=$((GLOBAL_ENVS * 16 * MAX_ITERATIONS))
+# DDP creates one experiment directory per rank. Only rank zero owns the saved
+# checkpoints, so select that directory instead of relying on timestamp ordering.
 RUN_DIR="$(find logs/skrl/mano_residual -mindepth 1 -maxdepth 1 \
-  -type d -name "*_${RUN_LABEL}" -print | sort | tail -n 1)"
+  -type d -name "*_${RUN_LABEL}" -exec test -d '{}/checkpoints' ';' -print \
+  | sort | tail -n 1)"
 printf '%s\n' "${RUN_DIR}" > "${RESULT_DIR}/run_dir.txt"
 printf '{"exit_code":%s,"elapsed_seconds":%s,"transitions":%s,"samples_per_second":%.6f,"run_dir":"%s"}\n' \
   "${TRAIN_EXIT}" "${ELAPSED_SECONDS}" "${TRANSITIONS}" \
