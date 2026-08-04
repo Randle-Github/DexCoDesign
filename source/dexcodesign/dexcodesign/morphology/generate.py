@@ -19,8 +19,13 @@ ROOT = HERE.parents[3]
 ARTIFACT_ROOT = ROOT / "artifacts" / "hand_morphology"
 SOURCE_GRAPHS = ARTIFACT_ROOT / "reference_graphs.json"
 LIBRARY = ARTIFACT_ROOT / "mechanism_bundles.json"
-OUTPUT = ARTIFACT_ROOT / "generated_100" / "hand_ir.json"
-AUDIT = ARTIFACT_ROOT / "generated_100" / "generation_summary.json"
+GENERATED_ROOT = Path(
+    os.environ.get(
+        "HAND_GENERATION_ROOT", str(ARTIFACT_ROOT / "generated_100")
+    )
+)
+OUTPUT = GENERATED_ROOT / "hand_ir.json"
+AUDIT = GENERATED_ROOT / "generation_summary.json"
 ASSET_ROOT = ROOT / "assets" / "robot_hands"
 DIRECT_REGISTRY = ASSET_ROOT / "direct_motor" / "registry.json"
 DIGITS = ("thumb", "index", "middle", "ring", "pinky")
@@ -230,6 +235,7 @@ def vary_attachment_layout(
     rng: np.random.Generator,
     target_slots: dict[str, dict],
     palm_rotation: np.ndarray,
+    expansion: float = 1.0,
 ) -> list[dict]:
     """Move graph attachment frames a small distance along the palm edge.
 
@@ -247,7 +253,7 @@ def vary_attachment_layout(
         outward = normalize(slot["frame"][:, 2], np.asarray([0.0, 0.0, 1.0]))
         tangent = normalize(np.cross(palm_normal, outward), palm_rotation[:, 0])
         limit = (0.035 if role == "thumb" else 0.045) * layout_scale
-        offset = float(rng.uniform(-limit, limit))
+        offset = expansion * float(rng.uniform(-limit, limit))
         slot["anchor"] = slot["anchor"] + offset * tangent
         edits.append({
             "role": role,
@@ -300,6 +306,7 @@ def apply_global_palm_layout(
     palm_rotation: np.ndarray,
     mode: str,
     palm_bounds_local_xz: np.ndarray | None = None,
+    palm_expansion: float | None = None,
 ) -> dict:
     """House of Dextra style discrete-slot motor placement.
 
@@ -310,6 +317,10 @@ def apply_global_palm_layout(
     """
     if mode not in PALM_LAYOUT_MODES:
         raise ValueError(f"unknown palm layout mode {mode!r}")
+    if palm_expansion is not None and not 0.0 <= palm_expansion <= 1.0:
+        raise ValueError(
+            f"palm_expansion must lie in [0, 1], got {palm_expansion}"
+        )
     for slot in target_slots.values():
         slot["reference_anchor"] = slot["anchor"].copy()
         slot["reference_frame"] = slot["frame"].copy()
@@ -323,10 +334,12 @@ def apply_global_palm_layout(
             "minimum_arc_clearance": None,
             "source_order_locked": True,
             "attachment_poses_locked": True,
+            "palm_expansion": 0.0,
             "thickness_scale_locked": 1.0,
         }
 
     if mode == "anthropomorphic":
+        resolved_expansion = 1.0 if palm_expansion is None else palm_expansion
         roles = list(target_slots)
         before = np.asarray([
             [np.dot(target_slots[role]["anchor"], palm_rotation[:, 0]),
@@ -334,7 +347,9 @@ def apply_global_palm_layout(
             for role in roles
         ])
         source_order = canonical_cyclic_roles(roles, before)
-        edits = vary_attachment_layout(rng, target_slots, palm_rotation)
+        edits = vary_attachment_layout(
+            rng, target_slots, palm_rotation, resolved_expansion
+        )
         after = np.asarray([
             [np.dot(target_slots[role]["anchor"], palm_rotation[:, 0]),
              np.dot(target_slots[role]["anchor"], palm_rotation[:, 2])]
@@ -349,6 +364,7 @@ def apply_global_palm_layout(
             "source_cyclic_roles": source_order,
             "target_cyclic_roles": target_order,
             "cyclic_order_preserved": True,
+            "palm_expansion": resolved_expansion,
             "slot_count": None,
             "mount_slots": None,
             "minimum_arc_clearance": None,
@@ -474,7 +490,11 @@ def apply_global_palm_layout(
         center_z + radii * np.sin(angles),
     ])
     source_centers = local.copy()
-    requested_blend = float(rng.uniform(0.52, 0.66))
+    requested_blend = (
+        float(rng.uniform(0.52, 0.66))
+        if palm_expansion is None
+        else palm_expansion
+    )
 
     def blended_clearance(alpha: float) -> tuple[np.ndarray, float]:
         centers = source_centers + alpha * (house_centers - source_centers)
@@ -487,7 +507,7 @@ def apply_global_palm_layout(
 
     layout_blend = requested_blend
     blended_centers, actual_clearance = blended_clearance(layout_blend)
-    if actual_clearance < -1.0e-8:
+    if actual_clearance < -1.0e-8 and palm_expansion is None:
         for candidate_blend in np.linspace(requested_blend, 0.86, 35):
             candidate_centers, candidate_clearance = blended_clearance(float(candidate_blend))
             if candidate_clearance >= -1.0e-8:
@@ -497,6 +517,11 @@ def apply_global_palm_layout(
                 break
         else:
             raise ValueError("source/House blended layout cannot satisfy motor clearance")
+    elif actual_clearance < -1.0e-8:
+        raise ValueError(
+            f"palm_expansion={requested_blend:.6g} violates motor clearance "
+            f"by {-actual_clearance:.6g} canonical length units"
+        )
 
     edits = []
     for index, (role, angle, radius) in enumerate(zip(roles, angles, radii)):
@@ -551,6 +576,7 @@ def apply_global_palm_layout(
         "minimum_actual_motor_clearance": actual_clearance,
         "requested_source_house_blend": requested_blend,
         "source_house_blend": layout_blend,
+        "palm_expansion": layout_blend,
         "maximum_attachment_displacement": float(np.max(
             np.linalg.norm(blended_centers - source_centers, axis=1)
         )),
@@ -751,6 +777,24 @@ def finalize_graph(parts: list[dict]) -> None:
 
 def main() -> int:
     generation_seed = int(os.environ.get("HAND_GENERATION_SEED", "20260718"))
+    palm_expansion_text = os.environ.get("HAND_PALM_EXPANSION")
+    palm_expansion = (
+        None if palm_expansion_text is None else float(palm_expansion_text)
+    )
+    if palm_expansion is not None and not 0.0 <= palm_expansion <= 1.0:
+        raise ValueError(
+            f"HAND_PALM_EXPANSION must lie in [0, 1], got {palm_expansion}"
+        )
+    graph_spec_path = os.environ.get("HAND_GRAPH_SPEC_PATH")
+    if graph_spec_path is None:
+        design_specs: list[dict] = [{} for _ in range(100)]
+    else:
+        graph_payload = json.loads(Path(graph_spec_path).read_text(encoding="utf-8"))
+        design_specs = graph_payload.get("hands", [graph_payload])
+        if not isinstance(design_specs, list) or not design_specs:
+            raise ValueError("graph specification must contain one or more hands")
+        if not all(isinstance(spec, dict) for spec in design_specs):
+            raise ValueError("every graph hand specification must be an object")
     rng = np.random.default_rng(generation_seed)
     source_payload = json.loads(SOURCE_GRAPHS.read_text(encoding="utf-8"))
     sources = {hand["hand_id"]: hand for hand in source_payload["hands"]}
@@ -777,33 +821,59 @@ def main() -> int:
         }
         if complete:
             eligible_palms.append(hand_id)
-    missing_registry_sources = sorted(set(direct_registry["hands"]) - set(source_coverage))
+    # The direct-motor registry may contain other articulated assets (for
+    # example experimental feet) that intentionally have no hand-morphology
+    # scaffold. Only sources declared by the hand grammar require coverage.
+    non_morphology_registry_sources = sorted(
+        set(direct_registry["hands"]) - set(source_coverage)
+    )
     ineligible_sources = sorted(
         hand_id for hand_id, record in source_coverage.items()
         if not record["eligible"]
     )
-    if missing_registry_sources or ineligible_sources:
+    if ineligible_sources:
         raise ValueError(
             "source coverage is incomplete: "
-            f"missing={missing_registry_sources}, ineligible={ineligible_sources}"
+            f"ineligible={ineligible_sources}"
         )
 
     hands = []
     graph_modes = ("geometry_only",)
-    for index in range(100):
+    for index, design_spec in enumerate(design_specs):
         mode = graph_modes[0]
-        requested_layout_mode = ("anthropomorphic", "symmetric", "asymmetric")[index % 3]
+        palm_spec = design_spec.get("palm", {})
+        finger_spec = design_spec.get("fingers", {})
+        if not isinstance(palm_spec, dict) or not isinstance(finger_spec, dict):
+            raise ValueError("palm and fingers graph parameters must be objects")
+        requested_layout_mode = palm_spec.get(
+            "layout_mode",
+            ("anthropomorphic", "symmetric", "asymmetric")[index % 3],
+        )
         seed_pool = eligible_palms
-        seed_id = seed_pool[index % len(seed_pool)]
+        seed_id = design_spec.get(
+            "source_hand", seed_pool[index % len(seed_pool)]
+        )
+        if seed_id not in seed_pool:
+            raise ValueError(
+                f"unknown or ineligible source_hand {seed_id!r}; "
+                f"choose one of {seed_pool}"
+            )
         seed = sources[seed_id]
         # Large radial rearrangements are incompatible with a fixed tendon or
         # underactuated transmission platform. Keep those hands on the bounded
         # anthropomorphic palm-edit path; other sources retain all three modes.
-        layout_mode = (
-            "anthropomorphic"
-            if seed_id in BOUNDED_PALM_LAYOUT_SOURCES
-            else requested_layout_mode
-        )
+        if (
+            seed_id in BOUNDED_PALM_LAYOUT_SOURCES
+            and requested_layout_mode not in {"source_fixed", "anthropomorphic"}
+        ):
+            if graph_spec_path is not None:
+                raise ValueError(
+                    f"{seed_id} only permits source_fixed or anthropomorphic "
+                    "palm layouts because its transmission platform is bounded"
+                )
+            layout_mode = "anthropomorphic"
+        else:
+            layout_mode = requested_layout_mode
         source_roles = [role for role in DIGITS if f"{seed_id}:{role}" in bundles]
         base_roles = list(source_roles)
         selected = {role: deepcopy(bundles[f"{seed_id}:{role}"]) for role in base_roles}
@@ -819,10 +889,14 @@ def main() -> int:
             sx = sy = sz = 1.0
             yaw = 0.0
         else:
-            sx = float(rng.uniform(0.93, 1.10))
+            sx = float(palm_spec.get("scale_x", rng.uniform(0.93, 1.10)))
             sy = 1.0
-            sz = float(rng.uniform(0.92, 1.13))
-            yaw = float(rng.uniform(-0.16, 0.16))
+            sz = float(palm_spec.get("scale_z", rng.uniform(0.92, 1.13)))
+            yaw = float(palm_spec.get("yaw", rng.uniform(-0.16, 0.16)))
+        if not 0.75 <= sx <= 1.35 or not 0.75 <= sz <= 1.35:
+            raise ValueError("palm scale_x and scale_z must lie in [0.75, 1.35]")
+        if not -0.35 <= yaw <= 0.35:
+            raise ValueError("palm yaw must lie in [-0.35, 0.35] radians")
         rotation = rot_z(yaw)
         palm_linear = rotation @ np.diag([sx, sy, sz])
         actions.append({
@@ -925,19 +999,51 @@ def main() -> int:
         target_slots = {role: transformed_slot(slot, palm_linear, rotation) for role, slot in base_slots.items()}
         source_palm_bounds = np.asarray(root["mesh"]["bounds"], dtype=float)[:, [0, 2]]
         palm_bounds_local_xz = source_palm_bounds * np.asarray([sx, sz])
+        design_palm_expansion = palm_spec.get(
+            "expansion", palm_expansion
+        )
+        if design_palm_expansion is not None:
+            design_palm_expansion = float(design_palm_expansion)
         palm_layout = apply_global_palm_layout(
             rng, target_slots, selected, candidates, rotation, layout_mode,
             palm_bounds_local_xz=palm_bounds_local_xz,
+            palm_expansion=design_palm_expansion,
         )
         actions.append({
             "operation": "APPLY_GLOBAL_PALM_LAYOUT",
             **palm_layout,
         })
         slots = []
+        realized_finger_parameters = {}
         for slot_id, role in enumerate(base_roles):
             bundle = selected[role]
-            length_scale = float(rng.uniform(0.87, 1.17))
-            radius_scale = float(rng.uniform(0.88, 1.14))
+            role_spec = finger_spec.get(role, {})
+            if not isinstance(role_spec, dict):
+                raise ValueError(f"finger specification for {role} must be an object")
+            length_scale = float(
+                role_spec.get(
+                    "length_scale",
+                    finger_spec.get("default_length_scale", rng.uniform(0.87, 1.17)),
+                )
+            )
+            radius_scale = float(
+                role_spec.get(
+                    "radius_scale",
+                    finger_spec.get("default_radius_scale", rng.uniform(0.88, 1.14)),
+                )
+            )
+            if not 0.65 <= length_scale <= 1.45:
+                raise ValueError(
+                    f"{role} length_scale must lie in [0.65, 1.45]"
+                )
+            if not 0.65 <= radius_scale <= 1.35:
+                raise ValueError(
+                    f"{role} radius_scale must lie in [0.65, 1.35]"
+                )
+            realized_finger_parameters[role] = {
+                "length_scale": length_scale,
+                "radius_scale": radius_scale,
+            }
             slots.append(instantiate_finger(
                 parts, slot_id, role, target_slots[role], bundle,
                 sources[bundle["source_hand_id"]], candidates,
@@ -964,8 +1070,19 @@ def main() -> int:
                 f"baseline={baseline_dof}, generated={generated_dof}"
             )
         hands.append({
-            "hand_id": f"grammar_{index + 1:03d}",
+            "hand_id": design_spec.get("hand_id", f"grammar_{index + 1:03d}"),
             "seed_source": seed_id,
+            "graph_parameters": {
+                "source_hand": seed_id,
+                "palm": {
+                    "layout_mode": layout_mode,
+                    "expansion": palm_layout.get("palm_expansion", 0.0),
+                    "scale_x": sx,
+                    "scale_z": sz,
+                    "yaw": yaw,
+                },
+                "fingers": realized_finger_parameters,
+            },
             "edit_mode": mode,
             "palm_layout": palm_layout,
             "baseline_finger_count": len(source_roles),
@@ -1071,6 +1188,7 @@ def main() -> int:
         "source_hands": len(eligible_palms),
         "generated_hands": len(hands),
         "source_hand_ids": eligible_palms,
+        "ignored_non_morphology_registry_sources": non_morphology_registry_sources,
         "finger_count_range": [
             min(hand["finger_count"] for hand in hands),
             max(hand["finger_count"] for hand in hands),

@@ -79,6 +79,22 @@ search action.
 - Four-finger sources do not synthesize a fifth finger.
 - Base and palm-internal DoFs are copied unchanged.
 
+The current production search variables are:
+
+- finger-link longitudinal scale (`0.87–1.17` in random generation; explicit
+  graph requests may use the validated `0.65–1.45` range);
+- finger-link radial scale (`0.88–1.14` random; `0.65–1.35` explicit);
+- palm X/Z in-plane scale and a bounded in-plane yaw for sources without a
+  protected transmission platform;
+- palm layout mode and continuous `palm_expansion`;
+- small edge-tangent finger-root displacement in anthropomorphic mode.
+
+Finger mechanisms are complete source-owned bundles. The current production
+generator does not add, remove, splice, or cross-source fingers, even though
+older exploratory helpers for bundle removal remain in the module. Joint axes,
+ranges, active/mimic relations, palm thickness, and protected hardware are not
+search variables.
+
 ## 4. Graph generation
 
 `generate.py` produces 100 typed rigid-link trees. It edits:
@@ -87,6 +103,12 @@ search action.
 - palm in-plane shape;
 - finger-root locations along the palm boundary;
 - anthropomorphic, symmetric, or asymmetric palm layouts when compatible.
+
+`palm_expansion` is the continuous source-to-layout interpolation parameter.
+`0` preserves the source finger-root placement, while `1` reaches the selected
+House/star layout. Intermediate values move the palm interfaces and complete
+finger roots together. Explicit values that violate motor-footprint clearance
+fail instead of being silently changed.
 
 Palm thickness is fixed. The wrist/mount region is fixed. Protected
 under-palm hardware is fixed. Active and mimic classification, joint range,
@@ -147,6 +169,39 @@ Generate 100 hands:
 .venv-morphology/bin/python scripts/dexcodesign/generate_hand_morphologies.py
 ```
 
+Compile one explicit graph/source request without an LLM:
+
+```bash
+.venv-morphology/bin/python scripts/dexcodesign/compile_hand_graph.py \
+  assets/robot_hands/morphology/hand_graph.example.json
+```
+
+The output directory is content-addressed. Repeating an identical request is a
+cache hit and does not rerun mesh generation. The graph schema accepts a source
+hand, palm layout/expansion/scale/yaw, and per-finger length/radius scales.
+
+## Runtime certification boundary
+
+`HandIR + compiled OBJ` is geometry-complete but is not by itself a
+retarget/RL-ready robot asset. A generated hand may only be marked
+`runtime_ready` after a deterministic runtime exporter and the following gates
+all succeed:
+
+1. convert canonical coordinates back to the source hand's physical units and
+   export the required handedness;
+2. emit a complete URDF with visual, collision, inertial, joint-limit,
+   transmission, and affine mimic records;
+3. register semantic palm and fingertip links without a hard-coded hand list;
+4. retarget all 446 frames using active joints only, then verify every mimic
+   relation on every frame;
+5. import the URDF into Isaac Lab, verify collision coverage and hand/object
+   contact while hand/support collision remains disabled;
+6. pass one-environment reset/step and the configured vectorized-environment
+   smoke test.
+
+Until that exporter and certification command are present, compiled morphology
+artifacts must not be fed directly to the existing all-hands RL launcher.
+
 Useful options:
 
 ```text
@@ -155,4 +210,5 @@ Useful options:
 --rebuild-reference      rebuild cached rigid reference parts
 --resume                 reuse completed per-hand mesh manifests
 --render                 create the 100-hand MuJoCo contact sheet
+--palm-expansion X       source-to-House/star palm expansion in [0, 1]
 ```

@@ -52,7 +52,19 @@ def main() -> int:
         help="reuse completed per-hand mesh manifests after an interrupted run",
     )
     parser.add_argument("--render", action="store_true")
+    parser.add_argument(
+        "--palm-expansion",
+        type=float,
+        default=None,
+        help=(
+            "continuous palm-layout expansion in [0, 1]: 0 keeps source "
+            "finger-root placement and 1 reaches the selected House/star target"
+        ),
+    )
     args = parser.parse_args()
+
+    if args.palm_expansion is not None and not 0.0 <= args.palm_expansion <= 1.0:
+        parser.error("--palm-expansion must lie in [0, 1]")
 
     env = os.environ.copy()
     env["PYTHONPATH"] = (
@@ -61,6 +73,8 @@ def main() -> int:
         else f"{SOURCE}{os.pathsep}{env['PYTHONPATH']}"
     )
     env["HAND_GENERATION_SEED"] = str(args.seed)
+    if args.palm_expansion is not None:
+        env["HAND_PALM_EXPANSION"] = str(args.palm_expansion)
 
     if args.rebuild_direct_motor:
         subprocess.run(

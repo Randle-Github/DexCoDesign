@@ -1,11 +1,11 @@
 # Maximum number of independent one-GPU hand jobs running simultaneously.
 # This is Slurm array concurrency, not DDP world size.
-GPU_COUNT=4
+GPU_COUNT=1
 
 # Independent Isaac Lab environments inside each one-hand / one-GPU job.
 # 4096 is the measured high-throughput setting. Try 8192 only after its smoke test
 # passes on the target node and keep strict checkpoint evaluation enabled.
-NUM_ENVS_PER_HAND=4096
+NUM_ENVS_PER_HAND=8192
 
 # Values above 8192 currently overflowed MANO's PhysX GPU patch buffer. Leave
 # this disabled unless the task's PhysX buffers have been increased and tested.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 import shutil
 from functools import lru_cache
 from pathlib import Path
@@ -26,7 +27,11 @@ from .palm_geometry import (
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 ARTIFACT_ROOT = ROOT / "artifacts" / "hand_morphology"
-GENERATED_ROOT = ARTIFACT_ROOT / "generated_100"
+GENERATED_ROOT = Path(
+    os.environ.get(
+        "HAND_GENERATION_ROOT", str(ARTIFACT_ROOT / "generated_100")
+    )
+)
 INPUT = GENERATED_ROOT / "hand_ir.json"
 OUTPUT = GENERATED_ROOT / "compiled_hands.json"
 MESH_ROOT = GENERATED_ROOT / "meshes"
@@ -215,7 +220,7 @@ def main() -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
             mesh.export(path, file_type="obj", include_normals=True, include_color=False)
             result["compiled_mesh"] = {
-                "file": str(path.relative_to(ARTIFACT_ROOT / "generated_100")),
+                "file": str(path.relative_to(GENERATED_ROOT)),
                 "source_file": source_mesh["file"],
                 "faces": int(len(mesh.faces)),
                 "bounds": np.asarray(mesh.bounds, dtype=float).tolist(),
@@ -229,7 +234,7 @@ def main() -> int:
                     collision_path, file_type="obj", include_normals=True, include_color=False
                 )
                 result["compiled_mesh"]["collision_file"] = str(
-                    collision_path.relative_to(ARTIFACT_ROOT / "generated_100")
+                    collision_path.relative_to(GENERATED_ROOT)
                 )
                 result["compiled_mesh"]["collision_faces"] = int(
                     len(palm_result.collision_mesh.faces)
