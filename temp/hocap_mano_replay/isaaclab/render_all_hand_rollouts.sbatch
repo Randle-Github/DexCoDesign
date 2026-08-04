@@ -26,6 +26,7 @@ HAND_IDS=(
   midas_hand
   ruka_v2
   inspire_rh56dfx
+  mano
 )
 HAND_ID="${HAND_IDS[${SLURM_ARRAY_TASK_ID}]}"
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
