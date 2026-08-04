@@ -29,6 +29,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+from isaaclab.sim.utils import get_all_matching_child_prims
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_apply, quat_error_magnitude
 
@@ -609,16 +610,16 @@ class ManoResidualEnv(DirectRLEnv):
         missing_links: list[str] = []
         collider_count = 0
         for link_name in ALL_HAND_CONTACT_LINK_NAMES:
-            link = stage.GetPrimAtPath(f"{hand_root_path}/{link_name}")
-            colliders = (
-                [
-                    prim
-                    for prim in Usd.PrimRange(link)
-                    if prim.HasAPI(UsdPhysics.CollisionAPI)
-                ]
-                if link.IsValid()
-                else []
-            )
+            link_path = f"{hand_root_path}/{link_name}"
+            link = stage.GetPrimAtPath(link_path)
+            colliders = []
+            if link.IsValid():
+                colliders = get_all_matching_child_prims(
+                    link_path,
+                    predicate=lambda prim: prim.HasAPI(UsdPhysics.CollisionAPI),
+                    stage=stage,
+                    traverse_instance_prims=True,
+                )
             if not colliders:
                 missing_links.append(link_name)
             collider_count += len(colliders)
@@ -629,15 +630,14 @@ class ManoResidualEnv(DirectRLEnv):
             )
 
         object_root = stage.GetPrimAtPath(object_root_path)
-        object_colliders = (
-            [
-                prim
-                for prim in Usd.PrimRange(object_root)
-                if prim.HasAPI(UsdPhysics.CollisionAPI)
-            ]
-            if object_root.IsValid()
-            else []
-        )
+        object_colliders = []
+        if object_root.IsValid():
+            object_colliders = get_all_matching_child_prims(
+                object_root_path,
+                predicate=lambda prim: prim.HasAPI(UsdPhysics.CollisionAPI),
+                stage=stage,
+                traverse_instance_prims=True,
+            )
         if not object_colliders:
             raise RuntimeError(f"Object has no collision USD prim below {object_root_path}")
         print(
