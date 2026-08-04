@@ -165,7 +165,11 @@ def ensure_visual_collision_coverage(link: ET.Element) -> list[int]:
             continue
         collision = ET.Element(
             "collision",
-            {"name": f"collision_from_visual_{index}"},
+            {
+                "name": (
+                    f"collision_from_visual_{sanitize(link.get('name', 'link'))}_{index}"
+                )
+            },
         )
         origin = visual.find("origin")
         geometry = visual.find("geometry")
