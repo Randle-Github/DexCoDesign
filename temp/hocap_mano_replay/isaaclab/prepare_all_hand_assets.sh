@@ -21,6 +21,7 @@ HAND_IDS=(
   ruka_v2
   inspire_rh56dfx
 )
+RETARGET_MAX_MEAN_TIP_ERROR_M="${RETARGET_MAX_MEAN_TIP_ERROR_M:-0.03}"
 if [[ -n "${HAND_IDS_OVERRIDE:-}" ]]; then
   read -r -a HAND_IDS <<< "${HAND_IDS_OVERRIDE}"
 fi
@@ -52,6 +53,7 @@ fi
 python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/retarget_captured_success_all_hands.py" \
   --capture "${CAPTURE}" \
   --max-frames 446 \
+  --max-mean-tip-error-m "${RETARGET_MAX_MEAN_TIP_ERROR_M}" \
   --solve-only
 
 python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/prepare_all_hand_rl_references.py" \
