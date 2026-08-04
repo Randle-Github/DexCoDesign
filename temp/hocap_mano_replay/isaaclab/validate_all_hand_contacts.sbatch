@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=00:20:00
-#SBATCH --array=0-12%4
+#SBATCH --array=0-13%4
 #SBATCH --output=/coc/flash7/yliu3735/workspace/DexCoDesign/artifacts/isaaclab_all_hands_residual/slurm/contact-audit-%A_%a.out
 
 set -euo pipefail
@@ -16,6 +16,7 @@ HAND_IDS=(
   ability_hand schunk_svh wuji_hand_2 sharpa_wave_01 tesollo_dg5f
   unitree_dex5_1 robotera_xhand1 orca_hand_v2 shadow_hand_e
   allegro_hand_v5 midas_hand ruka_v2 inspire_rh56dfx
+  mano
 )
 HAND_ID="${HAND_IDS[${SLURM_ARRAY_TASK_ID}]}"
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
