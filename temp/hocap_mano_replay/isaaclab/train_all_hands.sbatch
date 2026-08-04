@@ -26,6 +26,7 @@ HAND_IDS=(
   midas_hand
   ruka_v2
   inspire_rh56dfx
+  mano
 )
 HAND_ID="${HAND_IDS[${SLURM_ARRAY_TASK_ID}]}"
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
@@ -53,6 +54,10 @@ mkdir -p "${RESULT_DIR}" "${OUTPUT_ROOT}/slurm"
 
 if [[ ! -f "${OUTPUT_ROOT}/assets/.all_hands_original_human_v2" ]]; then
   printf 'All-hand assets are not ready: %s\n' "${OUTPUT_ROOT}/assets" >&2
+  exit 1
+fi
+if [[ ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/.object_convex_decomposition_v1" ]]; then
+  printf 'Convex-decomposition object asset is not ready. Run prepare_assets.sh first.\n' >&2
   exit 1
 fi
 

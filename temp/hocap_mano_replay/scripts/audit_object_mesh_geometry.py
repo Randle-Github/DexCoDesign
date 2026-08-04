@@ -119,7 +119,11 @@ def main() -> None:
     report = {
         "meshes": stats,
         "isaac_collision": {
-            "approximation": "convexHull",
+            "approximation": "convexDecomposition",
+            "source_mesh": "cleaned_mesh_2000.obj",
+            "source_is_closed_volume": bool(collision_source.is_volume),
+        },
+        "convex_hull_baseline": {
             **hull_stats,
         },
         "sampled_surface_comparisons": comparisons,

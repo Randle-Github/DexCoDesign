@@ -132,7 +132,7 @@ def main() -> None:
         "mesh": str(object_mesh),
         "vertices": object_vertices,
         "faces": object_faces,
-        "collision_conversion": "convexHull",
+        "collision_conversion": "convexDecomposition",
     }
     if object_vertices == 0 or object_faces == 0:
         failures.append("object mesh is empty")

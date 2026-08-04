@@ -23,8 +23,9 @@ mkdir -p "${ASSET_ROOT}"
 "${REPO_ROOT}/isaaclab.sh" -p "${REPO_ROOT}/scripts/tools/convert_mesh.py" \
   "${REPO_ROOT}/temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj" \
   "${ASSET_ROOT}/g04_1.usd" \
-  --collision-approximation convexHull \
+  --collision-approximation convexDecomposition \
   --mass 0.015 \
   --headless
 
 touch "${ASSET_ROOT}/.egoengine_actuators_v3"
+touch "${ASSET_ROOT}/.object_convex_decomposition_v1"

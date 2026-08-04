@@ -31,7 +31,8 @@ if [[ ! -f "${CAPTURE}" ]]; then
 fi
 
 mkdir -p "${PREPARED_ROOT}" "${ASSET_ROOT}"
-if [[ ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/.egoengine_actuators_v3" ]]; then
+if [[ ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/.egoengine_actuators_v3" \
+   || ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/.object_convex_decomposition_v1" ]]; then
   bash "${REPO_ROOT}/temp/hocap_mano_replay/isaaclab/prepare_assets.sh"
 fi
 

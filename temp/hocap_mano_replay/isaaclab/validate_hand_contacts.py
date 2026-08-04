@@ -52,6 +52,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
             raw._all_hand_contact_sensor.cfg.filter_prim_paths_expr
         ),
         "all_hand_object_sensor_initialized": True,
+        "object_collision_approximations": raw._object_collision_approximations,
         "sampled_all_hand_object_force_n": forces,
         "hand_support_contact_disabled": True,
         "object_hand_contact_enabled": True,

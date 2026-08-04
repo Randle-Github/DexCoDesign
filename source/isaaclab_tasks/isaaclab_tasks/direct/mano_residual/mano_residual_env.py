@@ -640,11 +640,25 @@ class ManoResidualEnv(DirectRLEnv):
             )
         if not object_colliders:
             raise RuntimeError(f"Object has no collision USD prim below {object_root_path}")
+        object_approximations = sorted(
+            {
+                str(UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get())
+                for prim in object_colliders
+                if prim.HasAPI(UsdPhysics.MeshCollisionAPI)
+            }
+        )
+        if object_approximations != ["convexDecomposition"]:
+            raise RuntimeError(
+                "Object collision must use convexDecomposition, got "
+                f"{object_approximations or ['missing MeshCollisionAPI']}"
+            )
+        self._object_collision_approximations = object_approximations
         print(
             f"[HAND_COLLISION_COVERAGE:{HAND_ID}] "
             f"physical_links={len(ALL_HAND_CONTACT_LINK_NAMES)} "
             f"hand_colliders={collider_count} "
-            f"object_colliders={len(object_colliders)}"
+            f"object_colliders={len(object_colliders)} "
+            f"object_approximation={object_approximations[0]}"
         )
 
     def _filter_hand_support_collisions(
