@@ -36,7 +36,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     env = gym.make(args_cli.task, cfg=env_cfg)
     raw = env.unwrapped
     env.reset()
-    actions = torch.zeros((1, raw.cfg.action_space), device=raw.device)
+    actions = torch.zeros((1, env.action_space.shape[-1]), device=raw.device)
     forces = []
     with torch.inference_mode():
         for _ in range(args_cli.steps):
