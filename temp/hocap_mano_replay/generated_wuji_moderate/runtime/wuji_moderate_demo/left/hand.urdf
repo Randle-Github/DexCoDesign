@@ -465,160 +465,160 @@
   <joint name="slot_0_r_thumb_cmc_flex" type="revolute">
     <parent link="part_00_palm" />
     <child link="part_01_thumb" />
-    <origin xyz="-0.0254795441373 -0.00587404269551 0.0420207483667" rpy="0 0 0" />
-    <axis xyz="-0.171471498452 -0.976842018808 -0.127973417202" />
+    <origin xyz="-0.0232191209293 -0.00746586160149 0.044617453975" rpy="0 0 0" />
+    <axis xyz="-0.200287973627 0.446886270038 0.871881522497" />
     <limit lower="-1.187" upper="1.291" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_0_r_thumb_cmc_abd" type="revolute">
     <parent link="part_01_thumb" />
     <child link="part_02_thumb" />
-    <origin xyz="-0.00461660273696 -0.00235397235243 -0.0136098800717" rpy="0 0 0" />
-    <axis xyz="-0.171471498452 -0.976842018808 -0.127973417202" />
+    <origin xyz="-0.00600318530701 -0.00252637955849 -0.0131454488311" rpy="0 0 0" />
+    <axis xyz="-0.435390101777 0.810000024417 -0.392855469249" />
     <limit lower="-1.484" upper="0.698" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_0_r_thumb_mcp" type="revolute">
     <parent link="part_02_thumb" />
     <child link="part_03_thumb" />
-    <origin xyz="-0.0270027307705 0.00257173202852 -0.0111857144996" rpy="0 0 0" />
-    <axis xyz="-0.171471498452 -0.976842018808 -0.127973417202" />
+    <origin xyz="-0.0289359305121 0.00105075118969 -0.00991439468778" rpy="0 0 0" />
+    <axis xyz="0.211685581081 0.926083038047 0.312345035826" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_0_r_thumb_ip" type="revolute">
     <parent link="part_03_thumb" />
     <child link="part_04_thumb" />
-    <origin xyz="-0.0293352975925 0.0058981032474 -0.0105651808388" rpy="0 0 0" />
-    <axis xyz="-0.171471498452 -0.976842018808 -0.127973417202" />
+    <origin xyz="-0.0314585151965 0.00413295099936 -0.00922274120513" rpy="0 0 0" />
+    <axis xyz="0.211685581081 0.926083038047 0.312345035826" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_1_r_index_finger_mcp_flex" type="revolute">
     <parent link="part_00_palm" />
     <child link="part_05_index" />
-    <origin xyz="-0.0329839693282 0.00639950500352 0.0947466613817" rpy="0 0 0" />
-    <axis xyz="0.00356608430869 -0.998676096304 0.0513160570822" />
+    <origin xyz="-0.0298640430063 0.00427229235575 0.0989876489469" rpy="0 0 0" />
+    <axis xyz="0.985632614883 0.0993131381113 0.136620822272" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_1_r_index_finger_mcp_abd" type="revolute">
     <parent link="part_05_index" />
     <child link="part_06_index" />
-    <origin xyz="-0.0121871746652 0.00209676105585 0.0112489898761" rpy="0 0 0" />
-    <axis xyz="-0.00356608430869 0.998676096304 -0.0513160570822" />
+    <origin xyz="-0.0103652327514 0.00133347289195 0.0121083970879" rpy="0 0 0" />
+    <axis xyz="-0.0947662457952 0.99471923025 -0.0394082685416" />
     <limit lower="-0.698" upper="0.698" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_1_r_index_finger_pip" type="revolute">
     <parent link="part_06_index" />
     <child link="part_07_index" />
-    <origin xyz="-0.0314457276101 0.00266536383874 0.0295567713868" rpy="0 0 0" />
-    <axis xyz="0.00356608430869 -0.998676096304 0.0513160570822" />
+    <origin xyz="-0.0266293231124 0.000550973108466 0.0316405632525" rpy="0 0 0" />
+    <axis xyz="0.985632614883 0.0993131381113 0.136620822272" />
     <limit lower="-1.047" upper="2.094" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_1_r_index_finger_dip" type="revolute">
     <parent link="part_07_index" />
     <child link="part_08_index" />
-    <origin xyz="-0.0246715150132 0.00209117641603 0.0231894881891" rpy="0 0 0" />
-    <axis xyz="0.00356608430869 -0.998676096304 0.0513160570822" />
+    <origin xyz="-0.0208926870164 0.000432279433504 0.0248243780837" rpy="0 0 0" />
+    <axis xyz="0.985632614883 0.0993131381113 0.136620822272" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_2_r_middle_finger_mcp_flex" type="revolute">
     <parent link="part_00_palm" />
     <child link="part_09_middle" />
-    <origin xyz="-0.00907895798955 0.0090042067292 0.106636448523" rpy="0 0 0" />
-    <axis xyz="0.0172745067903 -0.999743618545 -0.0146385994223" />
+    <origin xyz="-0.00652924060558 0.00832059537827 0.106713483738" rpy="0 0 0" />
+    <axis xyz="0.999938845746 -0.000698963590645 -0.011037038445" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_2_r_middle_finger_mcp_abd" type="revolute">
     <parent link="part_09_middle" />
     <child link="part_10_middle" />
-    <origin xyz="-0.00521619102515 0.00160877821521 0.0168823759904" rpy="0 0 0" />
-    <axis xyz="-0.0172745067903 0.999743618545 0.0146385994223" />
+    <origin xyz="-0.00379700735971 0.00120830997949 0.0160961877162" rpy="0 0 0" />
+    <axis xyz="0.000324410208469 0.9994251421 -0.0339010338567" />
     <limit lower="-0.698" upper="0.698" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_2_r_middle_finger_pip" type="revolute">
     <parent link="part_10_middle" />
     <child link="part_11_middle" />
-    <origin xyz="-0.0135017784206 0.000746476781506 0.0438326350581" rpy="0 0 0" />
-    <axis xyz="0.0172745067903 -0.999743618545 -0.0146385994223" />
+    <origin xyz="-0.00982051032284 -0.000198903011338 0.0417228132436" rpy="0 0 0" />
+    <axis xyz="0.999938845746 -0.000698963590645 -0.011037038445" />
     <limit lower="-1.047" upper="2.094" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_2_r_middle_finger_dip" type="revolute">
     <parent link="part_11_middle" />
     <child link="part_12_middle" />
-    <origin xyz="-0.0105931506225 0.000585666623788 0.0343899663355" rpy="0 0 0" />
-    <axis xyz="0.0172745067903 -0.999743618545 -0.0146385994223" />
+    <origin xyz="-0.00770492166287 -0.000156054224321 0.0327346540076" rpy="0 0 0" />
+    <axis xyz="0.999938845746 -0.000698963590645 -0.011037038445" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_3_r_ring_finger_mcp_flex" type="revolute">
     <parent link="part_00_palm" />
     <child link="part_13_ring" />
-    <origin xyz="0.0330225264336 0.00205661647866 0.0853274139635" rpy="0 0 0" />
-    <axis xyz="-0.0562188418572 -0.99539059623 -0.0776981515625" />
+    <origin xyz="0.0247823679792 0.00435554718094 0.0920559291162" rpy="0 0 0" />
+    <axis xyz="0.987678304938 -0.0675668407617 -0.141160504336" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_3_r_ring_finger_mcp_abd" type="revolute">
     <parent link="part_13_ring" />
     <child link="part_14_ring" />
-    <origin xyz="0.00975096791588 -6.54940549754e-05 0.00917010049897" rpy="0 0 0" />
-    <axis xyz="0.0562188418572 0.99539059623 0.0776981515625" />
+    <origin xyz="0.00703134253727 0.000656914085946 0.0118819625888" rpy="0 0 0" />
+    <axis xyz="0.0658953462918 0.997690316619 -0.0164874334516" />
     <limit lower="-0.698" upper="0.698" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_3_r_ring_finger_pip" type="revolute">
     <parent link="part_14_ring" />
     <child link="part_15_ring" />
-    <origin xyz="0.0250055861863 -0.00302045882329 0.0237108403895" rpy="0 0 0" />
-    <axis xyz="-0.0562188418572 -0.99539059623 -0.0776981515625" />
+    <origin xyz="0.0180076050956 -0.00124648224091 0.0308235436111" rpy="0 0 0" />
+    <axis xyz="0.987678304938 -0.0675668407617 -0.141160504336" />
     <limit lower="-1.047" upper="2.094" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_3_r_ring_finger_dip" type="revolute">
     <parent link="part_15_ring" />
     <child link="part_16_ring" />
-    <origin xyz="0.0196187444813 -0.00236977487466 0.0186029199864" rpy="0 0 0" />
-    <axis xyz="-0.0562188418572 -0.99539059623 -0.0776981515625" />
+    <origin xyz="0.0141283071894 -0.00097795814114 0.0241833653331" rpy="0 0 0" />
+    <axis xyz="0.987678304938 -0.0675668407617 -0.141160504336" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_4_r_pinky_mcp_flex" type="revolute">
     <parent link="part_00_palm" />
     <child link="part_17_pinky" />
-    <origin xyz="0.0376472646431 -0.00329068497595 0.0641274312327" rpy="0 0 0" />
-    <axis xyz="-0.100684391076 -0.992209934576 -0.0733627911306" />
+    <origin xyz="0.0368742711472 -0.0009911605755 0.076563011774" rpy="0 0 0" />
+    <axis xyz="0.960244836025 -0.131409050527 -0.246295587307" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_4_r_pinky_mcp_abd" type="revolute">
     <parent link="part_17_pinky" />
     <child link="part_18_pinky" />
-    <origin xyz="0.0162519131434 -0.000580307181858 0.00239674965733" rpy="0 0 0" />
-    <axis xyz="0.100684391076 0.992209934576 0.0733627911306" />
+    <origin xyz="0.0136791126232 0.000464996599981 0.00771514137985" rpy="0 0 0" />
+    <axis xyz="0.128185922818 0.991326007371 -0.0290020051298" />
     <limit lower="-0.698" upper="0.698" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_4_r_pinky_pip" type="revolute">
     <parent link="part_18_pinky" />
     <child link="part_19_pinky" />
-    <origin xyz="0.0372687447017 -0.00431404241258 0.00582920950661" rpy="0 0 0" />
-    <axis xyz="-0.100684391076 -0.992209934576 -0.0733627911306" />
+    <origin xyz="0.0313398458049 -0.00180619803779 0.0182034041605" rpy="0 0 0" />
+    <axis xyz="0.96024483603 -0.131409050488 -0.246295587309" />
     <limit lower="-1.047" upper="2.094" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>
   <joint name="slot_4_r_pinky_dip" type="revolute">
     <parent link="part_19_pinky" />
     <child link="part_20_pinky" />
-    <origin xyz="0.0305153152149 -0.00353737220592 0.0046836877069" rpy="0 0 0" />
-    <axis xyz="-0.100684391076 -0.992209934576 -0.0733627911306" />
+    <origin xyz="0.0256923388398 -0.00148875992665 0.0148244744296" rpy="0 0 0" />
+    <axis xyz="0.96024483603 -0.131409050488 -0.246295587309" />
     <limit lower="-1.047" upper="1.57" effort="15" velocity="5" />
     <dynamics damping="0.2" friction="0.01" />
   </joint>

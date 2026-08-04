@@ -51,6 +51,7 @@ from retarget_all_hands import (  # noqa: E402
     assign_wrist_pose,
     build_hand,
     configure_colors,
+    direction_rotation,
     lowest_common_ancestor,
     make_scene,
     mano_fingertip_offsets,
@@ -110,7 +111,13 @@ def captured_mano_targets(
         )
         for finger in FINGERS:
             tip_position[finger][frame_index] = positions[finger]
-            tip_quaternion[finger][frame_index] = rotations[finger].as_quat()
+            local_direction = rotations[finger].apply(
+                tip_offsets[finger] / np.linalg.norm(tip_offsets[finger])
+            )
+            tip_quaternion[finger][frame_index] = direction_rotation(
+                local_direction,
+                np.array([0.0, 1.0, 0.0]),
+            ).as_quat()
     return wrist_position, wrist_quaternion, tip_position, tip_quaternion
 
 
@@ -275,6 +282,7 @@ def main() -> None:
                     args.ik_iterations,
                     wrist_position,
                     wrist_rotation,
+                    initial_frame=frame_index == 0,
                 )
                 values = np.concatenate(
                     (

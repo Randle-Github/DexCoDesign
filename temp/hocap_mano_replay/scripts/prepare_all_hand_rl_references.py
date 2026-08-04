@@ -418,7 +418,13 @@ def fingertip_reference(
         )
         for finger_index, finger in enumerate(policy_fingers):
             body_id = hand.tip_ids[finger]
-            result[frame_index, finger_index, :3] = hand.data.xpos[body_id]
+            body_rotation = np.asarray(
+                hand.data.xmat[body_id], dtype=np.float64
+            ).reshape(3, 3)
+            result[frame_index, finger_index, :3] = (
+                hand.data.xpos[body_id]
+                + body_rotation @ hand.tip_offsets[finger]
+            )
             result[frame_index, finger_index, 3:] = hand.data.xquat[body_id]
     return result, wrapper_positions, wrapper_quaternions
 
@@ -584,7 +590,10 @@ def prepare_hand(
         fingertip_link_names=np.asarray(
             [link_map[tip_links[finger]] for finger in policy_fingers]
         ),
-        fingertip_offsets=np.zeros((2, 3), dtype=np.float32),
+        fingertip_offsets=np.asarray(
+            [hand.tip_offsets[finger] for finger in policy_fingers],
+            dtype=np.float32,
+        ),
         thumb_contact_link_names=np.asarray([link_map[tip_links["thumb"]]]),
         other_finger_contact_link_names=np.asarray(
             [link_map[tip_links[finger]] for finger in other_fingers]

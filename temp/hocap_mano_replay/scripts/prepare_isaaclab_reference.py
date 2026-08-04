@@ -148,6 +148,7 @@ def build_reference(
             iterations,
             wrist_position,
             wrist_rotation,
+            initial_frame=frame_id == 0,
         )
         solved_finger_q.append(hand.data.qpos[finger_qpos].copy())
         solved_wrist_pos.append(wrist_position.copy())

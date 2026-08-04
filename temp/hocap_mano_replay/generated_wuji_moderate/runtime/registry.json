@@ -1,7 +1,7 @@
 {
   "hands": {
     "wuji_moderate_demo": {
-      "display_name": "WUJI Exaggerated Grammar Demo",
+      "display_name": "WUJI Moderate Morphology Demo",
       "entries": {
         "left": {
           "format": "urdf",

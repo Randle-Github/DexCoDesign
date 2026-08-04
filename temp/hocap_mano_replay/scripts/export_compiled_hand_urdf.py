@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 REFERENCE_GRAPHS = (
     REPO_ROOT / "artifacts" / "hand_morphology" / "reference_graphs.json"
 )
+DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
 
 
 def _mesh(value: trimesh.Trimesh | trimesh.Scene) -> trimesh.Trimesh:
@@ -40,6 +41,85 @@ def _inverse_source_linear(source_hand: str) -> tuple[float, np.ndarray]:
         float(audit["similarity_scale"]),
         np.asarray(audit["similarity_rotation"], dtype=np.float64),
     )
+
+
+def _rpy_matrix(text: str | None) -> np.ndarray:
+    values = np.fromstring(text or "0 0 0", sep=" ", dtype=np.float64)
+    roll, pitch, yaw = values
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    return np.asarray(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _canonical_joint_axes(
+    source_hand: str,
+    source_rotation: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Flatten source joint-local axes into the canonical graph frame."""
+    urdf = DIRECT_ROOT / source_hand / "right" / "hand.urdf"
+    root = ET.parse(urdf).getroot()
+    links = {link.get("name") for link in root.findall("link")}
+    children = set()
+    by_parent: dict[str, list[tuple[ET.Element, str]]] = {}
+    for joint in root.findall("joint"):
+        parent = joint.find("parent")
+        child = joint.find("child")
+        if parent is None or child is None:
+            continue
+        parent_name = parent.get("link")
+        child_name = child.get("link")
+        if not parent_name or not child_name:
+            continue
+        children.add(child_name)
+        by_parent.setdefault(parent_name, []).append((joint, child_name))
+    roots = sorted(links - children)
+    if len(roots) != 1:
+        raise ValueError(f"{urdf}: expected one root link, found {roots}")
+
+    world_rotation = {roots[0]: np.eye(3, dtype=np.float64)}
+    axes: dict[str, np.ndarray] = {}
+    queue = [roots[0]]
+    while queue:
+        parent_name = queue.pop(0)
+        for joint, child_name in by_parent.get(parent_name, ()):
+            origin = joint.find("origin")
+            local_rotation = _rpy_matrix(
+                None if origin is None else origin.get("rpy")
+            )
+            child_rotation = world_rotation[parent_name] @ local_rotation
+            world_rotation[child_name] = child_rotation
+            axis_element = joint.find("axis")
+            if axis_element is not None and joint.get("type") != "fixed":
+                local_axis = np.fromstring(
+                    axis_element.get("xyz", "1 0 0"),
+                    sep=" ",
+                    dtype=np.float64,
+                )
+                world_axis = child_rotation @ local_axis
+                canonical_axis = world_axis @ source_rotation
+                canonical_axis /= np.linalg.norm(canonical_axis)
+                axes[str(joint.get("name"))] = canonical_axis
+            queue.append(child_name)
+    return axes
+
+
+def _source_part_joint_names(source_hand: str) -> dict[int, str]:
+    payload = json.loads(REFERENCE_GRAPHS.read_text(encoding="utf-8"))
+    source = next(
+        hand for hand in payload["hands"] if hand["hand_id"] == source_hand
+    )
+    return {
+        int(part["id"]): str(part["joint_name"])
+        for part in source["parts"]
+    }
 
 
 def _vector_text(vector: np.ndarray) -> str:
@@ -82,8 +162,10 @@ def main() -> int:
     # Reflection is a polar-vector transform.  Revolute axes are axial
     # vectors, so they additionally receive det(reflection)=-1 below.
     reflection = np.diag((-1.0, 1.0, 1.0))
-    polar_linear = source_rotation @ reflection.T
+    polar_linear = source_rotation.T @ reflection
     axial_linear = -polar_linear
+    canonical_joint_axes = _canonical_joint_axes(source_hand, source_rotation)
+    source_part_joint_names = _source_part_joint_names(source_hand)
 
     hand_root = args.output_root / args.hand_id / "left"
     mesh_root = hand_root / "meshes"
@@ -188,7 +270,14 @@ def main() -> int:
             {"xyz": _vector_text(position), "rpy": "0 0 0"},
         )
         if joint_kind != "fixed":
-            axis = np.asarray(part["joint_axis"], dtype=np.float64)
+            source_joint_name = source_part_joint_names.get(
+                int(part.get("source_part_id", part["id"])),
+                str(part["joint_name"]),
+            )
+            axis = canonical_joint_axes.get(
+                source_joint_name,
+                np.asarray(part["joint_axis"], dtype=np.float64),
+            )
             axis = axis @ axial_linear
             axis /= np.linalg.norm(axis)
             ET.SubElement(joint, "axis", {"xyz": _vector_text(axis)})

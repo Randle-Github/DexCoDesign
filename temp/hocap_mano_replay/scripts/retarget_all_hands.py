@@ -48,6 +48,7 @@ from replay_mujoco import (  # noqa: E402
     LOCAL_HAND_TO_MANO,
     mano_fingertip_offsets,
 )
+from fingertip_geometry import resolve_fingertip_offsets  # noqa: E402
 
 
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
@@ -150,6 +151,7 @@ class HandIK:
     wrist_id: int
     tip_ids: dict[str, int]
     tip_offsets: dict[str, np.ndarray] | None
+    tip_directions: dict[str, np.ndarray]
     full_dof_ids: np.ndarray
     full_qpos_ids: np.ndarray
     dof_ids: np.ndarray
@@ -283,6 +285,23 @@ def relative_tip_poses(
     return positions, rotations
 
 
+def direction_rotation(
+    direction: np.ndarray,
+    preferred_y: np.ndarray,
+) -> Rotation:
+    """Construct a frame whose +Z is the physical distal direction."""
+    z_axis = np.asarray(direction, dtype=np.float64)
+    z_axis /= np.linalg.norm(z_axis) + 1e-12
+    x_axis = np.cross(preferred_y, z_axis)
+    if np.linalg.norm(x_axis) < 1e-8:
+        fallback = np.array([1.0, 0.0, 0.0])
+        x_axis = np.cross(fallback, z_axis)
+    x_axis /= np.linalg.norm(x_axis) + 1e-12
+    y_axis = np.cross(z_axis, x_axis)
+    y_axis /= np.linalg.norm(y_axis) + 1e-12
+    return Rotation.from_matrix(np.column_stack((x_axis, y_axis, z_axis)))
+
+
 def reference_trajectory(
     mano_pose: np.ndarray,
     hand_joints_world: np.ndarray,
@@ -318,22 +337,12 @@ def reference_trajectory(
         points = hand_joints_world[frame_id]
         for finger in FINGERS:
             _, _, distal_id, tip_id = HOCAP_JOINTS[finger]
-            if finger == "thumb":
-                x_axis = points[tip_id] - points[distal_id]
-                x_axis /= np.linalg.norm(x_axis) + 1e-12
-                z_axis = np.cross(x_axis, wrist_y)
-                z_axis /= np.linalg.norm(z_axis) + 1e-12
-                y_axis = np.cross(z_axis, x_axis)
-                y_axis /= np.linalg.norm(y_axis) + 1e-12
-            else:
-                z_axis = points[distal_id] - points[tip_id]
-                z_axis /= np.linalg.norm(z_axis) + 1e-12
-                x_axis = np.cross(wrist_y, z_axis)
-                x_axis /= np.linalg.norm(x_axis) + 1e-12
-                y_axis = np.cross(z_axis, x_axis)
-                y_axis /= np.linalg.norm(y_axis) + 1e-12
-            tip_rotation = Rotation.from_matrix(
-                np.column_stack((x_axis, y_axis, z_axis))
+            # Every finger uses one common semantic frame: +Z points from the
+            # last labelled joint to the physical fingertip.  The old code
+            # used +X for the thumb and -Z for the other fingers, so matching
+            # robot link quaternions did not align the distal segments.
+            tip_rotation = direction_rotation(
+                points[tip_id] - points[distal_id], wrist_y
             )
             positions[finger].append(
                 wrist_rotation.inv().apply(points[tip_id] - wrist_pos[frame_id])
@@ -544,7 +553,17 @@ def build_hand(
     tip_ids = {
         finger: model.body(link).id for finger, link in TIP_LINKS[hand_id].items()
     }
-    tip_offsets = mano_fingertip_offsets() if hand_id == "mano" else None
+    if hand_id == "mano":
+        tip_offsets = mano_fingertip_offsets()
+    else:
+        tip_offsets = resolve_fingertip_offsets(
+            DIRECT_ROOT / hand_id / "left" / "hand.urdf",
+            TIP_LINKS[hand_id],
+        )
+    tip_directions = {
+        finger: offset / np.linalg.norm(offset)
+        for finger, offset in tip_offsets.items()
+    }
     wrist_id = lowest_common_ancestor(model, list(tip_ids.values()))
     mimic_relations = urdf_mimic_relations(hand_id)
     (
@@ -595,6 +614,7 @@ def build_hand(
         wrist_id=wrist_id,
         tip_ids=tip_ids,
         tip_offsets=tip_offsets,
+        tip_directions=tip_directions,
         full_dof_ids=full_dof_ids,
         full_qpos_ids=full_qpos_ids,
         dof_ids=dof_ids,
@@ -617,6 +637,23 @@ def build_hand(
 
 def orientation_error(target: Rotation, current_matrix: np.ndarray) -> np.ndarray:
     return (target * Rotation.from_matrix(current_matrix).inv()).as_rotvec()
+
+
+def direction_error(target: np.ndarray, current: np.ndarray) -> np.ndarray:
+    """Minimal rotation vector taking current unit direction onto target."""
+    target = target / (np.linalg.norm(target) + 1e-12)
+    current = current / (np.linalg.norm(current) + 1e-12)
+    cross = np.cross(current, target)
+    cross_norm = float(np.linalg.norm(cross))
+    dot = float(np.clip(np.dot(current, target), -1.0, 1.0))
+    if cross_norm < 1e-10:
+        if dot >= 0.0:
+            return np.zeros(3, dtype=np.float64)
+        fallback = np.cross(current, np.array([1.0, 0.0, 0.0]))
+        if np.linalg.norm(fallback) < 1e-8:
+            fallback = np.cross(current, np.array([0.0, 1.0, 0.0]))
+        return np.pi * fallback / np.linalg.norm(fallback)
+    return np.arctan2(cross_norm, dot) * cross / cross_norm
 
 
 def skew(vector: np.ndarray) -> np.ndarray:
@@ -652,6 +689,8 @@ def solve_frame(
     iterations: int,
     wrist_position: np.ndarray,
     wrist_rotation: Rotation,
+    *,
+    initial_frame: bool = False,
 ) -> tuple[float, float, float, np.ndarray, Rotation]:
     model, data = hand.model, hand.data
     fingers = tuple(hand.tip_ids)
@@ -660,12 +699,14 @@ def solve_frame(
         f: reference_wrist_position + reference_wrist_rotation.apply(ref_pos[f])
         for f in fingers
     }
-    target_local_r = {}
+    target_world_direction = {}
     for f in fingers:
-        ref_current = Rotation.from_quat(ref_rot[f])
-        delta = ref_current * hand.neutral_ref_rot[f].inv()
-        mapped_delta = hand.map_rotation * delta * hand.map_rotation.inv()
-        target_local_r[f] = mapped_delta * hand.neutral_tip_rot[f]
+        target_local_direction = Rotation.from_quat(ref_rot[f]).apply(
+            np.array([0.0, 0.0, 1.0])
+        )
+        target_world_direction[f] = reference_wrist_rotation.apply(
+            target_local_direction
+        )
 
     # The wrist orientation is an observed target, while wrist translation is
     # deliberately left free.  EgoEngine's retargeting uses the same
@@ -674,9 +715,12 @@ def solve_frame(
     wrist_rotation = target_wrist_r
     frame_start_q = data.qpos[hand.qpos_ids].copy()
     damping = 0.025
-    orientation_length = 0.012
-    temporal_regularization = 0.035
-    max_frame_joint_delta = 0.20
+    # One radian of distal-axis error is treated like fifteen centimeters of
+    # fingertip position error.  This is intentionally strong: the direction
+    # is a physical final-segment constraint, not a cosmetic link-frame hint.
+    orientation_length = 0.15
+    temporal_regularization = 0.0 if initial_frame else 0.015
+    max_frame_joint_delta = np.inf if initial_frame else 0.20
     for _ in range(iterations):
         assign_wrist_pose(hand, wrist_position, wrist_rotation)
         apply_mimic_positions(hand)
@@ -705,13 +749,17 @@ def solve_frame(
                 )
             )
             errors.append(target_p[f] - point)
-            target_world_r = target_wrist_r * target_local_r[f]
+            current_direction = rotation_matrix(data, body_id) @ hand.tip_directions[f]
+            direction_projector = np.eye(3) - np.outer(
+                target_world_direction[f], target_world_direction[f]
+            )
             rows.append(
                 np.hstack(
                     (
                         np.zeros((3, 3)),
                         orientation_length
-                        * (
+                        * direction_projector
+                        @ (
                             jac_r[:, hand.full_dof_ids]
                             @ hand.active_to_full
                         ),
@@ -720,22 +768,23 @@ def solve_frame(
             )
             errors.append(
                 orientation_length
-                * orientation_error(
-                    target_world_r, rotation_matrix(data, body_id)
+                * direction_error(
+                    target_world_direction[f], current_direction
                 )
             )
-        rows.append(
-            np.hstack(
-                (
-                    np.zeros((len(hand.dof_ids), 3)),
-                    temporal_regularization * np.eye(len(hand.dof_ids)),
+        if temporal_regularization > 0.0:
+            rows.append(
+                np.hstack(
+                    (
+                        np.zeros((len(hand.dof_ids), 3)),
+                        temporal_regularization * np.eye(len(hand.dof_ids)),
+                    )
                 )
             )
-        )
-        errors.append(
-            temporal_regularization
-            * (frame_start_q - data.qpos[hand.qpos_ids])
-        )
+            errors.append(
+                temporal_regularization
+                * (frame_start_q - data.qpos[hand.qpos_ids])
+            )
         jacobian = np.vstack(rows)
         error = np.concatenate(errors)
         lhs = jacobian @ jacobian.T
@@ -769,12 +818,12 @@ def solve_frame(
         point = data.xpos[body_id].copy()
         if hand.tip_offsets is not None:
             point += rotation_matrix(data, body_id) @ hand.tip_offsets[f]
-        target_world_r = target_wrist_r * target_local_r[f]
+        current_direction = rotation_matrix(data, body_id) @ hand.tip_directions[f]
         position_errors.append(np.linalg.norm(target_p[f] - point))
         rotation_errors.append(
             np.linalg.norm(
-                orientation_error(
-                    target_world_r, rotation_matrix(data, body_id)
+                direction_error(
+                    target_world_direction[f], current_direction
                 )
             )
         )
@@ -860,6 +909,10 @@ def main() -> None:
     diagnostics = {
         "reference_source": "HO-Cap official hand_joints_3d",
         "surface_projection": False,
+        "fingertip_position_semantics": "physical terminal mesh surface",
+        "fingertip_orientation_semantics": (
+            "distal joint center to physical fingertip axis"
+        ),
     }
     for index, hand in enumerate(hands, 1):
         cache_path = CACHE_ROOT / f"{hand.hand_id}_ik.npz"
@@ -874,7 +927,7 @@ def main() -> None:
             Rotation.from_quat(wrist_quat[frame_ids[0]])
             * hand.map_rotation.inv()
         )
-        for frame_id in frame_ids:
+        for trajectory_index, frame_id in enumerate(frame_ids):
             (
                 p_error,
                 r_error,
@@ -890,6 +943,7 @@ def main() -> None:
                 args.iterations,
                 wrist_position,
                 wrist_rotation,
+                initial_frame=trajectory_index == 0,
             )
             q_trajectory.append(expanded_qpos(hand))
             solved_wrist_p.append(wrist_position.copy())

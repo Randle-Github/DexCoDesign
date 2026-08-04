@@ -3,33 +3,33 @@
   "source_hand": "wuji_hand_2",
   "palm": {
     "layout_mode": "asymmetric",
-    "expansion": 0.38,
-    "scale_x": 1.12,
-    "scale_z": 1.08,
-    "yaw": 0.10
+    "expansion": 0.18,
+    "scale_x": 1.08,
+    "scale_z": 1.06,
+    "yaw": 0.04
   },
   "fingers": {
     "default_length_scale": 1.0,
     "default_radius_scale": 1.0,
     "thumb": {
-      "length_scale": 0.90,
-      "radius_scale": 1.12
+      "length_scale": 0.94,
+      "radius_scale": 1.08
     },
     "index": {
-      "length_scale": 1.15,
-      "radius_scale": 0.90
+      "length_scale": 1.10,
+      "radius_scale": 0.94
     },
     "middle": {
-      "length_scale": 1.22,
-      "radius_scale": 1.10
+      "length_scale": 1.14,
+      "radius_scale": 1.07
     },
     "ring": {
-      "length_scale": 0.92,
-      "radius_scale": 0.92
+      "length_scale": 0.95,
+      "radius_scale": 0.95
     },
     "pinky": {
-      "length_scale": 1.13,
-      "radius_scale": 1.08
+      "length_scale": 1.08,
+      "radius_scale": 1.05
     }
   }
 }
