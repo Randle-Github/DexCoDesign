@@ -57,6 +57,12 @@ python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/prepare_all_hand_rl_referenc
   --capture "${CAPTURE}" \
   --output-dir "${PREPARED_ROOT}"
 
+python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/audit_collision_coverage.py" \
+  --prepared-root "${PREPARED_ROOT}" \
+  --object-mesh "${REPO_ROOT}/temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj" \
+  --output "${OUTPUT_ROOT}/collision_coverage_audit.json" \
+  --require-complete-prepared
+
 # Do not expose the isolated reference-builder packages (notably its NumPy)
 # to Isaac Sim's tightly pinned Python runtime.
 export PYTHONPATH="${ORIGINAL_PYTHONPATH}"

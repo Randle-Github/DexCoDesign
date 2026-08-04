@@ -59,6 +59,24 @@ if HAND_ID == "mano":
         "left_ring3",
         "left_pinky3",
     )
+    ALL_HAND_CONTACT_LINK_NAMES = (
+        "left_palm",
+        "left_index1z",
+        "left_index2",
+        "left_index3",
+        "left_middle1z",
+        "left_middle2",
+        "left_middle3",
+        "left_ring1z",
+        "left_ring2",
+        "left_ring3",
+        "left_pinky1z",
+        "left_pinky2",
+        "left_pinky3",
+        "left_thumb1z",
+        "left_thumb2z",
+        "left_thumb3",
+    )
     PALM_BODY_NAME = "left_palm"
     MIDDLE_TIP_BODY_NAME = "left_middle3"
 else:
@@ -74,6 +92,14 @@ else:
         )
         OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
             _schema["other_finger_contact_link_names"].tolist()
+        )
+        if "contact_link_names" not in _schema:
+            raise RuntimeError(
+                f"{REFERENCE_PATH} predates full collision coverage; "
+                "rebuild all-hand assets"
+            )
+        ALL_HAND_CONTACT_LINK_NAMES = tuple(
+            _schema["contact_link_names"].tolist()
         )
         PALM_BODY_NAME = str(_schema["palm_body_name"])
         MIDDLE_TIP_BODY_NAME = str(_schema["middle_tip_body_name"])
@@ -533,6 +559,21 @@ class ManoResidualEnv(DirectRLEnv):
                 ],
             )
         )
+        self._all_hand_contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path="/World/envs/env_.*/Object",
+                update_period=0.0,
+                history_length=0,
+                filter_prim_paths_expr=[
+                    f"/World/envs/env_.*/Hand/{link_name}"
+                    for link_name in ALL_HAND_CONTACT_LINK_NAMES
+                ],
+            )
+        )
+        self._validate_collision_coverage(
+            hand_root_path="/World/envs/env_0/Hand",
+            object_root_path="/World/envs/env_0/Object",
+        )
         spawn_ground_plane(
             prim_path="/World/ground",
             cfg=GroundPlaneCfg(
@@ -553,8 +594,58 @@ class ManoResidualEnv(DirectRLEnv):
         self.scene.rigid_objects["object"] = self.object
         self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
         self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
+        self.scene.sensors["object_all_hand_contact"] = self._all_hand_contact_sensor
         light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _validate_collision_coverage(
+        self,
+        hand_root_path: str,
+        object_root_path: str,
+    ) -> None:
+        """Fail before simulation if a physical hand part or object lacks collision."""
+
+        stage = self.scene.stage
+        missing_links: list[str] = []
+        collider_count = 0
+        for link_name in ALL_HAND_CONTACT_LINK_NAMES:
+            link = stage.GetPrimAtPath(f"{hand_root_path}/{link_name}")
+            colliders = (
+                [
+                    prim
+                    for prim in Usd.PrimRange(link)
+                    if prim.HasAPI(UsdPhysics.CollisionAPI)
+                ]
+                if link.IsValid()
+                else []
+            )
+            if not colliders:
+                missing_links.append(link_name)
+            collider_count += len(colliders)
+        if missing_links:
+            raise RuntimeError(
+                f"{HAND_ID} has physical hand parts without collision USD prims: "
+                f"{missing_links}"
+            )
+
+        object_root = stage.GetPrimAtPath(object_root_path)
+        object_colliders = (
+            [
+                prim
+                for prim in Usd.PrimRange(object_root)
+                if prim.HasAPI(UsdPhysics.CollisionAPI)
+            ]
+            if object_root.IsValid()
+            else []
+        )
+        if not object_colliders:
+            raise RuntimeError(f"Object has no collision USD prim below {object_root_path}")
+        print(
+            f"[HAND_COLLISION_COVERAGE:{HAND_ID}] "
+            f"physical_links={len(ALL_HAND_CONTACT_LINK_NAMES)} "
+            f"hand_colliders={collider_count} "
+            f"object_colliders={len(object_colliders)}"
+        )
 
     def _filter_hand_support_collisions(
         self,
@@ -749,6 +840,8 @@ class ManoResidualEnv(DirectRLEnv):
             thumb_force,
             other_finger_force,
         ) = self._compute_pinch_contact()
+        all_hand_force = self._contact_sensor_force(self._all_hand_contact_sensor)
+        all_hand_contact = all_hand_force > self.cfg.contact_force_threshold
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
         self._pose_episode_return += pose_tracking_reward
@@ -773,6 +866,8 @@ class ManoResidualEnv(DirectRLEnv):
             "pinch_contact_reward": contact_reward.mean(),
             "thumb_object_contact_force_n": thumb_force.mean(),
             "other_finger_object_contact_force_n": other_finger_force.mean(),
+            "all_hand_object_contact": all_hand_contact.to(torch.float32).mean(),
+            "all_hand_object_contact_force_n": all_hand_force.mean(),
             "finger_residual_abs_mean_rad": finger_residual.mean(),
             "finger_residual_abs_max_rad": finger_residual.amax(dim=-1).mean(),
             "reference_phase_fraction": (

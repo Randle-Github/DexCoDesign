@@ -9,6 +9,7 @@ joints from the reviewed all-hands IK trajectory.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -79,6 +80,105 @@ def unique_mapping(names: list[str], prefix: str) -> dict[str, str]:
         mapping[original] = candidate
         used.add(candidate)
     return mapping
+
+
+def _normalized_geometry_name(value: str | None) -> str:
+    if not value:
+        return ""
+    stem = Path(value).stem.lower()
+    stem = re.sub(r"^\d+_", "", stem)
+    stem = re.sub(r"_\d+$", "", stem)
+    tokens = [
+        token
+        for token in re.split(r"[^a-z0-9]+", stem)
+        if token
+        not in {
+            "coll",
+            "collision",
+            "hull",
+            "visual",
+            "mesh",
+            "ref",
+            "fb",
+        }
+    ]
+    return "_".join(tokens)
+
+
+def _geometry_name(element: ET.Element) -> str:
+    name = _normalized_geometry_name(element.get("name"))
+    geometry = element.find("geometry")
+    if geometry is None or not list(geometry):
+        return name
+    shape = list(geometry)[0]
+    if shape.tag == "mesh":
+        return name or _normalized_geometry_name(shape.get("filename"))
+    return name or shape.tag
+
+
+def ensure_visual_collision_coverage(link: ET.Element) -> list[int]:
+    """Add collision geometry for every visible part not already covered.
+
+    Existing source collision proxies are preserved. When a link contains
+    fewer collision elements than visual elements, names and mesh filenames
+    identify which visuals already have a proxy; only the uncovered visuals
+    are copied. This avoids double collision geometry while fixing visual-only
+    links and multi-mesh links with a partially missing collider.
+    """
+
+    visuals = link.findall("visual")
+    collisions = link.findall("collision")
+    if len(collisions) >= len(visuals):
+        return []
+
+    matched_visuals: set[int] = set()
+    unmatched_collision_count = 0
+    for collision in collisions:
+        collision_name = _geometry_name(collision)
+        match = next(
+            (
+                index
+                for index, visual in enumerate(visuals)
+                if index not in matched_visuals
+                and collision_name
+                and collision_name == _geometry_name(visual)
+            ),
+            None,
+        )
+        if match is None:
+            unmatched_collision_count += 1
+        else:
+            matched_visuals.add(match)
+
+    # A differently named convex proxy still covers one visual part. Assign
+    # any such proxies before deciding which visuals need new collision mesh.
+    for index in range(len(visuals)):
+        if unmatched_collision_count == 0:
+            break
+        if index not in matched_visuals:
+            matched_visuals.add(index)
+            unmatched_collision_count -= 1
+
+    added_visual_indices: list[int] = []
+    for index, visual in enumerate(visuals):
+        if index in matched_visuals:
+            continue
+        collision = ET.Element(
+            "collision",
+            {"name": f"collision_from_visual_{index}"},
+        )
+        origin = visual.find("origin")
+        geometry = visual.find("geometry")
+        if origin is not None:
+            collision.append(copy.deepcopy(origin))
+        if geometry is None:
+            raise ValueError(
+                f"Visual {index} on link {link.get('name')} has no geometry"
+            )
+        collision.append(copy.deepcopy(geometry))
+        link.append(collision)
+        added_visual_indices.append(index)
+    return added_visual_indices
 
 
 def tiny_inertial_link(name: str) -> ET.Element:
@@ -182,8 +282,15 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
     mesh_alias_root = output.parent / "mesh_aliases"
     mesh_directory_aliases: dict[Path, Path] = {}
     mesh_alias_index = 0
+    added_collision_visuals: dict[str, list[int]] = {}
+    collision_link_names: list[str] = []
     for link in links:
         original = str(link.get("name"))
+        added_indices = ensure_visual_collision_coverage(link)
+        if added_indices:
+            added_collision_visuals[link_map[original]] = added_indices
+        if link.findall("collision"):
+            collision_link_names.append(link_map[original])
         link.set("name", link_map[original])
         if link.find("inertial") is None:
             inertial = ET.SubElement(link, "inertial")
@@ -276,6 +383,8 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
         "joint_map": joint_map,
         "root_link": link_map[original_root_link],
         "mimic_relations": mimic_relations,
+        "collision_link_names": collision_link_names,
+        "added_collision_visuals": added_collision_visuals,
     }
 
 
@@ -476,6 +585,7 @@ def prepare_hand(
         other_finger_contact_link_names=np.asarray(
             [link_map[tip_links[finger]] for finger in other_fingers]
         ),
+        contact_link_names=np.asarray(mapping["collision_link_names"]),
         palm_body_name=np.asarray(mapping["root_link"]),
         middle_tip_body_name=np.asarray(link_map[tip_links[middle_finger]]),
         fps=np.asarray(30.0, dtype=np.float32),
@@ -501,6 +611,8 @@ def prepare_hand(
         "other_finger_contact_link_names": [
             link_map[tip_links[finger]] for finger in other_fingers
         ],
+        "contact_link_names": mapping["collision_link_names"],
+        "added_collision_visuals": mapping["added_collision_visuals"],
     }
     (hand_root / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n",
