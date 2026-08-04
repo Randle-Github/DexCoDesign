@@ -59,6 +59,12 @@
         <mesh filename="meshes/0005_rl_dg_palm_c_00.obj" />
       </geometry>
     </collision>
+    <collision name="collision_solid_palm_core">
+      <origin xyz="-0.0045 0 0.052" rpy="0 0 0" />
+      <geometry>
+        <box size="0.045 0.055 0.07" />
+      </geometry>
+    </collision>
   </link>
   <joint name="rj_dg_palm" type="fixed">
     <parent link="rl_dg_base" />

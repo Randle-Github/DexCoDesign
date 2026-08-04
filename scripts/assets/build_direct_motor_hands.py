@@ -458,6 +458,40 @@ def add_negligible_virtual_inertial(link: ET.Element) -> None:
     )
 
 
+def add_hand_specific_collision_proxies(
+    robot: ET.Element, hand_id: str, side: str
+) -> list[str]:
+    """Add robust solid proxies where a source collision mesh is only a shell."""
+
+    added: list[str] = []
+    if hand_id == "tesollo_dg5f":
+        palm_name = f"{'ll' if side == 'left' else 'rl'}_dg_palm"
+        palm = next(
+            (link for link in robot.findall("link") if link.get("name") == palm_name),
+            None,
+        )
+        if palm is None:
+            raise ValueError(f"{hand_id}/{side}: missing palm link {palm_name}")
+        proxy_name = "collision_solid_palm_core"
+        if not any(
+            collision.get("name") == proxy_name
+            for collision in palm.findall("collision")
+        ):
+            collision = ET.SubElement(palm, "collision", {"name": proxy_name})
+            ET.SubElement(
+                collision,
+                "origin",
+                {"xyz": "-0.0045 0 0.052", "rpy": "0 0 0"},
+            )
+            geometry = ET.SubElement(collision, "geometry")
+            # This box remains inside the palm housing's mesh bounds.  The
+            # source *_palm_c mesh is an open triangle shell, which can import
+            # as a hollow dynamic collider and let the object pass through.
+            ET.SubElement(geometry, "box", {"size": "0.045 0.055 0.07"})
+            added.append(f"{palm_name}:{proxy_name}")
+    return added
+
+
 def normalize_urdf(
     source: Path,
     output: Path,
@@ -493,6 +527,10 @@ def normalize_urdf(
     flattened = flatten_mimics(movable)
     active_names = sorted(set(movable).difference(flattened))
     passive_names = sorted(flattened)
+
+    collision_proxies = add_hand_specific_collision_proxies(
+        robot, hand_id, side
+    )
 
     records = []
     for name, joint in movable.items():
@@ -555,6 +593,7 @@ def normalize_urdf(
         "source_tendons_removed": 0,
         "source_equalities_removed": 0,
         "inertia_repairs": inertia_repairs,
+        "collision_proxies_added": collision_proxies,
         "links": len(robot.findall("link")),
         "joints": len(robot.findall("joint")),
         "scalar_dofs": len(movable),

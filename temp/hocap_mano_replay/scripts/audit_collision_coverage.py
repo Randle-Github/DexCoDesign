@@ -44,6 +44,7 @@ def audit_urdf(path: Path) -> dict[str, object]:
     collision_elements = 0
     physical_links = 0
     collision_links = 0
+    solid_primitive_collision_links: list[str] = []
     missing_collision_visuals: list[dict[str, object]] = []
     invalid_mesh_files: list[str] = []
 
@@ -54,6 +55,14 @@ def audit_urdf(path: Path) -> dict[str, object]:
         collision_elements += len(collisions)
         physical_links += bool(visuals)
         collision_links += bool(collisions)
+        if any(
+            collision.find("geometry/box") is not None
+            or collision.find("geometry/sphere") is not None
+            or collision.find("geometry/cylinder") is not None
+            or collision.find("geometry/capsule") is not None
+            for collision in collisions
+        ):
+            solid_primitive_collision_links.append(str(link.get("name")))
         deficit = max(0, len(visuals) - len(collisions))
         if deficit:
             missing_collision_visuals.append(
@@ -86,6 +95,9 @@ def audit_urdf(path: Path) -> dict[str, object]:
         "visual_elements": visual_elements,
         "collision_links": collision_links,
         "collision_elements": collision_elements,
+        "solid_primitive_collision_links": sorted(
+            solid_primitive_collision_links
+        ),
         "missing_collision_count": sum(
             int(item["missing"]) for item in missing_collision_visuals
         ),
@@ -124,6 +136,13 @@ def main() -> None:
                 )
             if prepared["invalid_mesh_files"]:
                 failures.append(f"{hand_id}: invalid prepared mesh files")
+            if hand_id == "tesollo_dg5f" and (
+                "hand__ll_dg_palm"
+                not in prepared["solid_primitive_collision_links"]
+            ):
+                failures.append(
+                    "tesollo_dg5f: palm lacks a closed primitive collision core"
+                )
         hands[hand_id] = result
 
     object_mesh = args.object_mesh.resolve()
