@@ -1,0 +1,35 @@
+{
+  "hand_id": "wuji_moderate_demo",
+  "source_hand": "wuji_hand_2",
+  "palm": {
+    "layout_mode": "asymmetric",
+    "expansion": 0.38,
+    "scale_x": 1.12,
+    "scale_z": 1.08,
+    "yaw": 0.10
+  },
+  "fingers": {
+    "default_length_scale": 1.0,
+    "default_radius_scale": 1.0,
+    "thumb": {
+      "length_scale": 0.90,
+      "radius_scale": 1.12
+    },
+    "index": {
+      "length_scale": 1.15,
+      "radius_scale": 0.90
+    },
+    "middle": {
+      "length_scale": 1.22,
+      "radius_scale": 1.10
+    },
+    "ring": {
+      "length_scale": 0.92,
+      "radius_scale": 0.92
+    },
+    "pinky": {
+      "length_scale": 1.13,
+      "radius_scale": 1.08
+    }
+  }
+}

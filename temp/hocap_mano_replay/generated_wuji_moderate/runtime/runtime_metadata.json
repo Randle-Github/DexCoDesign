@@ -1,0 +1,17 @@
+{
+  "hand_id": "wuji_moderate_demo",
+  "display_name": "WUJI Moderate Morphology Demo",
+  "source_hand": "wuji_hand_2",
+  "urdf": "temp/hocap_mano_replay/generated_wuji_moderate/runtime/wuji_moderate_demo/left/hand.urdf",
+  "tips": {
+    "thumb": "part_04_thumb",
+    "index": "part_08_index",
+    "middle": "part_12_middle",
+    "ring": "part_16_ring",
+    "pinky": "part_20_pinky"
+  },
+  "active_dofs": 20,
+  "passive_mimic_dofs": 0,
+  "all_parts_have_visual_and_collision": true,
+  "mirror_semantics": "left polar geometry + left axial revolute axes"
+}

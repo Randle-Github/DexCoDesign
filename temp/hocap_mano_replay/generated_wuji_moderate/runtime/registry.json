@@ -1,0 +1,16 @@
+{
+  "hands": {
+    "wuji_moderate_demo": {
+      "display_name": "WUJI Exaggerated Grammar Demo",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "wuji_moderate_demo/left/hand.urdf",
+          "active_dofs": 20,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 20
+        }
+      }
+    }
+  }
+}
