@@ -25,8 +25,13 @@ sampling, retargeting, asset generation, PhysX rollout, and distribution
 update. Isaac may restart inside that allocation when the morphology set
 changes, but the node and GPU remain assigned to the same workflow.
 
-Start with a population that fits distinct USD assets in GPU memory, then scale
-from measured memory and throughput. The 64-candidate validation completed all
-64 real rollouts concurrently; its PhysX rollout itself took about 12 seconds.
-Asset generation and USD conversion, not simulation, are currently the main
-scaling costs.
+The default population is 1,024. It is evaluated in 128-environment physical
+batches inside the same allocated job so that unique USD assets fit in memory.
+Every one of the 1,024 candidates still receives a real rollout; batching is
+not filtering. Search assets omit visual geometry and retain collision on every
+rigid hand part. The selected morphology is regenerated with full visual meshes
+for its final video.
+
+The 64-candidate validation completed all 64 real rollouts concurrently; its
+PhysX rollout itself took about five seconds. Asset generation and USD cooking,
+not simulation, are the main remaining scaling costs.

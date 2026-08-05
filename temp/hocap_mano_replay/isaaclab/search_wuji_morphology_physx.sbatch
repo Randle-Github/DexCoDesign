@@ -14,9 +14,10 @@ set -euo pipefail
 
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 OUTPUT_ROOT="${OUTPUT_ROOT:?set OUTPUT_ROOT}"
-POPULATION="${POPULATION:-256}"
+POPULATION="${POPULATION:-1024}"
 GENERATIONS="${GENERATIONS:-5}"
 WORKERS="${WORKERS:-32}"
+PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-128}"
 GENERATION_SEED="${GENERATION_SEED:-20260805}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 STATE="${OUTPUT_ROOT}/cem_state.json"
@@ -33,7 +34,6 @@ for ((generation=0; generation<GENERATIONS; generation++)); do
   generation_root="${OUTPUT_ROOT}/generation_$(printf '%02d' "${generation}")"
   vectors="${generation_root}/vectors.npy"
   retarget="${generation_root}/gpu_retarget_all.npz"
-  prepared="${generation_root}/prepared"
   results="${generation_root}/physx_results.json"
   mkdir -p "${generation_root}"
 
@@ -55,17 +55,34 @@ for ((generation=0; generation<GENERATIONS; generation++)); do
     --save-trajectories \
     --skip-proxy
 
-  python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
-    "${retarget}" \
-    --output-root "${prepared}" \
-    --workers "${WORKERS}"
+  batch_results=()
+  for ((offset=0; offset<POPULATION; offset+=PHYSICS_BATCH_SIZE)); do
+    count=$((POPULATION - offset))
+    if ((count > PHYSICS_BATCH_SIZE)); then
+      count="${PHYSICS_BATCH_SIZE}"
+    fi
+    batch_root="${generation_root}/physical_batches/$(printf '%06d' "${offset}")"
+    batch_result="${batch_root}/physx_results.json"
+    python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
+      "${retarget}" \
+      --output-root "${batch_root}/prepared" \
+      --workers "${WORKERS}" \
+      --offset "${offset}" \
+      --limit "${count}"
 
-  ./isaaclab.sh -p \
-    temp/hocap_mano_replay/isaaclab/evaluate_wuji_morphology_physx_batch.py \
-    "${prepared}/physx_batch_manifest.json" \
+    ./isaaclab.sh -p \
+      temp/hocap_mano_replay/isaaclab/evaluate_wuji_morphology_physx_batch.py \
+      "${batch_root}/prepared/physx_batch_manifest.json" \
+      --output "${batch_result}" \
+      --convert-urdf \
+      --headless
+    batch_results+=("${batch_result}")
+  done
+
+  python temp/hocap_mano_replay/scripts/aggregate_wuji_physx_batches.py \
+    "${batch_results[@]}" \
     --output "${results}" \
-    --convert-urdf \
-    --headless
+    --expected "${POPULATION}"
 
   python - "${results}" "${POPULATION}" <<'PY'
 import json

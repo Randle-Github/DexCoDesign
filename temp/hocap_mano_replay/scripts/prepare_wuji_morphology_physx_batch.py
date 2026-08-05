@@ -39,6 +39,7 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=32)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--offset", type=int, default=0)
     args = parser.parse_args()
 
     source = args.retarget_batch.expanduser().resolve()
@@ -60,20 +61,29 @@ def main() -> int:
                 f"{source} misses {missing}; rerun gpu_wuji_retarget.py with "
                 "--save-trajectories --skip-proxy"
             )
-        count = len(data["vectors"])
+        available = len(data["vectors"])
+        if args.offset < 0 or args.offset >= available:
+            raise ValueError(
+                f"--offset must be in [0, {available - 1}], got {args.offset}"
+            )
+        count = available - args.offset
         if args.limit is not None:
             count = min(count, args.limit)
-        vectors = data["vectors"][:count].astype(np.float64)
-        qpos = data["qpos"][:count].astype(np.float32)
-        wrist_position = data["wrist_position_all"][:count].astype(np.float32)
-        wrist_quaternion = data["wrist_quaternion_xyzw_all"][:count].astype(
+        selection = slice(args.offset, args.offset + count)
+        vectors = data["vectors"][selection].astype(np.float64)
+        qpos = data["qpos"][selection].astype(np.float32)
+        wrist_position = data["wrist_position_all"][selection].astype(np.float32)
+        wrist_quaternion = data["wrist_quaternion_xyzw_all"][selection].astype(
             np.float32
         )
         frame_ids = data["frame_ids"].astype(np.int64)
         joint_names = data["joint_names"].astype(str)
         qpos_ids = data["qpos_ids"].astype(np.int64)
 
-    candidate_ids = [f"wuji_physx_{index:06d}" for index in range(count)]
+    candidate_ids = [
+        f"wuji_physx_{index:06d}"
+        for index in range(args.offset, args.offset + count)
+    ]
     graphs = [
         vector_to_graph(vectors[index], candidate_ids[index])
         for index in range(count)
@@ -141,6 +151,7 @@ def main() -> int:
                 str(row["hand_id"]),
                 "--display-name",
                 str(row["hand_id"]),
+                "--physics-only",
             ],
             candidate / "export.log",
         )

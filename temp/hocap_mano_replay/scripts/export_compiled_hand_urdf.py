@@ -160,6 +160,14 @@ def main() -> int:
     )
     parser.add_argument("--hand-id", default="wuji_exaggerated_demo")
     parser.add_argument("--display-name")
+    parser.add_argument(
+        "--physics-only",
+        action="store_true",
+        help=(
+            "export collision geometry only for headless physical search; "
+            "the selected morphology can be re-exported with visuals later"
+        ),
+    )
     args = parser.parse_args()
 
     payload = json.loads(args.compiled.read_text(encoding="utf-8"))
@@ -238,10 +246,12 @@ def main() -> int:
             "collision_file", compiled_mesh["file"]
         )
         exported_files: dict[str, str] = {}
-        for kind, source_path in (
-            ("visual", visual_source),
-            ("collision", collision_source),
-        ):
+        mesh_sources = (
+            (("collision", collision_source),)
+            if args.physics_only
+            else (("visual", visual_source), ("collision", collision_source))
+        )
+        for kind, source_path in mesh_sources:
             source_mesh = _mesh(trimesh.load(source_path, process=False))
             vertices = (
                 np.asarray(source_mesh.vertices, dtype=np.float64)
@@ -257,18 +267,13 @@ def main() -> int:
             destination = mesh_root / f"part_{part_id:02d}_{kind}.obj"
             exported.export(destination)
             exported_files[kind] = f"meshes/{destination.name}"
-        # MuJoCo's URDF importer derives a single mesh directory and has a
-        # long-standing path-resolution issue when visual and collision use
-        # different OBJ basenames.  Referencing the visual mesh twice follows
-        # the source WUJI URDF convention; MuJoCo convexifies it for contact.
-        # The watertight palm proxy remains exported beside it for downstream
-        # engines that support separate URDF mesh paths reliably.
-        for kind in ("visual", "collision"):
-            _add_geometry(
-                link,
-                kind,
-                exported_files["visual"],
-            )
+        if args.physics_only:
+            _add_geometry(link, "collision", exported_files["collision"])
+        else:
+            # Keep the legacy MuJoCo-compatible visual path for replay assets.
+            # Isaac/PhysX search uses the explicit collision-only branch above.
+            for kind in ("visual", "collision"):
+                _add_geometry(link, kind, exported_files["visual"])
 
     for part in hand["parts"]:
         parent_id = part["parent"]
@@ -345,7 +350,9 @@ def main() -> int:
             part["joint_type"] != "fixed" for part in hand["parts"]
         ),
         "passive_mimic_dofs": 0,
-        "all_parts_have_visual_and_collision": True,
+        "all_parts_have_visual_and_collision": not args.physics_only,
+        "all_parts_have_collision": True,
+        "physics_only": bool(args.physics_only),
         "mirror_semantics": "left polar geometry + left axial revolute axes",
     }
     metadata_path = args.output_root / "runtime_metadata.json"

@@ -21,7 +21,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--generations", type=int, default=5)
-    parser.add_argument("--population", type=int, default=256)
+    parser.add_argument("--population", type=int, default=1024)
+    parser.add_argument("--physics-batch-size", type=int, default=128)
     parser.add_argument("--workers", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20260805)
     args = parser.parse_args()
@@ -29,6 +30,8 @@ def main() -> int:
         parser.error("--generations must be positive")
     if args.population < 2:
         parser.error("--population must be at least 2")
+    if args.physics_batch_size < 1:
+        parser.error("--physics-batch-size must be positive")
 
     root = args.output_root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -36,6 +39,7 @@ def main() -> int:
         "OUTPUT_ROOT": str(root),
         "GENERATIONS": str(args.generations),
         "POPULATION": str(args.population),
+        "PHYSICS_BATCH_SIZE": str(args.physics_batch_size),
         "WORKERS": str(args.workers),
         "GENERATION_SEED": str(args.seed),
     }
@@ -53,6 +57,7 @@ def main() -> int:
         "single_persistent_gpu_allocation": True,
         "generations": args.generations,
         "population": args.population,
+        "physics_batch_size": args.physics_batch_size,
         "all_candidates_physically_evaluated": True,
         "proxy_used": False,
         "top_k_prefilter_used": False,
