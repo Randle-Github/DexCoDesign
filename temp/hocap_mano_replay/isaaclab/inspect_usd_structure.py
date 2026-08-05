@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Print the physics-relevant structure of an imported hand USD."""
+
+from __future__ import annotations
+
+import argparse
+
+from pxr import Usd
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("usd")
+    args = parser.parse_args()
+    stage = Usd.Stage.Open(args.usd)
+    print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}")
+    interesting = (
+        "localPos",
+        "localRot",
+        "axis",
+        "points",
+        "indices",
+        "approximation",
+        "body0",
+        "body1",
+    )
+    for prim in stage.Traverse():
+        attributes = [
+            attribute.GetName()
+            for attribute in prim.GetAttributes()
+            if any(token in attribute.GetName() for token in interesting)
+        ]
+        relationships = [
+            relationship.GetName() for relationship in prim.GetRelationships()
+        ]
+        if attributes or relationships or prim.GetTypeName() in {
+            "Mesh",
+            "PhysicsRevoluteJoint",
+            "PhysicsPrismaticJoint",
+            "PhysicsFixedJoint",
+        }:
+            print(
+                f"PRIM {prim.GetPath()} type={prim.GetTypeName()} "
+                f"attrs={attributes} rels={relationships}"
+            )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
