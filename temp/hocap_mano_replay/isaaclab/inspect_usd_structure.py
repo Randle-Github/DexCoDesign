@@ -18,7 +18,7 @@ args = parser.parse_args()
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
-from pxr import Usd, UsdPhysics  # noqa: E402
+from pxr import Usd, UsdGeom, UsdPhysics  # noqa: E402
 
 
 def _plain(value):
@@ -39,6 +39,10 @@ def main() -> int:
         print(f"FLATTENED {args.flatten_output}", flush=True)
     print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}", flush=True)
     records = []
+    bbox_cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(),
+        [UsdGeom.Tokens.default_, UsdGeom.Tokens.proxy, UsdGeom.Tokens.guide],
+    )
     interesting = (
         "localPos",
         "localRot",
@@ -88,6 +92,16 @@ def main() -> int:
                 if relationship:
                     record[name] = [str(item) for item in relationship.GetTargets()]
             records.append(record)
+        elif prim.GetName() == "collisions":
+            bounds = bbox_cache.ComputeLocalBound(prim).ComputeAlignedRange()
+            records.append(
+                {
+                    "path": str(prim.GetPath()),
+                    "type": prim.GetTypeName(),
+                    "local_bounds_min": _plain(bounds.GetMin()),
+                    "local_bounds_max": _plain(bounds.GetMax()),
+                }
+            )
     if args.json_output:
         with open(args.json_output, "w", encoding="utf-8") as stream:
             json.dump(records, stream, indent=2)
