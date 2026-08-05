@@ -25,6 +25,7 @@ def prepare_retarget(
     *,
     iterations: int = 18,
     reuse_ik: bool = False,
+    initial_trajectory: Path | None = None,
 ) -> tuple[dict[str, object], Path]:
     """Retarget the fixed pre-RL MANO command trajectory to one generated hand."""
     runtime_root = runtime_root.resolve()
@@ -80,6 +81,10 @@ def prepare_retarget(
                 "mano_command",
                 "--solve-only",
             ]
+            if initial_trajectory is not None:
+                sys.argv.extend(
+                    ["--initial-trajectory", str(initial_trajectory.resolve())]
+                )
             retarget.main()
         finally:
             sys.argv = original_argv
@@ -98,6 +103,7 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--reuse-ik", action="store_true")
+    parser.add_argument("--initial-trajectory", type=Path)
     args = parser.parse_args()
 
     runtime_root = args.runtime_root.resolve()
@@ -105,6 +111,7 @@ def main() -> int:
         runtime_root,
         iterations=args.iterations,
         reuse_ik=args.reuse_ik,
+        initial_trajectory=args.initial_trajectory,
     )
     hand_id = str(metadata["hand_id"])
     output_root = runtime_root.parent / "retarget_physics"

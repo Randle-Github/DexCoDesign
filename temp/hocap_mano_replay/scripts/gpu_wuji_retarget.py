@@ -579,6 +579,11 @@ def main() -> int:
     parser.add_argument("--seed-trajectory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--candidates", type=int, default=4096)
+    parser.add_argument(
+        "--vectors",
+        type=Path,
+        help="optional .npy or .npz morphology matrix; overrides random sampling",
+    )
     parser.add_argument("--iterations", type=int, default=4)
     parser.add_argument("--candidate-chunk", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20260805)
@@ -598,7 +603,22 @@ def main() -> int:
         wrist_position = seed["wrist_position"].astype(np.float32)
         wrist_quaternion = seed["wrist_quaternion_xyzw"].astype(np.float32)
         frame_ids = seed["frame_ids"].astype(np.int64)
-    vectors_np = sample_vectors(args.candidates, args.seed)
+    if args.vectors is None:
+        vectors_np = sample_vectors(args.candidates, args.seed)
+    elif args.vectors.suffix == ".npy":
+        vectors_np = np.load(args.vectors).astype(np.float32)
+    else:
+        with np.load(args.vectors) as supplied:
+            key = "vectors" if "vectors" in supplied else supplied.files[0]
+            vectors_np = supplied[key].astype(np.float32)
+    if vectors_np.ndim != 2 or vectors_np.shape[1] != len(VECTOR_NAMES):
+        raise ValueError(
+            f"vectors must have shape (N, {len(VECTOR_NAMES)}), got "
+            f"{vectors_np.shape}"
+        )
+    if np.any(vectors_np < LOWER_BOUNDS) or np.any(vectors_np > UPPER_BOUNDS):
+        raise ValueError("supplied morphology vectors exceed certified bounds")
+    args.candidates = len(vectors_np)
     vectors = torch.from_numpy(vectors_np).to(device)
     seed_q = torch.from_numpy(seed_q_np).to(device)
     kinematics = WujiBatchKinematics(joint_names, device)
@@ -618,6 +638,15 @@ def main() -> int:
     )
     top_count = min(max(args.top_k, 1), args.candidates)
     top_indices = torch.topk(proxy[:, 0], k=top_count).indices
+    wrist_rotation = quat_xyzw_matrix(
+        torch.from_numpy(wrist_quaternion).to(device)
+    )
+    top_wrist_position = (
+        torch.from_numpy(wrist_position).to(device)[None]
+        + torch.einsum(
+            "tij,ktj->kti", wrist_rotation, wrist_delta[top_indices].to(device)
+        )
+    ).cpu().numpy()
     payload = {
         "schema_version": 1,
         "backend": "torch_gpu_batched_dls",
@@ -648,6 +677,10 @@ def main() -> int:
         "top_vectors": vectors_np[top_indices.numpy()],
         "top_qpos": q[top_indices].numpy(),
         "top_wrist_delta_local": wrist_delta[top_indices].numpy(),
+        "top_wrist_position": top_wrist_position,
+        "top_wrist_quaternion_xyzw": np.broadcast_to(
+            wrist_quaternion[None], (top_count, *wrist_quaternion.shape)
+        ).copy(),
     }
     if args.save_trajectories:
         arrays["qpos"] = q.numpy()

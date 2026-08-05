@@ -180,11 +180,21 @@ def evaluate(
     iterations: int,
     render_video: bool,
     reuse_ik: bool,
+    initial_trajectory: Path | None = None,
+    prepared_runtime: Path | None = None,
 ) -> dict[str, object]:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     hand_id = "wuji_source" if source else output_dir.name.replace("-", "_")
-    if source:
+    if prepared_runtime is not None:
+        runtime_root = prepared_runtime.resolve()
+        graph_path = output_dir / "reshape_graph.json"
+        graph = (
+            json.loads(graph_path.read_text(encoding="utf-8"))
+            if graph_path.is_file()
+            else None
+        )
+    elif source:
         runtime_root = prepare_source_runtime(output_dir)
         graph = None
     else:
@@ -194,6 +204,7 @@ def evaluate(
         runtime_root,
         iterations=iterations,
         reuse_ik=reuse_ik,
+        initial_trajectory=initial_trajectory,
     )
     physics.PHYSICS_CACHE = output_dir / "physics_cache"
     capture = np.load(physics.DEFAULT_CAPTURE)
@@ -236,6 +247,12 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=18)
     parser.add_argument("--render-video", action="store_true")
     parser.add_argument("--reuse-ik", action="store_true")
+    parser.add_argument("--initial-trajectory", type=Path)
+    parser.add_argument(
+        "--prepared-runtime",
+        type=Path,
+        help="reuse a runtime exported from a shared batch compilation",
+    )
     args = parser.parse_args()
     if args.source:
         vector = SOURCE_VECTOR.copy()
@@ -250,6 +267,8 @@ def main() -> int:
         iterations=args.iterations,
         render_video=args.render_video,
         reuse_ik=args.reuse_ik,
+        initial_trajectory=args.initial_trajectory,
+        prepared_runtime=args.prepared_runtime,
     )
     print(json.dumps(payload["rollout"], indent=2))
     return 0

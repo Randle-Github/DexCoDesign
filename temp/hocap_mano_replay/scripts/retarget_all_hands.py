@@ -1031,6 +1031,14 @@ def main() -> None:
         action="store_true",
         help="Render previously solved trajectories without rerunning IK",
     )
+    parser.add_argument(
+        "--initial-trajectory",
+        type=Path,
+        help=(
+            "optional full-qpos trajectory used as a per-frame IK warm start; "
+            "joint count and sampled frame count must match the target hand"
+        ),
+    )
     args = parser.parse_args()
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1059,6 +1067,23 @@ def main() -> None:
     ]
 
     frame_ids = np.arange(0, len(wrist_pos), args.stride, dtype=int)
+    initial_trajectory = None
+    initial_wrist_position = None
+    initial_wrist_quaternion = None
+    if args.initial_trajectory is not None:
+        with np.load(args.initial_trajectory) as initial:
+            initial_trajectory = initial["qpos"].astype(np.float64)
+            if "wrist_position" in initial:
+                initial_wrist_position = initial["wrist_position"].astype(np.float64)
+            if "wrist_quaternion_xyzw" in initial:
+                initial_wrist_quaternion = initial[
+                    "wrist_quaternion_xyzw"
+                ].astype(np.float64)
+        if len(initial_trajectory) != len(frame_ids):
+            raise ValueError(
+                "warm-start trajectory has "
+                f"{len(initial_trajectory)} frames, expected {len(frame_ids)}"
+            )
     diagnostics = {
         "reference_source": (
             "pre-RL MANO hand_ctrl forward kinematics"
@@ -1085,6 +1110,20 @@ def main() -> None:
             * hand.map_rotation.inv()
         )
         for trajectory_index, frame_id in enumerate(frame_ids):
+            if initial_trajectory is not None:
+                if initial_trajectory.shape[1] != len(hand.full_qpos_ids):
+                    raise ValueError(
+                        f"{hand.hand_id}: warm-start qpos width "
+                        f"{initial_trajectory.shape[1]} does not match "
+                        f"{len(hand.full_qpos_ids)}"
+                    )
+                assign_full_qpos(hand, initial_trajectory[trajectory_index])
+                if initial_wrist_position is not None:
+                    wrist_position = initial_wrist_position[trajectory_index].copy()
+                if initial_wrist_quaternion is not None:
+                    wrist_rotation = Rotation.from_quat(
+                        initial_wrist_quaternion[trajectory_index]
+                    )
             (
                 p_error,
                 r_error,
