@@ -66,9 +66,23 @@ def attach_parametric_collisions(
         candidate_path = candidate_root.AppendChild(link_name).AppendChild(
             "collisions"
         )
-        template_path = template_root.AppendChild(link_name).AppendChild(
-            "collisions"
-        )
+        # Isaac's earlier generated-hand exporter names the imported links
+        # ``hand__part_*`` while the geometry-free URDF importer keeps the
+        # canonical ``part_*`` names. Resolve that importer namespace only on
+        # the shared template side; candidate articulation names stay intact.
+        template_link = template_root.AppendChild(link_name)
+        if not template_stage.GetPrimAtPath(template_link):
+            matches = [
+                child.GetPath()
+                for child in template_stage.GetPrimAtPath(template_root).GetChildren()
+                if child.GetName().endswith(f"__{link_name}")
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"cannot uniquely map template link {link_name}: {matches}"
+                )
+            template_link = matches[0]
+        template_path = template_link.AppendChild("collisions")
         if not template_stage.GetPrimAtPath(template_path):
             raise ValueError(f"template collision prim is missing: {template_path}")
         collision = candidate_stage.OverridePrim(candidate_path)
