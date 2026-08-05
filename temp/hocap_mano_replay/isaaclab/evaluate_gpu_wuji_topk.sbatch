@@ -4,7 +4,7 @@
 #SBATCH --account=rl2-lab
 #SBATCH --qos=short
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=96G
+#SBATCH --mem=64G
 #SBATCH --time=02:00:00
 #SBATCH --output=/coc/flash7/yliu3735/workspace/DexCoDesign/artifacts/wuji_gpu_search/exact-topk-%j.out
 
