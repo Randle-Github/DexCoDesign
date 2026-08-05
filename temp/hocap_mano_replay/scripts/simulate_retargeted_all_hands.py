@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -55,6 +56,20 @@ from retarget_all_hands import (  # noqa: E402
     make_scene,
     rotation_matrix,
 )
+
+
+def ffmpeg_executable() -> str:
+    executable = shutil.which("ffmpeg")
+    if executable is not None:
+        return executable
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError as error:
+        raise FileNotFoundError(
+            "ffmpeg is neither on PATH nor provided by imageio_ffmpeg"
+        ) from error
 
 
 def _set(element: ET.Element, **attributes: object) -> None:
@@ -331,7 +346,7 @@ def simulate_hand(
     if render_video:
         ffmpeg = subprocess.Popen(
             [
-                "ffmpeg",
+                ffmpeg_executable(),
                 "-y",
                 "-loglevel",
                 "error",

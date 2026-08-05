@@ -7,6 +7,7 @@ import argparse
 import concurrent.futures
 import csv
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -111,9 +112,14 @@ def draw_curve(rows: list[dict[str, object]], output: Path) -> None:
 
 def compose(source_video: Path, best_video: Path, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        import imageio_ffmpeg
+
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loglevel", "error",
+            ffmpeg, "-y", "-loglevel", "error",
             "-i", str(source_video), "-i", str(best_video),
             "-filter_complex",
             (
