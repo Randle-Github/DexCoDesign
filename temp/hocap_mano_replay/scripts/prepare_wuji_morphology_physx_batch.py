@@ -164,11 +164,13 @@ def main() -> int:
         "candidate_ids": candidate_ids,
         "vectors": vectors.tolist(),
         "hand_urdf_paths": [
-            str(Path(row["prepared"]) / "hand_rl.urdf") for row in rows
+            str(Path(row["prepared"]) / str(row["hand_id"]) / "hand_rl.urdf")
+            for row in rows
         ],
         "hand_usd_paths": [str(row["usd"]) for row in rows],
         "reference_paths": [
-            str(Path(row["prepared"]) / "reference.npz") for row in rows
+            str(Path(row["prepared"]) / str(row["hand_id"]) / "reference.npz")
+            for row in rows
         ],
         "all_candidates_require_physical_rollout": True,
         "proxy_used": False,

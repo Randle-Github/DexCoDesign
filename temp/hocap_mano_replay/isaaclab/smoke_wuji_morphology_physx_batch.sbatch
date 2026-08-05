@@ -49,5 +49,7 @@ python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
   --convert-urdf \
   --headless
 
+test -s "${OUTPUT_ROOT}/physx_results.json"
+
 printf 'WUJI_PHYSX_SMOKE_COMPLETE candidates=%s output=%s\n' \
   "${LIMIT}" "${OUTPUT_ROOT}/physx_results.json"
