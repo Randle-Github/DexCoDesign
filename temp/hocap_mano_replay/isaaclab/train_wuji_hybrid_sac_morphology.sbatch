@@ -38,5 +38,5 @@ export OMNI_KIT_ACCEPT_EULA=YES
   --generations "${GENERATIONS}" \
   --sac-updates "${SAC_UPDATES}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
-  --kit_args "${KIT_ARGS}" \
+  --kit_args="${KIT_ARGS}" \
   --headless
