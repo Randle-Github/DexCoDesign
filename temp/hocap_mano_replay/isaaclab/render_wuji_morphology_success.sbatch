@@ -30,35 +30,36 @@ mkdir -p "${OUTPUT_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
 export OMP_NUM_THREADS=1
 
-python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
-  "${SEARCH_ROOT}/generation_000/gpu_retarget_all.npz" \
-  --output-root "${PREPARED}" \
-  --offset "${CANDIDATE_INDEX}" \
-  --limit 1 \
-  --workers 1 \
-  --include-visuals
+if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
+  python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
+    "${SEARCH_ROOT}/generation_000/gpu_retarget_all.npz" \
+    --output-root "${PREPARED}" \
+    --offset "${CANDIDATE_INDEX}" \
+    --limit 1 \
+    --workers 1 \
+    --include-visuals
 
-./isaaclab.sh -p \
-  temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
-  "${MANIFEST}" --headless
+  ./isaaclab.sh -p \
+    temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
+    "${MANIFEST}" --headless
 
-python temp/hocap_mano_replay/scripts/repeat_wuji_morphology_manifest.py \
-  "${SEARCH_MANIFEST}" "${CAPTURE_MANIFEST}" \
-  --index "${CANDIDATE_INDEX}" \
-  --repeats "${CAPTURE_REPLICAS}"
+  python temp/hocap_mano_replay/scripts/repeat_wuji_morphology_manifest.py \
+    "${SEARCH_MANIFEST}" "${CAPTURE_MANIFEST}" \
+    --index "${CANDIDATE_INDEX}" \
+    --repeats "${CAPTURE_REPLICAS}"
 
-# Capture with the exact physics-only prototype and runtime overlays used by
-# generation 0.  Replicas expose the GPU PhysX contact nondeterminism that made
-# this morphology successful in the original 4096-environment evaluation.
-export DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST="${CAPTURE_MANIFEST}"
-export HAND_SUCCESS_TRAJECTORY_PATH="${CAPTURE}"
-export HAND_BEST_ROLLOUT_PATH="${OUTPUT_ROOT}/farthest_rollout.npz"
-./isaaclab.sh -p \
-  temp/hocap_mano_replay/isaaclab/evaluate_wuji_morphology_physx_batch.py \
-  "${CAPTURE_MANIFEST}" \
-  --output "${OUTPUT_ROOT}/capture_evaluation.json" \
-  --no-seed \
-  --headless
+  # Capture with the exact physics-only prototype and runtime overlays used by
+  # generation 0. Replicas expose GPU PhysX contact nondeterminism.
+  export DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST="${CAPTURE_MANIFEST}"
+  export HAND_SUCCESS_TRAJECTORY_PATH="${CAPTURE}"
+  export HAND_BEST_ROLLOUT_PATH="${OUTPUT_ROOT}/farthest_rollout.npz"
+  ./isaaclab.sh -p \
+    temp/hocap_mano_replay/isaaclab/evaluate_wuji_morphology_physx_batch.py \
+    "${CAPTURE_MANIFEST}" \
+    --output "${OUTPUT_ROOT}/capture_evaluation.json" \
+    --no-seed \
+    --headless
+fi
 test -s "${CAPTURE}"
 
 unset HAND_SUCCESS_TRAJECTORY_PATH HAND_BEST_ROLLOUT_PATH
