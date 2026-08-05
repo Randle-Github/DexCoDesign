@@ -467,6 +467,9 @@ class WujiBatchKinematics:
         object_position = object_pose_wxyz[:, :3]
         scores = torch.empty(vectors.shape[0], dtype=self.dtype, device="cpu")
         hard_pinch_frames = torch.empty_like(scores)
+        minimum_distance = torch.empty(
+            vectors.shape[0], 5, dtype=self.dtype, device="cpu"
+        )
         start = time.perf_counter()
         for begin in range(0, vectors.shape[0], candidate_chunk):
             end = min(begin + candidate_chunk, vectors.shape[0])
@@ -529,10 +532,13 @@ class WujiBatchKinematics:
             hard_pinch = hard_contact[..., 0] & hard_contact[..., 1:].any(dim=-1)
             scores[begin:end] = (2.0 * soft_pinch.sum(dim=-1)).detach().cpu()
             hard_pinch_frames[begin:end] = hard_pinch.sum(dim=-1).detach().cpu()
+            minimum_distance[begin:end] = cap_distance.amin(dim=1).detach().cpu()
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         elapsed = time.perf_counter() - start
-        return torch.stack((scores, hard_pinch_frames), dim=-1), {
+        return torch.cat(
+            (scores[:, None], hard_pinch_frames[:, None], minimum_distance), dim=-1
+        ), {
             "seconds": elapsed,
             "candidates_per_second": vectors.shape[0] / elapsed,
         }
@@ -623,6 +629,7 @@ def main() -> int:
         "top_k": top_count,
         "maximum_soft_pinch_return": float(proxy[:, 0].max()),
         "maximum_hard_pinch_frames": int(proxy[:, 1].max()),
+        "minimum_distal_surface_distance_m": proxy[:, 2:].amin(dim=0).tolist(),
         "device": str(device),
         "torch_version": torch.__version__,
     }
@@ -636,6 +643,7 @@ def main() -> int:
         "metadata_json": np.asarray(json.dumps(payload)),
         "proxy_soft_pinch_return": proxy[:, 0].numpy(),
         "proxy_hard_pinch_frames": proxy[:, 1].numpy(),
+        "proxy_minimum_surface_distance_m": proxy[:, 2:].numpy(),
         "top_indices": top_indices.numpy(),
         "top_vectors": vectors_np[top_indices.numpy()],
         "top_qpos": q[top_indices].numpy(),
