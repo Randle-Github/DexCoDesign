@@ -150,8 +150,11 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
             / "isaaclab_logs"
         ),
         physics_material=sim_utils.RigidBodyMaterialCfg(
-            static_friction=2.0,
-            dynamic_friction=2.0,
+            # Use Isaac Lab's official dexterous-hand baseline.  The previous
+            # value (2.0) was a project-side grasp aid, not an asset/vendor or
+            # EgoEngine parameter, and can amplify tangential contact chatter.
+            static_friction=1.0,
+            dynamic_friction=1.0,
             restitution=0.0,
         ),
     )

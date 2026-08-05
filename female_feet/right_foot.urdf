@@ -1,0 +1,155 @@
+<?xml version="1.0"?>
+<robot name="right_female_foot">
+  <mujoco><compiler meshdir="meshes" discardvisual="false" balanceinertia="true"/></mujoco>
+  <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+  <link name="foot_base">
+    <inertial>
+      <origin xyz="0.104452983 0.0022724783 0.0305558221" rpy="0 0 0"/>
+      <mass value="0.86694194"/>
+      <inertia ixx="0.000631065768" ixy="-2.31080031e-05" ixz="0.0003174606"
+               iyy="0.00262405092" iyz="-2.49250646e-05" izz="0.00266436334"/>
+    </inertial>
+    <visual name="right_foot_base_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_foot_base.obj"/></geometry>
+      <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+    </visual>
+    <collision name="right_foot_base_collision_1_collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_foot_base_collision_1.obj"/></geometry>
+    </collision>
+    <collision name="right_foot_base_collision_2_collision_2">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_foot_base_collision_2.obj"/></geometry>
+    </collision>
+    <collision name="right_foot_base_collision_3_collision_3">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_foot_base_collision_3.obj"/></geometry>
+    </collision>
+  </link>
+  <link name="big_toe">
+    <inertial>
+      <origin xyz="0.00934659445 -0.00313045925 0.000864063849" rpy="0 0 0"/>
+      <mass value="0.0159498344"/>
+      <inertia ixx="1.07727435e-06" ixy="1.37696689e-07" ixz="9.06925872e-08"
+               iyy="2.20767314e-06" iyz="-1.1819443e-08" izz="2.40609579e-06"/>
+    </inertial>
+    <visual name="right_big_toe_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_big_toe.obj"/></geometry>
+      <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+    </visual>
+    <collision name="right_big_toe_collision_collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_big_toe_collision.obj"/></geometry>
+    </collision>
+  </link>
+  <link name="toe_2">
+    <inertial>
+      <origin xyz="0.00781614656 -0.00203350163 0.000647149777" rpy="0 0 0"/>
+      <mass value="0.008"/>
+      <inertia ixx="2.98180182e-07" ixy="8.30605551e-10" ixz="6.50547468e-08"
+               iyy="4.82467919e-07" iyz="3.88390324e-09" izz="5.00418623e-07"/>
+    </inertial>
+    <visual name="right_toe_2_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_2.obj"/></geometry>
+      <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+    </visual>
+    <collision name="right_toe_2_collision_collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_2_collision.obj"/></geometry>
+    </collision>
+  </link>
+  <link name="toe_3">
+    <inertial>
+      <origin xyz="0.00465165167 0.00177976294 -0.00101410062" rpy="0 0 0"/>
+      <mass value="0.008"/>
+      <inertia ixx="3.3163134e-07" ixy="-5.05910403e-08" ixz="3.29697731e-08"
+               iyy="6.83178614e-07" iyz="2.03382841e-08" izz="7.05305713e-07"/>
+    </inertial>
+    <visual name="right_toe_3_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_3.obj"/></geometry>
+      <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+    </visual>
+    <collision name="right_toe_3_collision_collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_3_collision.obj"/></geometry>
+    </collision>
+  </link>
+  <link name="toe_4">
+    <inertial>
+      <origin xyz="0.0168739537 0.00811442274 -0.0033191286" rpy="0 0 0"/>
+      <mass value="0.008"/>
+      <inertia ixx="1.41777954e-07" ixy="-1.06911243e-08" ixz="7.82824896e-09"
+               iyy="1.57970466e-07" iyz="2.9006876e-09" izz="1.5377243e-07"/>
+    </inertial>
+    <visual name="right_toe_4_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_4.obj"/></geometry>
+      <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+    </visual>
+    <collision name="right_toe_4_collision_collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_4_collision.obj"/></geometry>
+    </collision>
+  </link>
+  <link name="toe_5">
+    <inertial>
+      <origin xyz="0.0092172666 0.00609283477 -0.00165030015" rpy="0 0 0"/>
+      <mass value="0.008"/>
+      <inertia ixx="1.53425509e-07" ixy="-1.94612761e-08" ixz="9.7490099e-09"
+               iyy="2.19710223e-07" iyz="9.12133663e-09" izz="2.04147966e-07"/>
+    </inertial>
+    <visual name="right_toe_5_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_5.obj"/></geometry>
+      <material name="female_skin"><color rgba="0.78 0.48 0.37 1"/></material>
+    </visual>
+    <collision name="right_toe_5_collision_collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="right_toe_5_collision.obj"/></geometry>
+    </collision>
+  </link>
+  <joint name="right_big_toe" type="revolute">
+    <parent link="foot_base"/>
+    <child link="big_toe"/>
+    <origin xyz="0.210536373 0.033743419 0.00856614757" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.45" upper="0.7" effort="2.0" velocity="1.5"/>
+    <dynamics damping="0.06" friction="0.018"/>
+  </joint>
+  <joint name="right_toe_2" type="revolute">
+    <parent link="foot_base"/>
+    <child link="toe_2"/>
+    <origin xyz="0.218186978 0.00882977398 0.00845567668" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.35" upper="0.78" effort="2.0" velocity="1.5"/>
+    <dynamics damping="0.06" friction="0.018"/>
+  </joint>
+  <joint name="right_toe_3" type="revolute">
+    <parent link="foot_base"/>
+    <child link="toe_3"/>
+    <origin xyz="0.209935857 -0.0109609327 0.00936764507" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.35" upper="0.78" effort="2.0" velocity="1.5"/>
+    <dynamics damping="0.06" friction="0.018"/>
+  </joint>
+  <joint name="right_toe_4" type="revolute">
+    <parent link="foot_base"/>
+    <child link="toe_4"/>
+    <origin xyz="0.193723712 -0.0318587441 0.0113514554" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.35" upper="0.78" effort="2.0" velocity="1.5"/>
+    <dynamics damping="0.06" friction="0.018"/>
+  </joint>
+  <joint name="right_toe_5" type="revolute">
+    <parent link="foot_base"/>
+    <child link="toe_5"/>
+    <origin xyz="0.180850123 -0.0431284968 0.0114552975" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.35" upper="0.78" effort="2.0" velocity="1.5"/>
+    <dynamics damping="0.06" friction="0.018"/>
+  </joint>
+</robot>

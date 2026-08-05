@@ -348,15 +348,41 @@
           "source_path": "inspire_rh56dfx/source/inspire/inspire_right.canonical.xml"
         }
       }
+    },
+    "supr_female_foot": {
+      "display_name": "SUPR Female Foot (5-Toe Direct Drive)",
+      "source": "https://supr.is.tue.mpg.de/",
+      "entries": {
+        "left": {
+          "format": "urdf",
+          "path": "direct_motor/supr_female_foot/left/hand.urdf",
+          "active_dofs": 5,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 5,
+          "source_format": "urdf",
+          "source_path": "female_feet/left_foot.urdf",
+          "collision_geometry": "low_resolution_convex_mesh"
+        },
+        "right": {
+          "format": "urdf",
+          "path": "direct_motor/supr_female_foot/right/hand.urdf",
+          "active_dofs": 5,
+          "passive_mimic_dofs": 0,
+          "scalar_dofs": 5,
+          "source_format": "urdf",
+          "source_path": "female_feet/right_foot.urdf",
+          "collision_geometry": "low_resolution_convex_mesh"
+        }
+      }
     }
   },
   "summary": {
-    "hands": 14,
-    "assets": 28,
-    "active_dofs": 498,
+    "hands": 15,
+    "assets": 30,
+    "active_dofs": 508,
     "passive_mimic_dofs": 36,
-    "scalar_dofs": 534,
-    "assets_with_changes": 12,
+    "scalar_dofs": 544,
+    "assets_with_changes": 14,
     "loose_passive_dofs": 0,
     "missing_meshes": 0
   }

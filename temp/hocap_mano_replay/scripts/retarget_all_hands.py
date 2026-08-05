@@ -138,6 +138,13 @@ TIP_LINKS: dict[str, dict[str, str]] = {
         "ring": "ring_intermediate",
         "pinky": "pinky_intermediate",
     },
+    "supr_female_foot": {
+        "thumb": "big_toe",
+        "index": "toe_2",
+        "middle": "toe_3",
+        "ring": "toe_4",
+        "pinky": "toe_5",
+    },
 }
 
 
@@ -193,7 +200,15 @@ def make_scene(hand_id: str) -> Path:
     root = tree.getroot()
     compiler = root.find("compiler")
     assert compiler is not None
-    compiler.set("meshdir", str(hand_urdf.parent))
+    # SUPR's source URDF declares meshdir="meshes", so MuJoCo's round-trip
+    # exporter stores bare OBJ basenames. Other converted hands retain their
+    # "meshes/..." asset paths and therefore use the hand directory itself.
+    mesh_root = (
+        hand_urdf.parent / "meshes"
+        if hand_id == "supr_female_foot"
+        else hand_urdf.parent
+    )
+    compiler.set("meshdir", str(mesh_root))
     world = root.find("worldbody")
     asset = root.find("asset")
     assert world is not None and asset is not None
@@ -258,6 +273,34 @@ def make_scene(hand_id: str) -> Path:
 
 def rotation_matrix(data: mujoco.MjData, body_id: int) -> np.ndarray:
     return np.asarray(data.xmat[body_id], dtype=np.float64).reshape(3, 3).copy()
+
+
+def supr_fingertip_offsets() -> dict[str, np.ndarray]:
+    """Return distal surface points of the five articulated SUPR toe meshes."""
+    mesh_root = DIRECT_ROOT / "supr_female_foot" / "left" / "meshes"
+    link_names = {
+        "thumb": "big_toe",
+        "index": "toe_2",
+        "middle": "toe_3",
+        "ring": "toe_4",
+        "pinky": "toe_5",
+    }
+    offsets: dict[str, np.ndarray] = {}
+    for finger, link_name in link_names.items():
+        vertices = []
+        mesh_path = mesh_root / f"left_{link_name}.obj"
+        for line in mesh_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("v "):
+                vertices.append([float(value) for value in line.split()[1:4]])
+        points = np.asarray(vertices, dtype=np.float64)
+        if not len(points):
+            raise ValueError(f"No vertices in {mesh_path}")
+        distal_x = float(points[:, 0].max())
+        distal_cap = points[points[:, 0] >= distal_x - 5e-4]
+        offset = distal_cap.mean(axis=0)
+        offset[0] = distal_x
+        offsets[finger] = offset
+    return offsets
 
 
 def relative_tip_poses(
@@ -555,6 +598,8 @@ def build_hand(
     }
     if hand_id == "mano":
         tip_offsets = mano_fingertip_offsets()
+    elif hand_id == "supr_female_foot":
+        tip_offsets = supr_fingertip_offsets()
     else:
         tip_offsets = resolve_fingertip_offsets(
             DIRECT_ROOT / hand_id / "left" / "hand.urdf",
