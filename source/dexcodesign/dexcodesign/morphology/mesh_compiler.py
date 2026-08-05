@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         help="do not clear the shared compiled-mesh directory before a subset compile",
     )
     parser.add_argument(
+        "--palm-only",
+        action="store_true",
+        help="compile only the candidate-specific palm mesh for parametric USD",
+    )
+    parser.add_argument(
         "--palm-generation-mode",
         choices=(
             "fixed_template", "attachment_hull", "parametric_2_5d",
@@ -199,6 +204,13 @@ def main() -> int:
         for node in hand["parts"]:
             result = dict(node)
             source_mesh = node.get("source_mesh")
+            if args.palm_only and not (
+                int(node["id"]) == 0 and node.get("role") == "palm"
+            ):
+                result["compiled_mesh"] = None
+                geometryless += 1
+                output_parts.append(result)
+                continue
             if source_mesh is None:
                 result["compiled_mesh"] = None
                 geometryless += 1

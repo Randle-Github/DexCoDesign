@@ -46,6 +46,41 @@ import torch
 import isaaclab_tasks  # noqa: F401, E402
 from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg  # noqa: E402
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
+from pxr import Gf, Usd, UsdGeom  # noqa: E402
+
+
+def attach_parametric_collisions(
+    candidate_usd: Path,
+    template_usd: Path,
+    link_names: list[str],
+    transforms: list[list[list[float]]],
+) -> None:
+    """Reference shared collision prototypes into a skeleton articulation."""
+    candidate_stage = Usd.Stage.Open(str(candidate_usd))
+    template_stage = Usd.Stage.Open(str(template_usd))
+    candidate_root = candidate_stage.GetDefaultPrim().GetPath()
+    template_root = template_stage.GetDefaultPrim().GetPath()
+    if len(link_names) != len(transforms):
+        raise ValueError("parametric link/transform count mismatch")
+    for link_name, transform in zip(link_names, transforms, strict=True):
+        candidate_path = candidate_root.AppendChild(link_name).AppendChild(
+            "collisions"
+        )
+        template_path = template_root.AppendChild(link_name).AppendChild(
+            "collisions"
+        )
+        if not template_stage.GetPrimAtPath(template_path):
+            raise ValueError(f"template collision prim is missing: {template_path}")
+        collision = candidate_stage.OverridePrim(candidate_path)
+        references = collision.GetReferences()
+        references.ClearReferences()
+        references.AddReference(str(template_usd), template_path)
+        matrix = np.asarray(transform, dtype=np.float64)
+        if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
+            xform = UsdGeom.Xformable(collision)
+            xform.ClearXformOpOrder()
+            xform.AddTransformOp().Set(Gf.Matrix4d(*matrix.reshape(-1).tolist()))
+    candidate_stage.GetRootLayer().Save()
 
 
 @hydra_task_config(args_cli.task, "skrl_cfg_entry_point")
@@ -89,6 +124,23 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                     flush=True,
                 )
         conversion_seconds = time.perf_counter() - convert_start
+    template_value = manifest.get("parametric_template_usd")
+    if template_value:
+        attach_start = time.perf_counter()
+        template_usd = Path(template_value).resolve()
+        for index, usd_value in enumerate(manifest["hand_usd_paths"]):
+            attach_parametric_collisions(
+                Path(usd_value).resolve(),
+                template_usd,
+                manifest["parametric_link_names"][index],
+                manifest["parametric_relative_transforms"][index],
+            )
+        print(
+            "WUJI_PARAMETRIC_COLLISIONS_ATTACHED "
+            f"completed={count}/{count} "
+            f"seconds={time.perf_counter() - attach_start:.6f}",
+            flush=True,
+        )
     env_cfg.scene.num_envs = count
     env_cfg.scene.replicate_physics = False
     env_cfg.scene.clone_in_fabric = False
@@ -184,6 +236,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
         "all_candidates_physically_evaluated": True,
         "proxy_used": False,
         "top_k_prefilter_used": False,
+        "parametric_usd": bool(template_value),
         "reward": "RL C-error + binary pinch contact",
         "candidate_count": count,
         "completed": len(rows),

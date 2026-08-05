@@ -168,6 +168,11 @@ def main() -> int:
             "the selected morphology can be re-exported with visuals later"
         ),
     )
+    parser.add_argument(
+        "--skeleton-only",
+        action="store_true",
+        help="export links/joints/inertials without geometry for parametric USD",
+    )
     args = parser.parse_args()
 
     payload = json.loads(args.compiled.read_text(encoding="utf-8"))
@@ -240,7 +245,13 @@ def main() -> int:
             },
         )
 
+        if args.skeleton_only:
+            continue
         compiled_mesh = part["compiled_mesh"]
+        if compiled_mesh is None:
+            raise ValueError(
+                f"part {part_id} has no compiled mesh without --skeleton-only"
+            )
         visual_source = compiled_root / compiled_mesh["file"]
         collision_source = compiled_root / compiled_mesh.get(
             "collision_file", compiled_mesh["file"]
@@ -354,9 +365,13 @@ def main() -> int:
             part["joint_type"] != "fixed" for part in hand["parts"]
         ),
         "passive_mimic_dofs": 0,
-        "all_parts_have_visual_and_collision": not args.physics_only,
-        "all_parts_have_collision": True,
+        "all_parts_have_visual_and_collision": not (
+            args.physics_only or args.skeleton_only
+        ),
+        "all_parts_have_collision": not args.skeleton_only,
         "physics_only": bool(args.physics_only),
+        "skeleton_only": bool(args.skeleton_only),
+        "link_names": {str(key): value for key, value in link_names.items()},
         "mirror_semantics": "left polar geometry + left axial revolute axes",
     }
     metadata_path = args.output_root / "runtime_metadata.json"

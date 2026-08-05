@@ -49,6 +49,11 @@ def main() -> int:
         help="parallel per-hand mesh compiler processes",
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--palm-only",
+        action="store_true",
+        help="compile only candidate palms; finger collision uses USD prototypes",
+    )
     parser.add_argument("--rebuild-preprocess", action="store_true")
     parser.add_argument(
         "--palm-generation-mode",
@@ -93,6 +98,7 @@ def main() -> int:
     digest.update(encoded)
     digest.update(str(args.seed).encode())
     digest.update(args.palm_generation_mode.encode())
+    digest.update(str(bool(args.palm_only)).encode())
     for path in (REFERENCE_GRAPH, BUNDLES):
         if path.is_file():
             digest.update(path.read_bytes())
@@ -131,6 +137,7 @@ def main() -> int:
     if args.workers <= 1 or len(hand_ids) == 1:
         run_module(
             "dexcodesign.morphology.mesh_compiler",
+            *(["--palm-only"] if args.palm_only else []),
             "--palm-generation-mode",
             args.palm_generation_mode,
             env=env,
@@ -151,6 +158,7 @@ def main() -> int:
                 "--output",
                 str(output),
                 "--preserve-existing-meshes",
+                *(["--palm-only"] if args.palm_only else []),
                 "--palm-generation-mode",
                 args.palm_generation_mode,
                 env=env,
