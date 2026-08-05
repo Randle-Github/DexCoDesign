@@ -52,6 +52,7 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--direct-template", action="store_true")
+    parser.add_argument("--direct-candidate-assets", type=Path)
     args = parser.parse_args()
 
     root = args.output_root.resolve()
@@ -106,7 +107,7 @@ def main() -> int:
         )
         urdfs.append("")
         candidate_usd = candidate_root / "asset" / "hand.usd"
-        if not args.direct_template:
+        if not args.direct_template and args.direct_candidate_assets is None:
             candidate_usd.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(args.template_usd.resolve(), candidate_usd)
             # Keep the importer's heavy configuration/mesh layers shared.
@@ -119,9 +120,21 @@ def main() -> int:
                 if not destination.exists() and not destination.is_symlink():
                     os.symlink(child, destination, target_is_directory=child.is_dir())
         usds.append(
-            str(args.template_usd.resolve())
-            if args.direct_template
-            else str(candidate_usd)
+            str(
+                (
+                    args.direct_candidate_assets.resolve()
+                    / "candidates"
+                    / candidate_id
+                    / "asset"
+                    / "hand.usd"
+                )
+                if args.direct_candidate_assets is not None
+                else (
+                    args.template_usd.resolve()
+                    if args.direct_template
+                    else candidate_usd
+                )
+            )
         )
         references.append(str(reference))
         ordered_links = [
@@ -176,7 +189,9 @@ def main() -> int:
         "hand_usd_paths": usds,
         "reference_paths": references,
         "parametric_template_usd": (
-            None if args.direct_template else str(args.template_usd.resolve())
+            None
+            if args.direct_template or args.direct_candidate_assets is not None
+            else str(args.template_usd.resolve())
         ),
         "parametric_link_names": link_names,
         "parametric_relative_transforms": relative_transforms,

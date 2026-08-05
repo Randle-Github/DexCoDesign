@@ -19,6 +19,7 @@ COMPILED_HANDS="${COMPILED_HANDS:?set COMPILED_HANDS}"
 TEMPLATE_USD="${TEMPLATE_USD:?set TEMPLATE_USD}"
 TEMPLATE_REFERENCE="${TEMPLATE_REFERENCE:?set TEMPLATE_REFERENCE}"
 DIRECT_TEMPLATE="${DIRECT_TEMPLATE:-0}"
+DIRECT_CANDIDATE_ASSETS="${DIRECT_CANDIDATE_ASSETS:-}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -31,6 +32,9 @@ EVAL_FLAGS=()
 if [[ "${DIRECT_TEMPLATE}" == "1" ]]; then
   PREP_FLAGS+=(--direct-template)
   EVAL_FLAGS=()
+fi
+if [[ -n "${DIRECT_CANDIDATE_ASSETS}" ]]; then
+  PREP_FLAGS+=(--direct-candidate-assets "${DIRECT_CANDIDATE_ASSETS}")
 fi
 
 python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_usd_smoke.py \
