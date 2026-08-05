@@ -53,6 +53,8 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--direct-template", action="store_true")
     parser.add_argument("--direct-candidate-assets", type=Path)
+    parser.add_argument("--prototype-bank-manifest", type=Path)
+    parser.add_argument("--prototype-bank-compiled", type=Path)
     args = parser.parse_args()
 
     root = args.output_root.resolve()
@@ -77,18 +79,61 @@ def main() -> int:
     link_translations = []
     joint_names = []
     joint_local_positions = []
+    bank_rows: dict[int, dict[str, str]] | None = None
+    bank_by_id: dict[str, dict[str, object]] | None = None
+    if (args.prototype_bank_manifest is None) != (
+        args.prototype_bank_compiled is None
+    ):
+        raise ValueError("both prototype-bank arguments are required together")
+    if args.prototype_bank_manifest is not None:
+        bank_manifest = json.loads(
+            args.prototype_bank_manifest.read_text(encoding="utf-8")
+        )
+        bank_compiled = json.loads(
+            args.prototype_bank_compiled.read_text(encoding="utf-8")
+        )
+        bank_rows = {
+            int(round(vector[0])): {
+                "candidate_id": str(candidate_id),
+                "usd": str(usd),
+            }
+            for vector, candidate_id, usd in zip(
+                bank_manifest["vectors"],
+                bank_manifest["candidate_ids"],
+                bank_manifest["hand_usd_paths"],
+                strict=True,
+            )
+        }
+        bank_by_id = {
+            str(hand["hand_id"]): hand for hand in bank_compiled["hands"]
+        }
+        if set(bank_rows) != set(range(32)):
+            raise ValueError("prototype bank must contain indices 0 through 31")
     baseline = by_id[candidate_ids[0]]
     source_scale, source_rotation = _inverse_source_linear(
         str(baseline["seed_source"])
     )
     reflection = np.diag((-1.0, 1.0, 1.0))
     polar_linear = source_rotation.T @ reflection
-    baseline_linear = {
-        int(part["id"]): np.asarray(part["mesh_linear"], dtype=np.float64)
-        for part in baseline["parts"]
-    }
     for index, candidate_id in enumerate(candidate_ids):
         candidate = by_id[candidate_id]
+        prototype_row = (
+            None if bank_rows is None else bank_rows[int(round(vectors[index, 0]))]
+        )
+        prototype = (
+            baseline
+            if prototype_row is None
+            else bank_by_id[prototype_row["candidate_id"]]
+        )
+        prototype_linear = {
+            int(part["id"]): np.asarray(part["mesh_linear"], dtype=np.float64)
+            for part in prototype["parts"]
+        }
+        template_usd = (
+            args.template_usd.resolve()
+            if prototype_row is None
+            else Path(prototype_row["usd"]).resolve()
+        )
         candidate_root = root / "candidates" / candidate_id
         metadata = {
             "link_names": {
@@ -109,12 +154,12 @@ def main() -> int:
         candidate_usd = candidate_root / "asset" / "hand.usd"
         if not args.direct_template and args.direct_candidate_assets is None:
             candidate_usd.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(args.template_usd.resolve(), candidate_usd)
+            shutil.copy2(template_usd, candidate_usd)
             # Keep the importer's heavy configuration/mesh layers shared.
             # The copied top layer is tiny and receives only candidate-local
             # transform/joint opinions.
-            for child in args.template_usd.resolve().parent.iterdir():
-                if child.name == args.template_usd.name:
+            for child in template_usd.parent.iterdir():
+                if child.name == template_usd.name:
                     continue
                 destination = candidate_usd.parent / child.name
                 if not destination.exists() and not destination.is_symlink():
@@ -130,7 +175,7 @@ def main() -> int:
                 )
                 if args.direct_candidate_assets is not None
                 else (
-                    args.template_usd.resolve()
+                    template_usd
                     if args.direct_template
                     else candidate_usd
                 )
@@ -153,7 +198,7 @@ def main() -> int:
             # exporter then applies P = source_rotation.T @ reflection, so
             # Ve = V @ L.T @ P / scale.  Author the exact relative affine in
             # that exported link frame; the source similarity scale cancels.
-            baseline_export = baseline_linear[part_id].T @ polar_linear
+            baseline_export = prototype_linear[part_id].T @ polar_linear
             current_export = current.T @ polar_linear
             relative = np.linalg.solve(baseline_export, current_export)
             matrix = np.eye(4, dtype=np.float64)
@@ -192,9 +237,22 @@ def main() -> int:
         "reference_paths": references,
         "parametric_template_usd": (
             None
-            if args.direct_template or args.direct_candidate_assets is not None
+            if (
+                args.direct_template
+                or args.direct_candidate_assets is not None
+                or bank_rows is not None
+            )
             else str(args.template_usd.resolve())
         ),
+        "parametric_template_usd_paths": (
+            None
+            if bank_rows is None
+            else [
+                str(Path(bank_rows[int(round(vector[0]))]["usd"]).resolve())
+                for vector in vectors
+            ]
+        ),
+        "palm_prototype_indices": [int(round(vector[0])) for vector in vectors],
         "parametric_link_names": link_names,
         "parametric_relative_transforms": relative_transforms,
         "parametric_link_translations": link_translations,

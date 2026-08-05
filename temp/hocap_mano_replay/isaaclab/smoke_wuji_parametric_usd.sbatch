@@ -20,6 +20,8 @@ TEMPLATE_USD="${TEMPLATE_USD:?set TEMPLATE_USD}"
 TEMPLATE_REFERENCE="${TEMPLATE_REFERENCE:?set TEMPLATE_REFERENCE}"
 DIRECT_TEMPLATE="${DIRECT_TEMPLATE:-0}"
 DIRECT_CANDIDATE_ASSETS="${DIRECT_CANDIDATE_ASSETS:-}"
+PROTOTYPE_BANK_MANIFEST="${PROTOTYPE_BANK_MANIFEST:-}"
+PROTOTYPE_BANK_COMPILED="${PROTOTYPE_BANK_COMPILED:-}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -35,6 +37,10 @@ if [[ "${DIRECT_TEMPLATE}" == "1" ]]; then
 fi
 if [[ -n "${DIRECT_CANDIDATE_ASSETS}" ]]; then
   PREP_FLAGS+=(--direct-candidate-assets "${DIRECT_CANDIDATE_ASSETS}")
+fi
+if [[ -n "${PROTOTYPE_BANK_MANIFEST}" || -n "${PROTOTYPE_BANK_COMPILED}" ]]; then
+  PREP_FLAGS+=(--prototype-bank-manifest "${PROTOTYPE_BANK_MANIFEST}")
+  PREP_FLAGS+=(--prototype-bank-compiled "${PROTOTYPE_BANK_COMPILED}")
 fi
 
 python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_usd_smoke.py \

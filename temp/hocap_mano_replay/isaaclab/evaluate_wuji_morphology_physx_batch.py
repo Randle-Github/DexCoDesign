@@ -192,10 +192,15 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                 )
         conversion_seconds = time.perf_counter() - convert_start
     template_value = manifest.get("parametric_template_usd")
-    if template_value:
+    template_values = manifest.get("parametric_template_usd_paths")
+    if template_value or template_values:
         attach_start = time.perf_counter()
-        template_usd = Path(template_value).resolve()
         for index, usd_value in enumerate(manifest["hand_usd_paths"]):
+            template_usd = Path(
+                template_value
+                if template_values is None
+                else template_values[index]
+            ).resolve()
             attach_parametric_collisions(
                 Path(usd_value).resolve(),
                 template_usd,
@@ -306,7 +311,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
         "all_candidates_physically_evaluated": True,
         "proxy_used": False,
         "top_k_prefilter_used": False,
-        "parametric_usd": bool(template_value),
+        "parametric_usd": bool(template_value or template_values),
         "reward": "RL C-error + binary pinch contact",
         "candidate_count": count,
         "completed": len(rows),
