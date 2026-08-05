@@ -157,7 +157,9 @@ def main() -> int:
             current_export = current.T @ polar_linear
             relative = np.linalg.solve(baseline_export, current_export)
             matrix = np.eye(4, dtype=np.float64)
-            matrix[:3, :3] = relative
+            # ``relative`` acts on compiler/exporter row vectors. USD/Gf
+            # xform matrices act on column vectors, hence the transpose.
+            matrix[:3, :3] = relative.T
             transforms.append(matrix.tolist())
             local_position = (
                 np.asarray(part["relative_pos"], dtype=np.float64)
