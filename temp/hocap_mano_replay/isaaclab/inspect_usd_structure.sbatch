@@ -13,9 +13,14 @@
 set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 USD="${USD:?set USD}"
+FLATTEN_OUTPUT="${FLATTEN_OUTPUT:-}"
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
 cd "${REPO_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
-./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/inspect_usd_structure.py \
-  "${USD}" --headless
+command=(./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/inspect_usd_structure.py
+  "${USD}" --headless)
+if [[ -n "${FLATTEN_OUTPUT}" ]]; then
+  command+=(--flatten-output "${FLATTEN_OUTPUT}")
+fi
+"${command[@]}"

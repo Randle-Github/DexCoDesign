@@ -10,6 +10,7 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 parser.add_argument("usd")
+parser.add_argument("--flatten-output")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 app_launcher = AppLauncher(args)
@@ -20,6 +21,11 @@ from pxr import Usd  # noqa: E402
 
 def main() -> int:
     stage = Usd.Stage.Open(args.usd)
+    if args.flatten_output:
+        flattened = stage.Flatten()
+        if not flattened.Export(args.flatten_output):
+            raise RuntimeError(f"failed to export {args.flatten_output}")
+        print(f"FLATTENED {args.flatten_output}", flush=True)
     print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}", flush=True)
     interesting = (
         "localPos",
