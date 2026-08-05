@@ -47,7 +47,32 @@ MANO_REFERENCE_PATH = (
     / "isaaclab_reference.npz"
 )
 ALL_HAND_ROOT = REPO_ROOT / "artifacts" / "isaaclab_all_hands_residual"
-HAND_ID = os.environ.get("DEXCODESIGN_HAND_ID", "mano")
+MORPHOLOGY_BATCH_MANIFEST_PATH = os.environ.get(
+    "DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"
+)
+MORPHOLOGY_BATCH_MANIFEST = None
+if MORPHOLOGY_BATCH_MANIFEST_PATH:
+    MORPHOLOGY_BATCH_MANIFEST = json.loads(
+        Path(MORPHOLOGY_BATCH_MANIFEST_PATH).read_text(encoding="utf-8")
+    )
+    _batch_usd_paths = [
+        Path(value).expanduser().resolve()
+        for value in MORPHOLOGY_BATCH_MANIFEST["hand_usd_paths"]
+    ]
+    _batch_reference_paths = [
+        Path(value).expanduser().resolve()
+        for value in MORPHOLOGY_BATCH_MANIFEST["reference_paths"]
+    ]
+    if not _batch_usd_paths or len(_batch_usd_paths) != len(_batch_reference_paths):
+        raise ValueError(
+            "Morphology batch manifest needs equally-sized, non-empty "
+            "hand_usd_paths and reference_paths"
+        )
+    HAND_ID = "wuji_morphology_batch"
+else:
+    _batch_usd_paths = []
+    _batch_reference_paths = []
+    HAND_ID = os.environ.get("DEXCODESIGN_HAND_ID", "mano")
 if HAND_ID == "mano":
     REFERENCE_PATH = MANO_REFERENCE_PATH
     HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
@@ -81,8 +106,12 @@ if HAND_ID == "mano":
     PALM_BODY_NAME = "left_palm"
     MIDDLE_TIP_BODY_NAME = "left_middle3"
 else:
-    REFERENCE_PATH = ALL_HAND_ROOT / "prepared" / HAND_ID / "reference.npz"
-    HAND_USD_PATH = ALL_HAND_ROOT / "assets" / HAND_ID / "hand.usd"
+    if MORPHOLOGY_BATCH_MANIFEST is not None:
+        REFERENCE_PATH = _batch_reference_paths[0]
+        HAND_USD_PATH = _batch_usd_paths[0]
+    else:
+        REFERENCE_PATH = ALL_HAND_ROOT / "prepared" / HAND_ID / "reference.npz"
+        HAND_USD_PATH = ALL_HAND_ROOT / "assets" / HAND_ID / "hand.usd"
     if not REFERENCE_PATH.is_file():
         raise FileNotFoundError(
             f"Missing prepared reference for {HAND_ID}: {REFERENCE_PATH}"
@@ -167,17 +196,33 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
 
     hand_cfg: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/Hand",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=str(HAND_USD_PATH),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=True,
-                max_depenetration_velocity=1.0,
-            ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=HAND_ID == "mano",
-                solver_position_iteration_count=8,
-                solver_velocity_iteration_count=2,
-            ),
+        spawn=(
+            sim_utils.MultiUsdFileCfg(
+                usd_path=[str(path) for path in _batch_usd_paths],
+                random_choice=False,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=True,
+                    max_depenetration_velocity=1.0,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=False,
+                    solver_position_iteration_count=8,
+                    solver_velocity_iteration_count=2,
+                ),
+            )
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else sim_utils.UsdFileCfg(
+                usd_path=str(HAND_USD_PATH),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=True,
+                    max_depenetration_velocity=1.0,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=HAND_ID == "mano",
+                    solver_position_iteration_count=8,
+                    solver_velocity_iteration_count=2,
+                ),
+            )
         ),
         init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
         actuators={
@@ -228,9 +273,16 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     )
 
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=1024,
+        num_envs=(
+            len(_batch_usd_paths)
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else 1024
+        ),
         env_spacing=0.65,
-        replicate_physics=True,
+        # Heterogeneous morphology assets must keep independent joint frames
+        # and collision geometry. MultiUsdFileCfg spawns them deterministically
+        # in manifest order when physics replication is disabled.
+        replicate_physics=MORPHOLOGY_BATCH_MANIFEST is None,
         # ContactSensor discovers one USD reporting prim per environment.
         # Fabric-only clones are absent from that discovery stage.
         clone_in_fabric=False,
@@ -297,7 +349,14 @@ class ManoResidualEnv(DirectRLEnv):
     cfg: ManoResidualEnvCfg
 
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
-        reference = np.load(REFERENCE_PATH)
+        reference_paths = (
+            _batch_reference_paths
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else [REFERENCE_PATH]
+        )
+        references = [np.load(path) for path in reference_paths]
+        reference = references[0]
+        self._morphology_batch = MORPHOLOGY_BATCH_MANIFEST is not None
         self._reference_joint_names = reference["joint_names"].tolist()
         self._action_joint_names = (
             reference["action_joint_names"].tolist()
@@ -309,14 +368,36 @@ class ManoResidualEnv(DirectRLEnv):
             if "action_to_control_matrix" in reference
             else np.eye(len(self._reference_joint_names), dtype=np.float32)
         )
-        self._reference_hand_q_cpu = torch.from_numpy(reference["hand_q"])
+        def stacked(key: str) -> np.ndarray:
+            values = [entry[key] for entry in references]
+            if self._morphology_batch:
+                return np.stack(values, axis=0)
+            return values[0]
+
+        for candidate in references[1:]:
+            for key in (
+                "joint_names",
+                "action_joint_names",
+                "fingertip_link_names",
+                "thumb_contact_link_names",
+                "other_finger_contact_link_names",
+                "contact_link_names",
+            ):
+                if key in reference and not np.array_equal(reference[key], candidate[key]):
+                    raise RuntimeError(
+                        f"Morphology batch references disagree on {key}; all "
+                        "candidates must preserve WUJI topology"
+                    )
+        self._reference_hand_q_cpu = torch.from_numpy(stacked("hand_q"))
         if "hand_ctrl" not in reference:
             raise RuntimeError(
                 f"{REFERENCE_PATH} has no hand_ctrl; regenerate the "
                 "EgoEngine-style reference before training"
             )
-        self._reference_hand_ctrl_cpu = torch.from_numpy(reference["hand_ctrl"])
-        self._reference_object_pose_cpu = torch.from_numpy(reference["object_pose_wxyz"])
+        self._reference_hand_ctrl_cpu = torch.from_numpy(stacked("hand_ctrl"))
+        self._reference_object_pose_cpu = torch.from_numpy(
+            stacked("object_pose_wxyz")
+        )
         required_fingertip_keys = (
             "fingertip_pose_wxyz",
             "fingertip_link_names",
@@ -331,13 +412,13 @@ class ManoResidualEnv(DirectRLEnv):
                 "the EgoEngine-style reference before training"
             )
         self._reference_fingertip_pose_cpu = torch.from_numpy(
-            reference["fingertip_pose_wxyz"]
+            stacked("fingertip_pose_wxyz")
         )
         self._reference_fingertip_link_names = reference[
             "fingertip_link_names"
         ].tolist()
-        self._fingertip_offsets_cpu = torch.from_numpy(reference["fingertip_offsets"])
-        self._reference_length = len(self._reference_hand_q_cpu)
+        self._fingertip_offsets_cpu = torch.from_numpy(stacked("fingertip_offsets"))
+        self._reference_length = int(reference["hand_q"].shape[0])
 
         super().__init__(cfg, render_mode, **kwargs)
 
@@ -359,10 +440,13 @@ class ManoResidualEnv(DirectRLEnv):
             )
 
         reference_order = [self._reference_joint_names.index(name) for name in self.hand.joint_names]
-        self.reference_hand_q = self._reference_hand_q_cpu[:, reference_order].to(self.device)
-        self.reference_hand_ctrl = self._reference_hand_ctrl_cpu[:, reference_order].to(
-            self.device
-        )
+        joint_axis = 2 if self._morphology_batch else 1
+        self.reference_hand_q = self._reference_hand_q_cpu.index_select(
+            joint_axis, torch.tensor(reference_order)
+        ).to(self.device)
+        self.reference_hand_ctrl = self._reference_hand_ctrl_cpu.index_select(
+            joint_axis, torch.tensor(reference_order)
+        ).to(self.device)
         self.action_to_control = self._action_to_control_cpu[reference_order].to(
             self.device
         )
@@ -524,6 +608,24 @@ class ManoResidualEnv(DirectRLEnv):
             for name in self._reference_fingertip_link_names
         ]
 
+    def _reference_at(
+        self,
+        tensor: torch.Tensor,
+        phases: torch.Tensor,
+        env_ids: torch.Tensor | Sequence[int] | None = None,
+    ) -> torch.Tensor:
+        """Gather phase-aligned references for homogeneous or batched hands."""
+
+        if not self._morphology_batch:
+            return tensor[phases]
+        if env_ids is None:
+            ids = torch.arange(self.num_envs, device=self.device)
+        elif isinstance(env_ids, torch.Tensor):
+            ids = env_ids.to(device=self.device, dtype=torch.long)
+        else:
+            ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+        return tensor[ids, phases]
+
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
         visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
@@ -589,11 +691,21 @@ class ManoResidualEnv(DirectRLEnv):
                 ),
             ),
         )
-        self._filter_hand_support_collisions(
-            hand_root_path="/World/envs/env_0/Hand",
-            support_root_path="/World/ground",
+        hand_roots = (
+            [f"/World/envs/env_{index}/Hand" for index in range(self.num_envs)]
+            if self._morphology_batch
+            else ["/World/envs/env_0/Hand"]
         )
-        self.scene.clone_environments(copy_from_source=False)
+        for hand_root in hand_roots:
+            self._filter_hand_support_collisions(
+                hand_root_path=hand_root,
+                support_root_path="/World/ground",
+            )
+        # InteractiveScene already creates all independent environment Xforms
+        # before _setup_scene when replicate_physics=False. Re-cloning here
+        # would overwrite the deterministic MultiUsdFileCfg assignments.
+        if self.cfg.scene.replicate_physics:
+            self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
         self.scene.rigid_objects["object"] = self.object
         self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
@@ -708,15 +820,21 @@ class ManoResidualEnv(DirectRLEnv):
 
         if filtered_prims == 0:
             raise RuntimeError(f"No hand collision bodies found below {hand_root_path}")
-        print(
-            f"[HAND_COLLISION_FILTER:{HAND_ID}] "
-            f"disabled hand-support pairs for {filtered_prims} hand prims; "
-            "object-hand and object-support pairs remain enabled"
-        )
+        if not self._morphology_batch or hand_root_path.endswith("/env_0/Hand"):
+            suffix = (
+                f" across {self.num_envs} heterogeneous environments"
+                if self._morphology_batch
+                else ""
+            )
+            print(
+                f"[HAND_COLLISION_FILTER:{HAND_ID}] "
+                f"disabled hand-support pairs for {filtered_prims} hand prims"
+                f"{suffix}; object-hand and object-support pairs remain enabled"
+            )
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = torch.clamp(actions, -1.0, 1.0)
-        base_targets = self.reference_hand_ctrl[self.phase_buf]
+        base_targets = self._reference_at(self.reference_hand_ctrl, self.phase_buf)
         active_residual = self.residual_scale * self.actions
         control_residual = active_residual @ self.action_to_control.T
         targets = base_targets + control_residual
@@ -743,15 +861,22 @@ class ManoResidualEnv(DirectRLEnv):
             self.hand.data.body_pos_w[:, self._fingertip_body_indices]
             - self.scene.env_origins[:, None, :]
         )
+        fingertip_offsets = (
+            self.fingertip_offsets
+            if self._morphology_batch
+            else self.fingertip_offsets[None, :, :].expand(self.num_envs, -1, -1)
+        )
         fingertip_offset_w = quat_apply(
             fingertip_body_quat.reshape(-1, 4),
-            self.fingertip_offsets[None, :, :]
-            .expand(self.num_envs, -1, -1)
-            .reshape(-1, 3),
+            fingertip_offsets.reshape(-1, 3),
         ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
         fingertip_pos = fingertip_body_pos + fingertip_offset_w
-        goal_fingertip_pose = self.reference_fingertip_pose[self.phase_buf]
-        goal_object_pose = self.reference_object_pose[self.phase_buf]
+        goal_fingertip_pose = self._reference_at(
+            self.reference_fingertip_pose, self.phase_buf
+        )
+        goal_object_pose = self._reference_at(
+            self.reference_object_pose, self.phase_buf
+        )
         if self.cfg.log_rollout_diagnostics and self.num_envs == 1:
             phase_index = int(self.phase_buf[0].item())
             if phase_index != self._last_diagnostic_phase and (
@@ -759,8 +884,12 @@ class ManoResidualEnv(DirectRLEnv):
             ):
                 actual_q = self.hand.data.joint_pos[0]
                 target_q = self.joint_targets[0]
-                reference_q = self.reference_hand_q[phase_index]
-                reference_object_pos = self.reference_object_pose[phase_index, :3]
+                if self._morphology_batch:
+                    reference_q = self.reference_hand_q[0, phase_index]
+                    reference_object_pos = self.reference_object_pose[0, phase_index, :3]
+                else:
+                    reference_q = self.reference_hand_q[phase_index]
+                    reference_object_pos = self.reference_object_pose[phase_index, :3]
                 palm_pos = self.hand.data.body_pos_w[0, self._palm_body_index]
                 middle_tip_pos = self.hand.data.body_pos_w[0, self._middle_tip_body_index]
                 print(
@@ -781,7 +910,7 @@ class ManoResidualEnv(DirectRLEnv):
                 fingertip_pos.flatten(start_dim=1),
                 object_pose,
                 goal_fingertip_pose.flatten(start_dim=1),
-                self.reference_hand_q[self.phase_buf],
+                self._reference_at(self.reference_hand_q, self.phase_buf),
                 goal_object_pose,
             ),
             dim=-1,
@@ -790,7 +919,9 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _compute_object_errors(self) -> None:
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
-        reference_pose = self.reference_object_pose[self.phase_buf]
+        reference_pose = self._reference_at(
+            self.reference_object_pose, self.phase_buf
+        )
         self._object_position_error = torch.linalg.vector_norm(
             object_pos - reference_pose[:, :3], dim=-1
         )
@@ -861,6 +992,14 @@ class ManoResidualEnv(DirectRLEnv):
         all_hand_contact = all_hand_force > self.cfg.contact_force_threshold
         contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
         total_reward = pose_tracking_reward + contact_reward
+        # Keep per-environment components available after DirectRLEnv performs
+        # its automatic reset. Morphology evaluation consumes the exact same
+        # reward tensors returned to PPO, without reconstructing a proxy.
+        self._last_pose_tracking_reward = pose_tracking_reward
+        self._last_contact_reward = contact_reward
+        self._last_pinch_contact = pinch_contact
+        self._last_thumb_contact_force = thumb_force
+        self._last_other_finger_contact_force = other_finger_force
         self._pose_episode_return += pose_tracking_reward
         if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
@@ -1066,16 +1205,31 @@ class ManoResidualEnv(DirectRLEnv):
         hand_root_state = self.hand.data.default_root_state[env_ids].clone()
         hand_root_state[:, :3] += self.scene.env_origins[env_ids]
         hand_root_state[:, 7:] = 0.0
-        joint_pos = self.reference_hand_q[self.phase_buf[env_ids]]
+        env_ids_tensor = torch.as_tensor(
+            env_ids, device=self.device, dtype=torch.long
+        )
+        joint_pos = self._reference_at(
+            self.reference_hand_q,
+            self.phase_buf[env_ids_tensor],
+            env_ids_tensor,
+        )
         joint_vel = torch.zeros_like(joint_pos)
         self.hand.write_root_pose_to_sim(hand_root_state[:, :7], env_ids)
         self.hand.write_root_velocity_to_sim(hand_root_state[:, 7:], env_ids)
         self.hand.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
-        ctrl = self.reference_hand_ctrl[self.phase_buf[env_ids]]
+        ctrl = self._reference_at(
+            self.reference_hand_ctrl,
+            self.phase_buf[env_ids_tensor],
+            env_ids_tensor,
+        )
         self.hand.set_joint_position_target(ctrl, env_ids=env_ids)
         self.joint_targets[env_ids] = ctrl
 
-        object_pose = self.reference_object_pose[self.phase_buf[env_ids]].clone()
+        object_pose = self._reference_at(
+            self.reference_object_pose,
+            self.phase_buf[env_ids_tensor],
+            env_ids_tensor,
+        ).clone()
         object_pose[:, :3] += self.scene.env_origins[env_ids]
         object_velocity = torch.zeros((len(env_ids), 6), device=self.device)
         self.object.write_root_pose_to_sim(object_pose, env_ids)
@@ -1084,7 +1238,12 @@ class ManoResidualEnv(DirectRLEnv):
         self._pose_episode_return[env_ids] = 0.0
         if self._capture_enabled:
             self._capture_hand_q[env_ids, 0] = joint_pos
-            self._capture_object_pose[env_ids, 0] = self.reference_object_pose[0]
+            initial_object_pose = self._reference_at(
+                self.reference_object_pose,
+                torch.zeros(len(env_ids_tensor), device=self.device, dtype=torch.long),
+                env_ids_tensor,
+            )
+            self._capture_object_pose[env_ids, 0] = initial_object_pose
             self._capture_actions[env_ids, 0] = 0.0
             self._capture_joint_targets[env_ids, 0] = ctrl
             self._capture_pose_reward[env_ids, 0] = 0.0

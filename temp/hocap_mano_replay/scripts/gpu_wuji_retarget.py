@@ -589,6 +589,11 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260805)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--save-trajectories", action="store_true")
+    parser.add_argument(
+        "--skip-proxy",
+        action="store_true",
+        help="retarget every candidate for downstream physical evaluation",
+    )
     parser.add_argument("--top-k", type=int, default=64)
     args = parser.parse_args()
 
@@ -625,28 +630,39 @@ def main() -> int:
     q, wrist_delta, benchmark = kinematics.solve(
         vectors, seed_q, args.iterations, args.candidate_chunk
     )
-    with np.load(DEFAULT_CAPTURE) as capture:
-        object_pose = capture["object_pose_wxyz"][: len(seed_q_np)].astype(np.float32)
-    proxy, proxy_benchmark = kinematics.score_contact_proxy(
-        vectors,
-        q,
-        wrist_delta,
-        torch.from_numpy(wrist_position).to(device),
-        torch.from_numpy(wrist_quaternion).to(device),
-        torch.from_numpy(object_pose).to(device),
-        args.candidate_chunk,
-    )
-    top_count = min(max(args.top_k, 1), args.candidates)
-    top_indices = torch.topk(proxy[:, 0], k=top_count).indices
     wrist_rotation = quat_xyzw_matrix(
         torch.from_numpy(wrist_quaternion).to(device)
     )
-    top_wrist_position = (
-        torch.from_numpy(wrist_position).to(device)[None]
-        + torch.einsum(
-            "tij,ktj->kti", wrist_rotation, wrist_delta[top_indices].to(device)
+    if args.skip_proxy:
+        proxy = None
+        proxy_benchmark = None
+        top_count = 0
+        top_indices = torch.empty(0, dtype=torch.long)
+        top_wrist_position = np.empty(
+            (0, len(wrist_position), 3), dtype=np.float32
         )
-    ).cpu().numpy()
+    else:
+        with np.load(DEFAULT_CAPTURE) as capture:
+            object_pose = capture["object_pose_wxyz"][: len(seed_q_np)].astype(
+                np.float32
+            )
+        proxy, proxy_benchmark = kinematics.score_contact_proxy(
+            vectors,
+            q,
+            wrist_delta,
+            torch.from_numpy(wrist_position).to(device),
+            torch.from_numpy(wrist_quaternion).to(device),
+            torch.from_numpy(object_pose).to(device),
+            args.candidate_chunk,
+        )
+        top_count = min(max(args.top_k, 1), args.candidates)
+        top_indices = torch.topk(proxy[:, 0], k=top_count).indices
+        top_wrist_position = (
+            torch.from_numpy(wrist_position).to(device)[None]
+            + torch.einsum(
+                "tij,ktj->kti", wrist_rotation, wrist_delta[top_indices].to(device)
+            )
+        ).cpu().numpy()
     payload = {
         "schema_version": 1,
         "backend": "torch_gpu_batched_dls",
@@ -655,10 +671,17 @@ def main() -> int:
         "vector_names": list(VECTOR_NAMES),
         "benchmark": benchmark,
         "contact_proxy_benchmark": proxy_benchmark,
+        "proxy_used": not args.skip_proxy,
         "top_k": top_count,
-        "maximum_soft_pinch_return": float(proxy[:, 0].max()),
-        "maximum_hard_pinch_frames": int(proxy[:, 1].max()),
-        "minimum_distal_surface_distance_m": proxy[:, 2:].amin(dim=0).tolist(),
+        "maximum_soft_pinch_return": (
+            None if proxy is None else float(proxy[:, 0].max())
+        ),
+        "maximum_hard_pinch_frames": (
+            None if proxy is None else int(proxy[:, 1].max())
+        ),
+        "minimum_distal_surface_distance_m": (
+            None if proxy is None else proxy[:, 2:].amin(dim=0).tolist()
+        ),
         "device": str(device),
         "torch_version": torch.__version__,
     }
@@ -670,9 +693,6 @@ def main() -> int:
         "wrist_position": wrist_position,
         "wrist_quaternion_xyzw": wrist_quaternion,
         "metadata_json": np.asarray(json.dumps(payload)),
-        "proxy_soft_pinch_return": proxy[:, 0].numpy(),
-        "proxy_hard_pinch_frames": proxy[:, 1].numpy(),
-        "proxy_minimum_surface_distance_m": proxy[:, 2:].numpy(),
         "top_indices": top_indices.numpy(),
         "top_vectors": vectors_np[top_indices.numpy()],
         "top_qpos": q[top_indices].numpy(),
@@ -682,9 +702,27 @@ def main() -> int:
             wrist_quaternion[None], (top_count, *wrist_quaternion.shape)
         ).copy(),
     }
+    if proxy is not None:
+        arrays["proxy_soft_pinch_return"] = proxy[:, 0].numpy()
+        arrays["proxy_hard_pinch_frames"] = proxy[:, 1].numpy()
+        arrays["proxy_minimum_surface_distance_m"] = proxy[:, 2:].numpy()
     if args.save_trajectories:
         arrays["qpos"] = q.numpy()
         arrays["wrist_delta_local"] = wrist_delta.numpy()
+        # Materialize every candidate's world-space wrist trajectory so the
+        # downstream PhysX batch can execute all candidates, not merely the
+        # candidates selected by the legacy proxy ranker.
+        wrist_rotation_cpu = wrist_rotation.detach().cpu()
+        arrays["wrist_position_all"] = (
+            torch.from_numpy(wrist_position).unsqueeze(0)
+            + torch.einsum(
+                "tij,ktj->kti", wrist_rotation_cpu, wrist_delta
+            )
+        ).numpy()
+        arrays["wrist_quaternion_xyzw_all"] = np.broadcast_to(
+            wrist_quaternion[None],
+            (args.candidates, *wrist_quaternion.shape),
+        ).copy()
     np.savez_compressed(args.output, **arrays)
     print(json.dumps(payload, indent=2))
     return 0
