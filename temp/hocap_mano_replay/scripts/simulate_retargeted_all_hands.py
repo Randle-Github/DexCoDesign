@@ -223,20 +223,46 @@ def set_physics_wrist(
     )
 
 
-def hand_object_contact_count(
+def hand_object_contact_metrics(
     model: mujoco.MjModel,
     data: mujoco.MjData,
-) -> int:
+    object_geom_id: int,
+    thumb_body_id: int,
+    other_finger_body_ids: set[int],
+) -> tuple[int, float, float]:
+    """Match Isaac Lab's object-vs-distal-link pinch contact semantics.
+
+    Isaac reports the maximum object contact force against the thumb distal
+    link and against the other fingertip distal links, then defines pinch as
+    both forces being strictly positive. MuJoCo's normal contact force is the
+    equivalent positive-force signal.
+    """
     count = 0
+    thumb_force = 0.0
+    other_finger_force = 0.0
+    contact_force = np.zeros(6, dtype=np.float64)
     for index in range(data.ncon):
         contact = data.contact[index]
         first = int(contact.geom1)
         second = int(contact.geom2)
-        first_type = int(model.geom_contype[first])
-        second_type = int(model.geom_contype[second])
-        if {first_type, second_type} == {1, 2}:
-            count += 1
-    return count
+        if first == object_geom_id:
+            hand_geom_id = second
+        elif second == object_geom_id:
+            hand_geom_id = first
+        else:
+            continue
+        if int(model.geom_contype[hand_geom_id]) != 1:
+            continue
+        count += 1
+        contact_force.fill(0.0)
+        mujoco.mj_contactForce(model, data, index, contact_force)
+        normal_force = max(float(contact_force[0]), 0.0)
+        body_id = int(model.geom_bodyid[hand_geom_id])
+        if body_id == thumb_body_id:
+            thumb_force = max(thumb_force, normal_force)
+        elif body_id in other_finger_body_ids:
+            other_finger_force = max(other_finger_force, normal_force)
+    return count, thumb_force, other_finger_force
 
 
 def simulate_hand(
@@ -299,6 +325,16 @@ def simulate_hand(
     model.geom_rgba[model.geom("table").id] = (0.72, 0.74, 0.78, 1.0)
 
     wrist_id = model.body(reference_wrist_name).id
+    fingertip_body_ids = {
+        finger: int(model.body(link_name).id)
+        for finger, link_name in TIP_LINKS[hand_id].items()
+    }
+    thumb_body_id = fingertip_body_ids["thumb"]
+    other_finger_body_ids = {
+        body_id
+        for finger, body_id in fingertip_body_ids.items()
+        if finger != "thumb"
+    }
     wrapper_mocap_id = int(model.body_mocapid[model.body("retarget_wrapper").id])
     object_body_id = model.body("hocap_object_body").id
     object_joint_id = model.joint("hocap_object_free").id
@@ -377,6 +413,9 @@ def simulate_hand(
     position_errors = []
     orientation_errors = []
     contact_counts = []
+    thumb_contact_forces = []
+    other_finger_contact_forces = []
+    pinch_contacts = []
     object_poses = []
     q_tracking_errors = []
     substeps = max(1, round((1.0 / fps) / model.opt.timestep))
@@ -410,7 +449,19 @@ def simulate_hand(
                     object_pose[3:7], object_reference[frame_index, 3:7]
                 )
             )
-            contact_counts.append(hand_object_contact_count(model, data))
+            contact_count, thumb_force, other_finger_force = (
+                hand_object_contact_metrics(
+                    model,
+                    data,
+                    object_geom_id,
+                    thumb_body_id,
+                    other_finger_body_ids,
+                )
+            )
+            contact_counts.append(contact_count)
+            thumb_contact_forces.append(thumb_force)
+            other_finger_contact_forces.append(other_finger_force)
+            pinch_contacts.append(thumb_force > 0.0 and other_finger_force > 0.0)
             q_tracking_errors.append(
                 float(
                     np.mean(
@@ -455,6 +506,9 @@ def simulate_hand(
         object_position_error_m=np.asarray(position_errors),
         object_orientation_error_rad=np.asarray(orientation_errors),
         hand_object_contact_count=np.asarray(contact_counts),
+        thumb_contact_force=np.asarray(thumb_contact_forces),
+        other_finger_contact_force=np.asarray(other_finger_contact_forces),
+        pinch_contact=np.asarray(pinch_contacts, dtype=bool),
         mean_abs_joint_tracking_error_rad=np.asarray(q_tracking_errors),
     )
     position_errors_array = np.asarray(position_errors)
@@ -464,6 +518,11 @@ def simulate_hand(
     )
     reward_offset_c = float(np.sqrt(0.05**2 + (0.3 * 1.5) ** 2))
     pose_rewards = reward_offset_c - pose_errors
+    contact_reward_weight = 2.0
+    contact_rewards = (
+        np.asarray(pinch_contacts, dtype=np.float64) * contact_reward_weight
+    )
+    total_rewards = pose_rewards + contact_rewards
     failures = np.flatnonzero(
         (position_errors_array > 0.05)
         | (orientation_errors_array > 1.5)
@@ -480,10 +539,20 @@ def simulate_hand(
         "max_object_position_error_m": float(np.max(position_errors)),
         "final_object_orientation_error_rad": orientation_errors[-1],
         "contact_frame_fraction": float(np.mean(np.asarray(contact_counts) > 0)),
+        "thumb_contact_frame_fraction": float(
+            np.mean(np.asarray(thumb_contact_forces) > 0.0)
+        ),
+        "other_finger_contact_frame_fraction": float(
+            np.mean(np.asarray(other_finger_contact_forces) > 0.0)
+        ),
+        "pinch_contact_frame_fraction": float(np.mean(pinch_contacts)),
         "mean_abs_joint_tracking_error_rad": float(np.mean(q_tracking_errors)),
         "strict_final_phase": final_phase,
         "strict_success": bool(final_phase == frame_count - 1),
         "pose_tracking_return": float(np.sum(pose_rewards[:evaluated_steps])),
+        "contact_return": float(np.sum(contact_rewards[:evaluated_steps])),
+        "total_reward_return": float(np.sum(total_rewards[:evaluated_steps])),
+        "contact_reward_weight": contact_reward_weight,
         "reward_offset_c": reward_offset_c,
     }
 def main() -> None:

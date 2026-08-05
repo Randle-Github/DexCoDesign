@@ -68,10 +68,15 @@ def run_candidate(
     rollout = payload["rollout"]
     return {
         "status": "completed",
-        "objective": float(rollout["pose_tracking_return"]),
+        "objective": float(rollout["total_reward_return"]),
+        "pose_tracking_return": float(rollout["pose_tracking_return"]),
+        "contact_return": float(rollout["contact_return"]),
         "phase": int(rollout["strict_final_phase"]),
         "success": bool(rollout["strict_success"]),
         "contact_frame_fraction": float(rollout["contact_frame_fraction"]),
+        "pinch_contact_frame_fraction": float(
+            rollout["pinch_contact_frame_fraction"]
+        ),
         "vector": vector,
         "output_dir": str(path),
     }
@@ -102,7 +107,7 @@ def draw_curve(rows: list[dict[str, object]], output: Path) -> None:
             (point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3),
             fill=(26, 112, 220),
         )
-    draw.text((left, 18), "WUJI morphology search: best pose-only C-error return", fill=(20, 25, 35), font=font)
+    draw.text((left, 18), "WUJI morphology search: best total RL reward", fill=(20, 25, 35), font=font)
     draw.text((left, bottom + 28), "evaluated morphology", fill=(20, 25, 35), font=font)
     draw.text((8, top), f"{high:.3f}", fill=(20, 25, 35), font=font)
     draw.text((8, bottom - 10), f"{low:.3f}", fill=(20, 25, 35), font=font)
@@ -209,6 +214,8 @@ def main() -> int:
             print(
                 f"MORPH_EVAL generation={generation} "
                 f"objective={result['objective']:.6f} "
+                f"pose={result.get('pose_tracking_return', float('nan')):.6f} "
+                f"contact={result.get('contact_return', float('nan')):.6f} "
                 f"phase={result.get('phase', -1)}/445 "
                 f"best={best['objective']:.6f}",
                 flush=True,
