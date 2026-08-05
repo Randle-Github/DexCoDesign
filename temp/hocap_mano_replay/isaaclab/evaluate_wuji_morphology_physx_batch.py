@@ -55,17 +55,22 @@ def attach_parametric_collisions(
     link_names: list[str],
     transforms: list[list[list[float]]],
 ) -> None:
-    """Reference shared collision prototypes into a skeleton articulation."""
-    candidate_stage = Usd.Stage.Open(str(candidate_usd))
+    """Create a thin candidate overlay on the complete shared articulation."""
     template_stage = Usd.Stage.Open(str(template_usd))
-    candidate_root = candidate_stage.GetDefaultPrim().GetPath()
     template_root = template_stage.GetDefaultPrim().GetPath()
+    # Do not rebuild a geometry-free URDF: the production hand asset also has
+    # six virtual wrist joints and their drives. A thin root reference retains
+    # that complete, already-validated articulation and only authors candidate
+    # morphology overrides below.
+    candidate_usd.unlink(missing_ok=True)
+    candidate_stage = Usd.Stage.CreateNew(str(candidate_usd))
+    candidate_root = template_root
+    root = candidate_stage.DefinePrim(candidate_root, "Xform")
+    root.GetReferences().AddReference(str(template_usd), template_root)
+    candidate_stage.SetDefaultPrim(root)
     if len(link_names) != len(transforms):
         raise ValueError("parametric link/transform count mismatch")
     for link_name, transform in zip(link_names, transforms, strict=True):
-        candidate_path = candidate_root.AppendChild(link_name).AppendChild(
-            "collisions"
-        )
         # Isaac's earlier generated-hand exporter names the imported links
         # ``hand__part_*`` while the geometry-free URDF importer keeps the
         # canonical ``part_*`` names. Resolve that importer namespace only on
@@ -82,6 +87,9 @@ def attach_parametric_collisions(
                     f"cannot uniquely map template link {link_name}: {matches}"
                 )
             template_link = matches[0]
+        candidate_path = candidate_root.AppendChild(
+            template_link.name
+        ).AppendChild("collisions")
         template_path = template_link.AppendChild("collisions")
         template_collision = template_stage.GetPrimAtPath(template_path)
         if not template_collision:
@@ -99,9 +107,8 @@ def attach_parametric_collisions(
             if len(items) == 1 and not items[0].assetPath and items[0].primPath:
                 target_path = items[0].primPath
         collision = candidate_stage.OverridePrim(candidate_path)
-        references = collision.GetReferences()
-        references.ClearReferences()
-        references.AddReference(str(template_usd), target_path)
+        # The complete template root already supplies the collision subtree.
+        # Only the candidate-local affine is authored here.
         matrix = np.asarray(transform, dtype=np.float64)
         if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
             xform = UsdGeom.Xformable(collision)
