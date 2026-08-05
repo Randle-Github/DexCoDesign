@@ -20,7 +20,15 @@ parser.add_argument("--output-root", type=Path, required=True)
 parser.add_argument("--prototype-bank-root", type=Path, required=True)
 parser.add_argument("--seed-trajectory", type=Path, required=True)
 parser.add_argument("--population", type=int, default=4096)
-parser.add_argument("--physics-batch-size", type=int, default=1024)
+parser.add_argument(
+    "--physics-batch-size",
+    type=int,
+    default=4096,
+    help=(
+        "exact PhysX candidates per scene; the default evaluates the complete "
+        "population in one scene to avoid rebuilding fixed support/object assets"
+    ),
+)
 parser.add_argument("--generations", type=int, default=20)
 parser.add_argument("--sac-updates", type=int, default=400)
 parser.add_argument("--retarget-iterations", type=int, default=4)
@@ -31,6 +39,8 @@ args_cli, hydra_args = parser.parse_known_args()
 args_cli.output_root = args_cli.output_root.resolve()
 args_cli.prototype_bank_root = args_cli.prototype_bank_root.resolve()
 args_cli.seed_trajectory = args_cli.seed_trajectory.resolve()
+if args_cli.physics_batch_size < 1:
+    parser.error("--physics-batch-size must be positive")
 bank_manifest_path = (
     args_cli.prototype_bank_root / "prepared/physx_batch_manifest.json"
 )

@@ -22,8 +22,12 @@ from torch.distributions import Categorical, Normal
 from wuji_morphology_space import (
     CONTINUOUS_LOWER_BOUNDS,
     CONTINUOUS_UPPER_BOUNDS,
+    LOWER_BOUNDS,
     PALM_EXPANSION_LEVELS,
+    PALM_EXPANSION_MAX,
+    PALM_EXPANSION_MIN,
     SOURCE_VECTOR,
+    UPPER_BOUNDS,
     VECTOR_NAMES,
     validate_design_vectors,
 )
@@ -31,6 +35,18 @@ from wuji_morphology_space import (
 
 CONTINUOUS_DIM = len(CONTINUOUS_LOWER_BOUNDS)
 CRITIC_INPUT_DIM = PALM_EXPANSION_LEVELS + CONTINUOUS_DIM
+
+
+def design_space_signature() -> dict[str, object]:
+    """Describe the physical meaning of normalized actor coordinates."""
+    return {
+        "vector_names": list(VECTOR_NAMES),
+        "lower_bounds": LOWER_BOUNDS.tolist(),
+        "upper_bounds": UPPER_BOUNDS.tolist(),
+        "palm_expansion_levels": PALM_EXPANSION_LEVELS,
+        "palm_expansion_minimum": PALM_EXPANSION_MIN,
+        "palm_expansion_maximum": PALM_EXPANSION_MAX,
+    }
 
 
 def mlp(input_dim: int, output_dim: int) -> nn.Sequential:
@@ -234,6 +250,11 @@ def main() -> int:
     generation = 0
     if args.state.is_file():
         state = torch.load(args.state, map_location=device, weights_only=False)
+        if state.get("design_space") != design_space_signature():
+            raise ValueError(
+                "hybrid SAC checkpoint belongs to a different morphology "
+                "design space; start a fresh output directory"
+            )
         actor.load_state_dict(state["actor"])
         critic1.load_state_dict(state["critic1"])
         critic2.load_state_dict(state["critic2"])
@@ -324,9 +345,9 @@ def main() -> int:
     args.state.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "generation": generation,
-            "vector_names": VECTOR_NAMES,
+            "design_space": design_space_signature(),
             "actor": actor.state_dict(),
             "critic1": critic1.state_dict(),
             "critic2": critic2.state_dict(),

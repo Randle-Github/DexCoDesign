@@ -12,7 +12,7 @@
 
 set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_32}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_32_expanded_0p70}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
@@ -43,4 +43,4 @@ python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
   --output "${OUTPUT_ROOT}/direct_physx_results.json" --headless
 
 test -s "${OUTPUT_ROOT}/direct_physx_results.json"
-printf 'WUJI_PALM_PROTOTYPE_BANK_COMPLETE levels=32 output=%s\n' "${OUTPUT_ROOT}"
+printf 'WUJI_PALM_PROTOTYPE_BANK_COMPLETE levels=32 max_expansion=0.70 output=%s\n' "${OUTPUT_ROOT}"

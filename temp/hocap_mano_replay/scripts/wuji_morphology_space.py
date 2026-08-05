@@ -9,7 +9,10 @@ import numpy as np
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 PALM_EXPANSION_LEVELS = 32
 PALM_EXPANSION_MIN = 0.0
-PALM_EXPANSION_MAX = 0.35
+# Deliberately broad research bounds.  These are morphology-search limits, not
+# manufacturing limits; every sampled design is still evaluated with its exact
+# generated collision geometry in PhysX.
+PALM_EXPANSION_MAX = 0.70
 VECTOR_NAMES = (
     "palm_expansion_index",
     "palm_scale_x",
@@ -19,11 +22,11 @@ VECTOR_NAMES = (
     *(f"{finger}_radius" for finger in FINGERS),
 )
 LOWER_BOUNDS = np.asarray(
-    [0.0, 0.90, 0.90, -0.12, *([0.82] * 5), *([0.85] * 5)],
+    [0.0, 0.70, 0.70, -0.35, *([0.55] * 5), *([0.60] * 5)],
     dtype=np.float64,
 )
 UPPER_BOUNDS = np.asarray(
-    [PALM_EXPANSION_LEVELS - 1, 1.12, 1.12, 0.12, *([1.20] * 5), *([1.15] * 5)],
+    [PALM_EXPANSION_LEVELS - 1, 1.45, 1.45, 0.35, *([1.60] * 5), *([1.45] * 5)],
     dtype=np.float64,
 )
 SOURCE_VECTOR = np.asarray(
@@ -90,4 +93,3 @@ def sample_mixed_vectors(
         CONTINUOUS_UPPER_BOUNDS - CONTINUOUS_LOWER_BOUNDS
     )
     return np.concatenate((indices[:, None], continuous), axis=1)
-
