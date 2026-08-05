@@ -27,7 +27,7 @@ mkdir -p "${OUTPUT_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
 
 PREP_FLAGS=()
-EVAL_FLAGS=(--convert-urdf)
+EVAL_FLAGS=()
 if [[ "${DIRECT_TEMPLATE}" == "1" ]]; then
   PREP_FLAGS+=(--direct-template)
   EVAL_FLAGS=()

@@ -58,20 +58,12 @@ def attach_parametric_collisions(
     """Create a thin candidate overlay on the complete shared articulation."""
     template_stage = Usd.Stage.Open(str(template_usd))
     template_root = template_stage.GetDefaultPrim().GetPath()
-    # Do not rebuild a geometry-free URDF: the production hand asset also has
-    # six virtual wrist joints and their drives. A thin root reference retains
-    # that complete, already-validated articulation and only authors candidate
-    # morphology overrides below.
-    candidate_usd.unlink(missing_ok=True)
-    candidate_stage = Usd.Stage.CreateNew(str(candidate_usd))
-    # Sublayering preserves every absolute body/joint relationship in the
-    # imported articulation. A root reference relocates those relationships
-    # during MultiUsdFile spawning and makes PhysX articulation parsing stall.
-    candidate_stage.GetRootLayer().subLayerPaths = [str(template_usd)]
-    candidate_stage.Reload()
-    candidate_root = template_root
-    root = candidate_stage.OverridePrim(candidate_root)
-    candidate_stage.SetDefaultPrim(root)
+    # Preparation copies only the importer's small native top layer and shares
+    # its heavy configuration/mesh siblings. Author directly into that native
+    # layer: MultiUsdFile/PhysX then sees exactly the production asset layout,
+    # without an extra reference or sublayer composition wrapper.
+    candidate_stage = Usd.Stage.Open(str(candidate_usd))
+    candidate_root = candidate_stage.GetDefaultPrim().GetPath()
     if len(link_names) != len(transforms):
         raise ValueError("parametric link/transform count mismatch")
     for link_name, transform in zip(link_names, transforms, strict=True):

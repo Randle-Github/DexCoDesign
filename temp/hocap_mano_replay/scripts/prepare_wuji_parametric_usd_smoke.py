@@ -5,22 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
+import os
+import shutil
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from export_compiled_hand_urdf import _inverse_source_linear
-
-
-SCRIPT_ROOT = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_ROOT.parents[2]
-
-
-def run(command: list[str]) -> None:
-    subprocess.run(command, cwd=REPO_ROOT, check=True)
 
 
 def save_reference(
@@ -92,36 +84,12 @@ def main() -> int:
     for index, candidate_id in enumerate(candidate_ids):
         candidate = by_id[candidate_id]
         candidate_root = root / "candidates" / candidate_id
-        runtime = candidate_root / "runtime"
-        if not args.direct_template:
-            run(
-                [
-                sys.executable,
-                str(SCRIPT_ROOT / "export_compiled_hand_urdf.py"),
-                str(args.compiled_hands.resolve()),
-                "--compiled-hand-id",
-                candidate_id,
-                "--output-root",
-                str(runtime),
-                "--hand-id",
-                candidate_id,
-                "--display-name",
-                candidate_id,
-                "--skeleton-only",
-                ]
-            )
-            metadata = json.loads(
-                (runtime / "runtime_metadata.json").read_text(encoding="utf-8")
-            )
-        else:
-            metadata = {
-                "link_names": {
-                    str(part["id"]): (
-                        f"part_{int(part['id']):02d}_{part['role']}"
-                    )
-                    for part in candidate["parts"]
-                }
+        metadata = {
+            "link_names": {
+                str(part["id"]): f"part_{int(part['id']):02d}_{part['role']}"
+                for part in candidate["parts"]
             }
+        }
         reference = candidate_root / "reference.npz"
         save_reference(
             args.template_reference.resolve(),
@@ -131,15 +99,24 @@ def main() -> int:
             wrist_position[index],
             wrist_quaternion[index],
         )
-        urdfs.append(
-            ""
-            if args.direct_template
-            else str(runtime / candidate_id / "left" / "hand.urdf")
-        )
+        urdfs.append("")
+        candidate_usd = candidate_root / "asset" / "hand.usd"
+        if not args.direct_template:
+            candidate_usd.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(args.template_usd.resolve(), candidate_usd)
+            # Keep the importer's heavy configuration/mesh layers shared.
+            # The copied top layer is tiny and receives only candidate-local
+            # transform/joint opinions.
+            for child in args.template_usd.resolve().parent.iterdir():
+                if child.name == args.template_usd.name:
+                    continue
+                destination = candidate_usd.parent / child.name
+                if not destination.exists() and not destination.is_symlink():
+                    os.symlink(child, destination, target_is_directory=child.is_dir())
         usds.append(
             str(args.template_usd.resolve())
             if args.direct_template
-            else str(candidate_root / "asset" / "hand.usd")
+            else str(candidate_usd)
         )
         references.append(str(reference))
         ordered_links = [
