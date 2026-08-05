@@ -69,7 +69,7 @@ def main() -> int:
             {
                 "PROPOSAL": str(proposal), "OUTPUT_ROOT": str(exact_root),
                 "TOP_K": str(args.top_k), "WORKERS": str(args.workers),
-                "EXACT_IK_ITERATIONS": "4",
+                "EXACT_IK_ITERATIONS": "0",
             },
             gpu_job,
         )

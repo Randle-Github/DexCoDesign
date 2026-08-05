@@ -9,6 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
 
@@ -69,25 +70,86 @@ def prepare_retarget(
     retarget.TIP_LINKS[hand_id] = metadata["tips"]
     ik_trajectory = cache_root / f"{hand_id}_ik.npz"
     if not reuse_ik or not ik_trajectory.is_file():
-        original_argv = sys.argv
-        try:
-            sys.argv = [
-                "retarget_all_hands.py",
-                "--stride",
-                "1",
-                "--iterations",
-                str(iterations),
-                "--reference-source",
-                "mano_command",
-                "--solve-only",
-            ]
-            if initial_trajectory is not None:
-                sys.argv.extend(
-                    ["--initial-trajectory", str(initial_trajectory.resolve())]
+        if initial_trajectory is not None and iterations == 0:
+            # The high-throughput GPU solver already produced the complete
+            # retargeted trajectory. Materialize it directly instead of
+            # repeating 446 frames of MuJoCo CPU IK for every top-k hand.
+            with np.load(initial_trajectory) as initial:
+                qpos = initial["qpos"].astype(np.float64)
+                wrist_position = initial["wrist_position"].astype(np.float64)
+                wrist_quaternion = initial[
+                    "wrist_quaternion_xyzw"
+                ].astype(np.float64)
+                source_names = (
+                    initial["source_joint_names"].astype(str).tolist()
+                    if "source_joint_names" in initial
+                    else None
                 )
-            retarget.main()
-        finally:
-            sys.argv = original_argv
+                frame_ids = (
+                    initial["frame_ids"].astype(np.int64)
+                    if "frame_ids" in initial
+                    else np.arange(len(qpos), dtype=np.int64)
+                )
+            scene = retarget.make_scene(hand_id)
+            model = mujoco.MjModel.from_xml_path(str(scene))
+            scalar_joint_ids = [
+                joint_id
+                for joint_id in range(model.njnt)
+                if int(model.jnt_type[joint_id])
+                in (
+                    int(mujoco.mjtJoint.mjJNT_HINGE),
+                    int(mujoco.mjtJoint.mjJNT_SLIDE),
+                )
+            ]
+            by_name = {
+                str(model.joint(joint_id).name): joint_id
+                for joint_id in scalar_joint_ids
+            }
+            if source_names is not None and all(
+                name in by_name for name in source_names
+            ):
+                ordered_joint_ids = [by_name[name] for name in source_names]
+            else:
+                ordered_joint_ids = scalar_joint_ids
+            if len(ordered_joint_ids) != qpos.shape[1]:
+                raise ValueError(
+                    f"{hand_id}: GPU qpos width {qpos.shape[1]} does not "
+                    f"match runtime scalar joints {len(ordered_joint_ids)}"
+                )
+            qpos_ids = np.asarray(
+                [int(model.jnt_qposadr[joint_id]) for joint_id in ordered_joint_ids],
+                dtype=np.int64,
+            )
+            np.savez_compressed(
+                ik_trajectory,
+                frame_ids=frame_ids,
+                qpos_ids=qpos_ids,
+                active_qpos_ids=qpos_ids,
+                qpos=qpos,
+                wrist_position=wrist_position,
+                wrist_quaternion_xyzw=wrist_quaternion,
+                backend=np.asarray("gpu_direct_no_cpu_ik"),
+            )
+        else:
+            original_argv = sys.argv
+            try:
+                sys.argv = [
+                    "retarget_all_hands.py",
+                    "--stride",
+                    "1",
+                    "--iterations",
+                    str(iterations),
+                    "--reference-source",
+                    "mano_command",
+                    "--solve-only",
+                ]
+                if initial_trajectory is not None:
+                    sys.argv.extend(
+                        ["--initial-trajectory", str(initial_trajectory.resolve())]
+                    )
+                retarget.main()
+            finally:
+                sys.argv = original_argv
     hand_retarget_root = retarget_root / hand_id
     hand_retarget_root.mkdir(parents=True, exist_ok=True)
     trajectory_path = hand_retarget_root / "retargeted_trajectory.npz"

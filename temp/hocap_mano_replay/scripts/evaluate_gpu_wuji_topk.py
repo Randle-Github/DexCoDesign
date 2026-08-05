@@ -52,6 +52,7 @@ def main() -> int:
             np.float64
         )
         frame_ids = data["frame_ids"].astype(np.int64)
+        joint_names = data["joint_names"].astype(str)
 
     root = args.output_root.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -72,6 +73,7 @@ def main() -> int:
             qpos=qpos[rank],
             wrist_position=wrist_position[rank],
             wrist_quaternion_xyzw=wrist_quaternion[rank],
+            source_joint_names=joint_names,
         )
         rows.append(
             {

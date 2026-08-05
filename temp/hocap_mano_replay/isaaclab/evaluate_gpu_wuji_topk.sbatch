@@ -15,7 +15,7 @@ PROPOSAL="${PROPOSAL:?set PROPOSAL to the GPU proposal npz}"
 OUTPUT_ROOT="${OUTPUT_ROOT:?set OUTPUT_ROOT}"
 TOP_K="${TOP_K:-32}"
 WORKERS="${WORKERS:-16}"
-EXACT_IK_ITERATIONS="${EXACT_IK_ITERATIONS:-4}"
+EXACT_IK_ITERATIONS="${EXACT_IK_ITERATIONS:-0}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
