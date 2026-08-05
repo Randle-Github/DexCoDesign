@@ -40,6 +40,17 @@ DEFAULT_CAPTURE = (
 DEFAULT_OUTPUT = (
     REPO_ROOT / "artifacts" / "isaaclab_all_hands_residual" / "prepared"
 )
+ORCA_MJCF = (
+    REPO_ROOT
+    / "assets"
+    / "robot_hands"
+    / "orca_hand_v2"
+    / "source"
+    / "v2"
+    / "models"
+    / "mjcf"
+    / "orcahand_left.mjcf"
+)
 
 sys.path.insert(0, str(SCRIPT_ROOT))
 from retarget_all_hands import (  # noqa: E402
@@ -185,6 +196,103 @@ def ensure_visual_collision_coverage(link: ET.Element) -> list[int]:
     return added_visual_indices
 
 
+def apply_orca_asset_fixes(root: ET.Element) -> dict[str, object]:
+    """Restore the physical units and collision semantics of ORCA Hand v2.
+
+    The upstream URDF inertia tensors are expressed in kg cm^2 even though
+    URDF consumers interpret them as kg m^2.  The upstream MJCF also makes an
+    important distinction that the URDF omits: black internal meshes are the
+    rigid contact geometry, while the white skin meshes are visual-only.
+    Reconstruct both semantics before the generic URDF wrapper is generated.
+    """
+
+    mjcf_root = ET.parse(ORCA_MJCF).getroot()
+    mesh_files = {
+        str(mesh.get("name")): ORCA_MJCF.parents[2] / str(mesh.get("file"))
+        for mesh in mjcf_root.findall("./asset/mesh")
+    }
+    links = root.findall("link")
+    link_names = {str(link.get("name")) for link in links}
+    body_root = ET.parse(ORCA_MJCF.with_name("orcahand_left_body.xml")).getroot()
+    rigid_mesh_by_link: dict[str, Path] = {}
+    for body in body_root.iter("body"):
+        body_name = str(body.get("name", ""))
+        if not body_name.startswith("left_"):
+            continue
+        link_name = body_name.removeprefix("left_")
+        if link_name not in link_names:
+            continue
+        rigid_geoms = [
+            geom
+            for geom in body.findall("geom")
+            if geom.get("material") != "white"
+            and geom.get("contype") != "0"
+            and geom.get("conaffinity") != "0"
+            and geom.get("mesh")
+        ]
+        if len(rigid_geoms) != 1:
+            raise ValueError(
+                f"Expected one rigid ORCA collision mesh for {body_name}, "
+                f"got {len(rigid_geoms)}"
+            )
+        mesh_name = str(rigid_geoms[0].get("mesh"))
+        mesh_path = mesh_files[mesh_name]
+        if not mesh_path.is_file():
+            raise FileNotFoundError(mesh_path)
+        rigid_mesh_by_link[link_name] = mesh_path
+
+    if set(rigid_mesh_by_link) != link_names:
+        raise ValueError(
+            "ORCA MJCF/URDF physical-link mismatch: "
+            f"missing={sorted(link_names - set(rigid_mesh_by_link))}, "
+            f"extra={sorted(set(rigid_mesh_by_link) - link_names)}"
+        )
+
+    inertia_fields = ("ixx", "ixy", "ixz", "iyy", "iyz", "izz")
+    for link in links:
+        link_name = str(link.get("name"))
+        inertia = link.find("inertial/inertia")
+        if inertia is None:
+            raise ValueError(f"ORCA link {link_name} has no inertia tensor")
+        for field in inertia_fields:
+            inertia.set(field, f"{float(inertia.get(field, '0')) * 1e-4:.17g}")
+
+        for collision in link.findall("collision"):
+            link.remove(collision)
+        visual = link.find("visual")
+        if visual is None:
+            raise ValueError(f"ORCA link {link_name} has no visual geometry")
+        collision = ET.Element(
+            "collision", {"name": f"orca_rigid_{sanitize(link_name)}"}
+        )
+        visual_origin = visual.find("origin")
+        if visual_origin is not None:
+            collision.append(copy.deepcopy(visual_origin))
+        geometry = ET.SubElement(collision, "geometry")
+        ET.SubElement(
+            geometry,
+            "mesh",
+            {
+                "filename": str(rigid_mesh_by_link[link_name].resolve()),
+                "scale": "0.001 0.001 0.001",
+            },
+        )
+        link.append(collision)
+
+    # Match the neutral hand color used by the rest of the comparison grid.
+    for material in root.findall("material"):
+        color = material.find("color")
+        if color is not None:
+            color.set("rgba", "0.58 0.60 0.63 1")
+
+    return {
+        "inertia_scale": 1e-4,
+        "collision_source": "official_mjcf_rigid_meshes",
+        "visual_skin_collision": False,
+        "normalized_visual_color": [0.58, 0.60, 0.63, 1.0],
+    }
+
+
 def tiny_inertial_link(name: str) -> ET.Element:
     link = ET.Element("link", {"name": name})
     inertial = ET.SubElement(link, "inertial")
@@ -241,6 +349,9 @@ def virtual_joint(
 def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
     tree = ET.parse(source)
     root = tree.getroot()
+    physics_fixes: dict[str, object] = {}
+    if "orca_hand_v2" in source.parts:
+        physics_fixes = apply_orca_asset_fixes(root)
     root.set("name", f"{sanitize(root.get('name', source.parent.name))}_rl")
     links = root.findall("link")
     joints = root.findall("joint")
@@ -389,6 +500,7 @@ def prepare_wrapped_urdf(source: Path, output: Path) -> dict[str, object]:
         "mimic_relations": mimic_relations,
         "collision_link_names": collision_link_names,
         "added_collision_visuals": added_collision_visuals,
+        "physics_fixes": physics_fixes,
     }
 
 
@@ -626,6 +738,7 @@ def prepare_hand(
         ],
         "contact_link_names": mapping["collision_link_names"],
         "added_collision_visuals": mapping["added_collision_visuals"],
+        "physics_fixes": mapping["physics_fixes"],
     }
     (hand_root / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n",
