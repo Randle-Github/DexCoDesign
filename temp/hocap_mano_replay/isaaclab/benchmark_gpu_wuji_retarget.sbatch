@@ -18,6 +18,8 @@ ITERATIONS="${ITERATIONS:-4}"
 CANDIDATE_CHUNK="${CANDIDATE_CHUNK:-128}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 OUTPUT="${OUTPUT:-${REPO_ROOT}/artifacts/wuji_gpu_search/gpu_retarget_${CANDIDATES}.npz}"
+VECTORS="${VECTORS:-}"
+TOP_K="${TOP_K:-64}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -25,12 +27,17 @@ cd "${REPO_ROOT}"
 mkdir -p "${REPO_ROOT}/artifacts/wuji_gpu_search"
 export OMP_NUM_THREADS=4
 
-python temp/hocap_mano_replay/scripts/gpu_wuji_retarget.py \
+command=(python temp/hocap_mano_replay/scripts/gpu_wuji_retarget.py \
   --seed-trajectory "${SEED_TRAJECTORY}" \
   --output "${OUTPUT}" \
   --candidates "${CANDIDATES}" \
   --iterations "${ITERATIONS}" \
   --candidate-chunk "${CANDIDATE_CHUNK}" \
-  --device cuda
+  --top-k "${TOP_K}" \
+  --device cuda)
+if [[ -n "${VECTORS}" ]]; then
+  command+=(--vectors "${VECTORS}")
+fi
+"${command[@]}"
 
 printf 'WUJI_GPU_RETARGET_COMPLETE candidates=%s output=%s\n' "${CANDIDATES}" "${OUTPUT}"
