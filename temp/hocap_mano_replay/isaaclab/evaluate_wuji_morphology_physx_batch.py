@@ -64,9 +64,13 @@ def attach_parametric_collisions(
     # morphology overrides below.
     candidate_usd.unlink(missing_ok=True)
     candidate_stage = Usd.Stage.CreateNew(str(candidate_usd))
+    # Sublayering preserves every absolute body/joint relationship in the
+    # imported articulation. A root reference relocates those relationships
+    # during MultiUsdFile spawning and makes PhysX articulation parsing stall.
+    candidate_stage.GetRootLayer().subLayerPaths = [str(template_usd)]
+    candidate_stage.Reload()
     candidate_root = template_root
-    root = candidate_stage.DefinePrim(candidate_root, "Xform")
-    root.GetReferences().AddReference(str(template_usd), template_root)
+    root = candidate_stage.OverridePrim(candidate_root)
     candidate_stage.SetDefaultPrim(root)
     if len(link_names) != len(transforms):
         raise ValueError("parametric link/transform count mismatch")
