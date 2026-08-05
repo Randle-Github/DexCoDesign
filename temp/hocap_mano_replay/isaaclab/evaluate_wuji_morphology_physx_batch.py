@@ -83,12 +83,25 @@ def attach_parametric_collisions(
                 )
             template_link = matches[0]
         template_path = template_link.AppendChild("collisions")
-        if not template_stage.GetPrimAtPath(template_path):
+        template_collision = template_stage.GetPrimAtPath(template_path)
+        if not template_collision:
             raise ValueError(f"template collision prim is missing: {template_path}")
+        # A flattened Isaac asset keeps each collision mesh in an internal
+        # /Flattened_Prototype_* prim and makes link/collisions instance it.
+        # Referencing link/collisions from another layer would preserve that
+        # absolute internal reference in the wrong composition namespace and
+        # can stall PhysX parsing. Reference the self-contained prototype
+        # directly instead.
+        target_path = template_path
+        reference_list = template_collision.GetMetadata("references")
+        if reference_list is not None:
+            items = list(reference_list.GetAddedOrExplicitItems())
+            if len(items) == 1 and not items[0].assetPath and items[0].primPath:
+                target_path = items[0].primPath
         collision = candidate_stage.OverridePrim(candidate_path)
         references = collision.GetReferences()
         references.ClearReferences()
-        references.AddReference(str(template_usd), template_path)
+        references.AddReference(str(template_usd), target_path)
         matrix = np.asarray(transform, dtype=np.float64)
         if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
             xform = UsdGeom.Xformable(collision)
