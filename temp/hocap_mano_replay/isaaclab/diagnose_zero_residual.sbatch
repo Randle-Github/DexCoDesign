@@ -13,7 +13,8 @@ set -euo pipefail
 
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_mano_residual"
-RESULT_PATH="${OUTPUT_ROOT}/diagnostics/zero_residual_official_joints.json"
+RESULT_PATH="${RESULT_PATH:-${OUTPUT_ROOT}/diagnostics/zero_residual_official_joints.json}"
+TASK="${TASK:-DexCoDesign-MANO-Residual-Direct-Eval-v0}"
 FULL_REFERENCE="${FULL_REFERENCE:-0}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
@@ -37,6 +38,7 @@ if [[ "${FULL_REFERENCE}" == "1" ]]; then
 fi
 
 ./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/diagnose_zero_residual.py \
+  --task "${TASK}" \
   --output "${RESULT_PATH}" \
   "${EXTRA_ARGS[@]}" \
   --headless
