@@ -29,10 +29,25 @@
         <mesh filename="meshes/0002_ll_dg_base_00.obj" />
       </geometry>
     </visual>
+    <visual name="visual_solid_base_to_palm_bridge">
+      <origin xyz="-0.0045 0 0.0435" rpy="0 0 0" />
+      <geometry>
+        <box size="0.045 0.055 0.087" />
+      </geometry>
+      <material name="tesollo_base_bridge">
+        <color rgba="0.72 0.72 0.72 1" />
+      </material>
+    </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
         <mesh filename="meshes/0003_ll_dg_base_c_00.obj" />
+      </geometry>
+    </collision>
+    <collision name="collision_solid_base_to_palm_bridge">
+      <origin xyz="-0.0045 0 0.0435" rpy="0 0 0" />
+      <geometry>
+        <box size="0.045 0.055 0.087" />
       </geometry>
     </collision>
   </link>
