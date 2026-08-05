@@ -14,6 +14,8 @@ import argparse
 import hashlib
 import json
 import os
+import concurrent.futures
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +42,12 @@ def main() -> int:
     parser.add_argument("graphs", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="parallel per-hand mesh compiler processes",
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--rebuild-preprocess", action="store_true")
     parser.add_argument(
@@ -120,12 +128,76 @@ def main() -> int:
     env["HAND_GENERATION_ROOT"] = str(output_dir)
     env["HAND_GENERATION_SEED"] = str(args.seed)
     run_module("dexcodesign.morphology.generate", env=env)
-    run_module(
-        "dexcodesign.morphology.mesh_compiler",
-        "--palm-generation-mode",
-        args.palm_generation_mode,
-        env=env,
-    )
+    if args.workers <= 1 or len(hand_ids) == 1:
+        run_module(
+            "dexcodesign.morphology.mesh_compiler",
+            "--palm-generation-mode",
+            args.palm_generation_mode,
+            env=env,
+        )
+    else:
+        mesh_root = output_dir / "meshes"
+        if mesh_root.is_dir():
+            shutil.rmtree(mesh_root)
+        partial_root = output_dir / "compiled_parts"
+        partial_root.mkdir(parents=True, exist_ok=True)
+
+        def compile_one(hand_id: str) -> Path:
+            output = partial_root / f"{hand_id}.json"
+            run_module(
+                "dexcodesign.morphology.mesh_compiler",
+                "--hand-id",
+                hand_id,
+                "--output",
+                str(output),
+                "--preserve-existing-meshes",
+                "--palm-generation-mode",
+                args.palm_generation_mode,
+                env=env,
+            )
+            return output
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(args.workers, len(hand_ids))
+        ) as pool:
+            partials = list(pool.map(compile_one, hand_ids))
+        payloads = [json.loads(path.read_text(encoding="utf-8")) for path in partials]
+        hands = [payload["hands"][0] for payload in payloads]
+        sum_fields = (
+            "parts",
+            "meshed_parts",
+            "geometryless_zero_length_frames",
+            "faces",
+            "attachment_roots_checked",
+            "nonoverlapping_attachment_roots",
+            "semantic_palm_finger_interfaces",
+            "palm_interface_mount_lock_conflicts",
+        )
+        summary = {
+            "hands": len(hands),
+            **{
+                field: sum(int(payload["summary"][field]) for payload in payloads)
+                for field in sum_fields
+            },
+            "maximum_palm_interface_frame_error": max(
+                float(payload["summary"]["maximum_palm_interface_frame_error"])
+                for payload in payloads
+            ),
+        }
+        compiled.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "method": payloads[0]["method"],
+                    "palm_generation_mode": args.palm_generation_mode,
+                    "hands": hands,
+                    "summary": summary,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     request.write_text(
         json.dumps(
             {

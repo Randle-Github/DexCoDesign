@@ -47,7 +47,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     raw = env.unwrapped
     env.reset()
     actions = torch.zeros(
-        (1, raw.cfg.action_space),
+        (1, raw.action_dim),
         dtype=torch.float32,
         device=raw.device,
     )
@@ -120,6 +120,11 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     result = {
         "steps": len(trace),
         "last_phase": last["phase"],
+        "total_reward_return": sum(row["total_reward"] for row in trace),
+        "contact_reward_return": 2.0
+        * sum(row["pinch_contact"] for row in trace),
+        "pose_reward_return": sum(row["total_reward"] for row in trace)
+        - 2.0 * sum(row["pinch_contact"] for row in trace),
         "position_threshold_m": position_threshold,
         "orientation_threshold_rad": orientation_threshold,
         "first_threshold_failure_phase": (

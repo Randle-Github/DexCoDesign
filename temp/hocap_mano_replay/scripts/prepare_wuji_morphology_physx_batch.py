@@ -93,6 +93,8 @@ def main() -> int:
             str(compiled_root),
             "--seed",
             "0",
+            "--workers",
+            str(args.workers),
         ],
         root / "compile.log",
     )
