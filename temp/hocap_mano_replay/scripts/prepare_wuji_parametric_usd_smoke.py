@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from export_compiled_hand_urdf import _inverse_source_linear
+
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_ROOT.parents[2]
@@ -79,6 +81,9 @@ def main() -> int:
     link_names = []
     relative_transforms = []
     baseline = by_id[candidate_ids[0]]
+    _, source_rotation = _inverse_source_linear(str(baseline["seed_source"]))
+    reflection = np.diag((-1.0, 1.0, 1.0))
+    polar_linear = source_rotation.T @ reflection
     baseline_linear = {
         int(part["id"]): np.asarray(part["mesh_linear"], dtype=np.float64)
         for part in baseline["parts"]
@@ -129,9 +134,13 @@ def main() -> int:
         for part in candidate["parts"]:
             part_id = int(part["id"])
             current = np.asarray(part["mesh_linear"], dtype=np.float64)
-            # Canonical-frame relative transform. The identity candidate is
-            # validated first; exporter-frame conjugation is added after it.
-            relative = np.linalg.solve(baseline_linear[part_id], current)
+            # The compiler uses row vectors: Vc = V @ L.T.  The runtime URDF
+            # exporter then applies P = source_rotation.T @ reflection, so
+            # Ve = V @ L.T @ P / scale.  Author the exact relative affine in
+            # that exported link frame; the source similarity scale cancels.
+            baseline_export = baseline_linear[part_id].T @ polar_linear
+            current_export = current.T @ polar_linear
+            relative = np.linalg.solve(baseline_export, current_export)
             matrix = np.eye(4, dtype=np.float64)
             matrix[:3, :3] = relative
             transforms.append(matrix.tolist())
