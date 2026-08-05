@@ -116,16 +116,36 @@ def prepare_generated_runtime(
     output_dir.mkdir(parents=True, exist_ok=True)
     graph_path.write_text(json.dumps(graph, indent=2) + "\n", encoding="utf-8")
     compiled_root = output_dir / "compiled"
+    reference_graph = (
+        REPO_ROOT / "artifacts" / "hand_morphology" / "reference_graphs.json"
+    )
+    rebuild_preprocess = True
+    if reference_graph.is_file():
+        payload = json.loads(reference_graph.read_text(encoding="utf-8"))
+        source = next(
+            (
+                hand
+                for hand in payload.get("hands", [])
+                if hand.get("hand_id") == SOURCE_HAND_ID
+            ),
+            None,
+        )
+        rebuild_preprocess = (
+            source is None or "direct_geometry_audit" not in source
+        )
+    compile_command = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "dexcodesign" / "compile_hand_graph.py"),
+        str(graph_path),
+        "--output-dir",
+        str(compiled_root),
+        "--seed",
+        "0",
+    ]
+    if rebuild_preprocess:
+        compile_command.append("--rebuild-preprocess")
     subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "dexcodesign" / "compile_hand_graph.py"),
-            str(graph_path),
-            "--output-dir",
-            str(compiled_root),
-            "--seed",
-            "0",
-        ],
+        compile_command,
         cwd=REPO_ROOT,
         check=True,
     )
