@@ -6,7 +6,7 @@
 #SBATCH --gpus=a40:1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=192G
-#SBATCH --time=02:00:00
+#SBATCH --time=01:00:00
 #SBATCH --exclude=hk47,spd-13,voltron,ig-88,sonny
 #SBATCH --output=/coc/flash7/yliu3735/workspace/DexCoDesign/artifacts/wuji_physx_search/palm-bank-%j.out
 
