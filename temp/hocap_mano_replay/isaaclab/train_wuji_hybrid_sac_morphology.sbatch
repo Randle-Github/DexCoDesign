@@ -18,6 +18,7 @@ PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-1024}"
 GENERATIONS="${GENERATIONS:-20}"
 SAC_UPDATES="${SAC_UPDATES:-400}"
 RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
+KIT_ARGS="${KIT_ARGS:---/log/level=error}"
 BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_32}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 
@@ -37,4 +38,5 @@ export OMNI_KIT_ACCEPT_EULA=YES
   --generations "${GENERATIONS}" \
   --sac-updates "${SAC_UPDATES}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
+  --kit_args "${KIT_ARGS}" \
   --headless

@@ -154,16 +154,36 @@ def main() -> int:
         candidate_usd = candidate_root / "asset" / "hand.usd"
         if not args.direct_template and args.direct_candidate_assets is None:
             candidate_usd.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(template_usd, candidate_usd)
-            # Keep the importer's heavy configuration/mesh layers shared.
-            # The copied top layer is tiny and receives only candidate-local
-            # transform/joint opinions.
-            for child in template_usd.parent.iterdir():
-                if child.name == template_usd.name:
-                    continue
-                destination = candidate_usd.parent / child.name
-                if not destination.exists() and not destination.is_symlink():
-                    os.symlink(child, destination, target_is_directory=child.is_dir())
+            if bank_rows is not None:
+                # Sublayer the prototype from its original directory so USD
+                # resolves and caches its heavy configuration/mesh layers by
+                # one canonical identifier. Copying the top layer made every
+                # candidate's relative ``configuration/`` path unique and
+                # forced Kit to parse the same 4.6 MB layer thousands of
+                # times. Candidate-local transform opinions are authored into
+                # this tiny wrapper by ``attach_manifest``.
+                prototype_root = f"{prototype_row['candidate_id']}_rl"
+                prototype_asset = template_usd.as_posix().replace("@", "@@")
+                candidate_usd.write_text(
+                    "#usda 1.0\n"
+                    "(\n"
+                    f'    defaultPrim = "{prototype_root}"\n'
+                    f"    subLayers = [@{prototype_asset}@]\n"
+                    ")\n",
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy2(template_usd, candidate_usd)
+                for child in template_usd.parent.iterdir():
+                    if child.name == template_usd.name:
+                        continue
+                    destination = candidate_usd.parent / child.name
+                    if not destination.exists() and not destination.is_symlink():
+                        os.symlink(
+                            child,
+                            destination,
+                            target_is_directory=child.is_dir(),
+                        )
         usds.append(
             str(
                 (
