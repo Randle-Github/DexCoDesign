@@ -154,14 +154,33 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("compiled", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--compiled-hand-id",
+        help="select one hand from a multi-hand compiled artifact",
+    )
     parser.add_argument("--hand-id", default="wuji_exaggerated_demo")
     parser.add_argument("--display-name")
     args = parser.parse_args()
 
     payload = json.loads(args.compiled.read_text(encoding="utf-8"))
-    if len(payload["hands"]) != 1:
-        raise ValueError("expected exactly one compiled hand")
-    hand = payload["hands"][0]
+    if args.compiled_hand_id is None:
+        if len(payload["hands"]) != 1:
+            raise ValueError(
+                "multi-hand artifact requires --compiled-hand-id"
+            )
+        hand = payload["hands"][0]
+    else:
+        matches = [
+            candidate
+            for candidate in payload["hands"]
+            if candidate["hand_id"] == args.compiled_hand_id
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"expected one compiled hand {args.compiled_hand_id!r}, "
+                f"found {len(matches)}"
+            )
+        hand = matches[0]
     source_hand = hand["seed_source"]
     scale, source_rotation = _inverse_source_linear(source_hand)
 

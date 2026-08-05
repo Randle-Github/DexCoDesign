@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "hands": [
+    {
+      "hand_id": "wuji_batch_smoke_0",
+      "source_hand": "wuji_hand_2",
+      "palm": {"layout_mode": "anthropomorphic", "expansion": 0.0, "scale_x": 1.0, "scale_z": 1.0, "yaw": 0.0},
+      "fingers": {"default_length_scale": 1.0, "default_radius_scale": 1.0}
+    },
+    {
+      "hand_id": "wuji_batch_smoke_1",
+      "source_hand": "wuji_hand_2",
+      "palm": {"layout_mode": "anthropomorphic", "expansion": 0.15, "scale_x": 1.05, "scale_z": 0.97, "yaw": 0.03},
+      "fingers": {"default_length_scale": 1.08, "default_radius_scale": 0.95}
+    }
+  ]
+}
