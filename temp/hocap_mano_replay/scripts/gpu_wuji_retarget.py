@@ -54,7 +54,6 @@ OBJECT_MESH = (
     / "G04_1"
     / "cleaned_mesh_2000.obj"
 )
-FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 TIP_LINKS = {
     "thumb": "l_thumb_tip",
     "index": "l_index_finger_tip",
@@ -62,21 +61,17 @@ TIP_LINKS = {
     "ring": "l_ring_finger_tip",
     "pinky": "l_pinky_tip",
 }
-VECTOR_NAMES = (
-    "palm_expansion",
-    "palm_scale_x",
-    "palm_scale_z",
-    "palm_yaw",
-    *(f"{finger}_length" for finger in FINGERS),
-    *(f"{finger}_radius" for finger in FINGERS),
-)
-LOWER_BOUNDS = np.asarray(
-    [0.0, 0.90, 0.90, -0.12, *([0.82] * 5), *([0.85] * 5)],
-    dtype=np.float32,
-)
-UPPER_BOUNDS = np.asarray(
-    [0.35, 1.12, 1.12, 0.12, *([1.20] * 5), *([1.15] * 5)],
-    dtype=np.float32,
+from wuji_morphology_space import (  # noqa: E402
+    FINGERS,
+    LOWER_BOUNDS,
+    PALM_EXPANSION_LEVELS,
+    PALM_EXPANSION_MAX,
+    PALM_EXPANSION_MIN,
+    SOURCE_VECTOR,
+    UPPER_BOUNDS,
+    VECTOR_NAMES,
+    resolve_design_vectors,
+    validate_design_vectors,
 )
 
 
@@ -569,9 +564,9 @@ def joint_names_from_seed(seed: np.lib.npyio.NpzFile) -> list[str]:
 
 def sample_vectors(count: int, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    normalized = rng.uniform(0.0, 1.0, size=(count, len(VECTOR_NAMES))).astype(np.float32)
-    vectors = LOWER_BOUNDS + normalized * (UPPER_BOUNDS - LOWER_BOUNDS)
-    vectors[0] = np.asarray([0.0, 1.0, 1.0, 0.0, *([1.0] * 10)], dtype=np.float32)
+    vectors = rng.uniform(LOWER_BOUNDS, UPPER_BOUNDS, size=(count, len(VECTOR_NAMES)))
+    vectors[:, 0] = rng.integers(0, int(UPPER_BOUNDS[0]) + 1, size=count)
+    vectors[0] = SOURCE_VECTOR
     return vectors
 
 
@@ -623,10 +618,12 @@ def main() -> int:
             f"vectors must have shape (N, {len(VECTOR_NAMES)}), got "
             f"{vectors_np.shape}"
         )
-    if np.any(vectors_np < LOWER_BOUNDS) or np.any(vectors_np > UPPER_BOUNDS):
-        raise ValueError("supplied morphology vectors exceed certified bounds")
+    vectors_np = validate_design_vectors(vectors_np).astype(np.float32)
     args.candidates = len(vectors_np)
-    vectors = torch.from_numpy(vectors_np).to(device)
+    # GPU kinematics consumes physical expansion, while saved vectors retain
+    # the discrete prototype identity used by compilation and CEM.
+    resolved_vectors_np = resolve_design_vectors(vectors_np).astype(np.float32)
+    vectors = torch.from_numpy(resolved_vectors_np).to(device)
     seed_q = torch.from_numpy(seed_q_np).to(device)
     kinematics = WujiBatchKinematics(joint_names, device)
     q, wrist_delta, benchmark = kinematics.solve(
@@ -671,6 +668,12 @@ def main() -> int:
         "isaaclab_algorithm": "damped_least_squares",
         "warm_start": str(args.seed_trajectory.resolve()),
         "vector_names": list(VECTOR_NAMES),
+        "palm_expansion_design": {
+            "type": "discrete_prototype_index",
+            "levels": PALM_EXPANSION_LEVELS,
+            "minimum": PALM_EXPANSION_MIN,
+            "maximum": PALM_EXPANSION_MAX,
+        },
         "benchmark": benchmark,
         "contact_proxy_benchmark": proxy_benchmark,
         "proxy_used": not args.skip_proxy,

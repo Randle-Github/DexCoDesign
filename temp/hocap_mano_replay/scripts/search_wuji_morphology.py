@@ -20,11 +20,15 @@ SCRIPT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_ROOT.parents[2]
 EVALUATOR = SCRIPT_ROOT / "evaluate_wuji_morphology.py"
 sys.path.insert(0, str(SCRIPT_ROOT))
-from evaluate_wuji_morphology import (  # noqa: E402
-    LOWER_BOUNDS,
+from wuji_morphology_space import (  # noqa: E402
+    CONTINUOUS_LOWER_BOUNDS,
+    CONTINUOUS_SOURCE_VECTOR,
+    CONTINUOUS_UPPER_BOUNDS,
+    PALM_EXPANSION_LEVELS,
     SOURCE_VECTOR,
-    UPPER_BOUNDS,
     VECTOR_NAMES,
+    sample_mixed_vectors,
+    validate_design_vectors,
 )
 
 
@@ -169,25 +173,26 @@ def main() -> int:
     root = args.output_root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(args.seed)
-    span = UPPER_BOUNDS - LOWER_BOUNDS
-    mean = (SOURCE_VECTOR - LOWER_BOUNDS) / span
+    continuous_span = CONTINUOUS_UPPER_BOUNDS - CONTINUOUS_LOWER_BOUNDS
+    mean = (
+        CONTINUOUS_SOURCE_VECTOR - CONTINUOUS_LOWER_BOUNDS
+    ) / continuous_span
     sigma = np.full(len(mean), 0.18, dtype=np.float64)
+    palm_probabilities = np.full(
+        PALM_EXPANSION_LEVELS, 1.0 / PALM_EXPANSION_LEVELS, dtype=np.float64
+    )
     history: list[dict[str, object]] = []
     best: dict[str, object] | None = None
     evaluation_index = 0
 
     # Evaluate the exact source-shaped generated graph as a stable anchor.
-    populations = [mean[None, :]]
     for generation in range(args.generations):
         if generation == 0:
-            normalized = populations[0]
+            vectors = SOURCE_VECTOR[None, :]
         else:
-            normalized = np.clip(
-                rng.normal(mean, sigma, size=(args.population, len(mean))),
-                0.0,
-                1.0,
+            vectors = sample_mixed_vectors(
+                rng, args.population, palm_probabilities, mean, sigma
             )
-        vectors = LOWER_BOUNDS + normalized * span
         jobs = []
         for local_index, vector in enumerate(vectors):
             candidate_dir = root / "candidates" / f"candidate_{evaluation_index:04d}"
@@ -226,12 +231,26 @@ def main() -> int:
         if completed and generation > 0:
             completed.sort(key=lambda row: float(row["objective"]), reverse=True)
             elite_count = max(2, int(np.ceil(0.25 * len(completed))))
-            elite_vectors = np.asarray([row["vector"] for row in completed[:elite_count]])
-            elite_normalized = (elite_vectors - LOWER_BOUNDS) / span
+            elite_vectors = validate_design_vectors(
+                np.asarray([row["vector"] for row in completed[:elite_count]])
+            )
+            elite_normalized = (
+                elite_vectors[:, 1:] - CONTINUOUS_LOWER_BOUNDS
+            ) / continuous_span
             new_mean = elite_normalized.mean(axis=0)
             new_sigma = np.maximum(elite_normalized.std(axis=0), 0.04)
             mean = 0.25 * mean + 0.75 * new_mean
             sigma = 0.25 * sigma + 0.75 * new_sigma
+            counts = np.bincount(
+                elite_vectors[:, 0].astype(np.int64),
+                minlength=PALM_EXPANSION_LEVELS,
+            ).astype(np.float64)
+            measured_probabilities = (counts + 0.5) / (
+                counts.sum() + 0.5 * PALM_EXPANSION_LEVELS
+            )
+            palm_probabilities = (
+                0.25 * palm_probabilities + 0.75 * measured_probabilities
+            )
 
     assert best is not None
     history_path = root / "search_history.json"

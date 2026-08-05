@@ -17,29 +17,19 @@ SCRIPT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_ROOT.parents[2]
 DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
 SOURCE_HAND_ID = "wuji_hand_2"
-FINGERS = ("thumb", "index", "middle", "ring", "pinky")
-VECTOR_NAMES = (
-    "palm_expansion",
-    "palm_scale_x",
-    "palm_scale_z",
-    "palm_yaw",
-    *(f"{finger}_length" for finger in FINGERS),
-    *(f"{finger}_radius" for finger in FINGERS),
-)
-LOWER_BOUNDS = np.asarray(
-    [0.0, 0.90, 0.90, -0.12, *([0.82] * 5), *([0.85] * 5)],
-    dtype=np.float64,
-)
-UPPER_BOUNDS = np.asarray(
-    [0.35, 1.12, 1.12, 0.12, *([1.20] * 5), *([1.15] * 5)],
-    dtype=np.float64,
-)
-SOURCE_VECTOR = np.asarray(
-    [0.0, 1.0, 1.0, 0.0, *([1.0] * 5), *([1.0] * 5)],
-    dtype=np.float64,
-)
-
 sys.path.insert(0, str(SCRIPT_ROOT))
+from wuji_morphology_space import (  # noqa: E402
+    FINGERS,
+    LOWER_BOUNDS,
+    PALM_EXPANSION_LEVELS,
+    PALM_EXPANSION_MAX,
+    PALM_EXPANSION_MIN,
+    SOURCE_VECTOR,
+    UPPER_BOUNDS,
+    VECTOR_NAMES,
+    palm_expansion_from_index,
+    validate_design_vectors,
+)
 import retarget_all_hands as retarget  # noqa: E402
 import run_generated_hand_retarget_physics as generated  # noqa: E402
 import simulate_retargeted_all_hands as physics  # noqa: E402
@@ -50,11 +40,7 @@ def vector_to_graph(vector: np.ndarray, hand_id: str) -> dict[str, object]:
         raise ValueError(
             f"expected {len(VECTOR_NAMES)} reshape values, got {vector.shape}"
         )
-    if np.any(vector < LOWER_BOUNDS - 1e-6) or np.any(vector > UPPER_BOUNDS + 1e-6):
-        raise ValueError("reshape vector lies outside the certified search bounds")
-    # GPU proposal vectors are float32. Values sampled exactly on a certified
-    # boundary can differ from the float64 constant by a few ulps.
-    vector = np.clip(vector, LOWER_BOUNDS, UPPER_BOUNDS)
+    vector = validate_design_vectors(vector)
     finger_length = vector[4:9]
     finger_radius = vector[9:14]
     return {
@@ -63,7 +49,9 @@ def vector_to_graph(vector: np.ndarray, hand_id: str) -> dict[str, object]:
         "source_hand": SOURCE_HAND_ID,
         "palm": {
             "layout_mode": "anthropomorphic",
-            "expansion": float(vector[0]),
+            "expansion_index": int(vector[0]),
+            "expansion_levels": PALM_EXPANSION_LEVELS,
+            "expansion": float(palm_expansion_from_index(vector[0])),
             "scale_x": float(vector[1]),
             "scale_z": float(vector[2]),
             "yaw": float(vector[3]),
@@ -232,6 +220,13 @@ def evaluate(
         },
         "reshape_vector_names": list(VECTOR_NAMES),
         "reshape_vector": vector.tolist(),
+        "palm_expansion_design": {
+            "type": "discrete_prototype_index",
+            "levels": PALM_EXPANSION_LEVELS,
+            "minimum": PALM_EXPANSION_MIN,
+            "maximum": PALM_EXPANSION_MAX,
+            "resolved_expansion": float(palm_expansion_from_index(vector[0])),
+        },
         "graph": graph,
         "retargeted_trajectory": str(trajectory),
         "rollout": result,
