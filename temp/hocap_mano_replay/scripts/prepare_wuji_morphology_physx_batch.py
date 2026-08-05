@@ -52,6 +52,7 @@ def main() -> int:
             "wrist_quaternion_xyzw_all",
             "frame_ids",
             "joint_names",
+            "qpos_ids",
         )
         missing = [key for key in required if key not in data]
         if missing:
@@ -70,6 +71,7 @@ def main() -> int:
         )
         frame_ids = data["frame_ids"].astype(np.int64)
         joint_names = data["joint_names"].astype(str)
+        qpos_ids = data["qpos_ids"].astype(np.int64)
 
     candidate_ids = [f"wuji_physx_{index:06d}" for index in range(count)]
     graphs = [
@@ -107,6 +109,7 @@ def main() -> int:
             wrist_position=wrist_position[index],
             wrist_quaternion_xyzw=wrist_quaternion[index],
             source_joint_names=joint_names,
+            qpos_ids=qpos_ids,
         )
         rows.append(
             {

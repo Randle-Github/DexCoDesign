@@ -608,6 +608,7 @@ def main() -> int:
         wrist_position = seed["wrist_position"].astype(np.float32)
         wrist_quaternion = seed["wrist_quaternion_xyzw"].astype(np.float32)
         frame_ids = seed["frame_ids"].astype(np.int64)
+        qpos_ids = seed["qpos_ids"].astype(np.int64)
     if args.vectors is None:
         vectors_np = sample_vectors(args.candidates, args.seed)
     elif args.vectors.suffix == ".npy":
@@ -690,6 +691,7 @@ def main() -> int:
         "vectors": vectors_np,
         "joint_names": np.asarray(joint_names),
         "frame_ids": frame_ids,
+        "qpos_ids": qpos_ids,
         "wrist_position": wrist_position,
         "wrist_quaternion_xyzw": wrist_quaternion,
         "metadata_json": np.asarray(json.dumps(payload)),
