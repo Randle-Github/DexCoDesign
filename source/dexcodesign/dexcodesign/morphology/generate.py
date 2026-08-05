@@ -893,8 +893,8 @@ def main() -> int:
             sy = 1.0
             sz = float(palm_spec.get("scale_z", rng.uniform(0.92, 1.13)))
             yaw = float(palm_spec.get("yaw", rng.uniform(-0.16, 0.16)))
-        if not 0.75 <= sx <= 1.35 or not 0.75 <= sz <= 1.35:
-            raise ValueError("palm scale_x and scale_z must lie in [0.75, 1.35]")
+        if not 0.70 <= sx <= 1.45 or not 0.70 <= sz <= 1.45:
+            raise ValueError("palm scale_x and scale_z must lie in [0.70, 1.45]")
         if not -0.35 <= yaw <= 0.35:
             raise ValueError("palm yaw must lie in [-0.35, 0.35] radians")
         rotation = rot_z(yaw)
@@ -1032,13 +1032,13 @@ def main() -> int:
                     finger_spec.get("default_radius_scale", rng.uniform(0.88, 1.14)),
                 )
             )
-            if not 0.65 <= length_scale <= 1.45:
+            if not 0.55 <= length_scale <= 1.60:
                 raise ValueError(
-                    f"{role} length_scale must lie in [0.65, 1.45]"
+                    f"{role} length_scale must lie in [0.55, 1.60]"
                 )
-            if not 0.65 <= radius_scale <= 1.35:
+            if not 0.60 <= radius_scale <= 1.45:
                 raise ValueError(
-                    f"{role} radius_scale must lie in [0.65, 1.35]"
+                    f"{role} radius_scale must lie in [0.60, 1.45]"
                 )
             realized_finger_parameters[role] = {
                 "length_scale": length_scale,
