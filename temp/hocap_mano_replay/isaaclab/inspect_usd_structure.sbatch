@@ -14,6 +14,7 @@ set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 USD="${USD:?set USD}"
 FLATTEN_OUTPUT="${FLATTEN_OUTPUT:-}"
+JSON_OUTPUT="${JSON_OUTPUT:-}"
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
 cd "${REPO_ROOT}"
@@ -22,5 +23,8 @@ command=(./isaaclab.sh -p temp/hocap_mano_replay/isaaclab/inspect_usd_structure.
   "${USD}" --headless)
 if [[ -n "${FLATTEN_OUTPUT}" ]]; then
   command+=(--flatten-output "${FLATTEN_OUTPUT}")
+fi
+if [[ -n "${JSON_OUTPUT}" ]]; then
+  command+=(--json-output "${JSON_OUTPUT}")
 fi
 "${command[@]}"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from isaaclab.app import AppLauncher
 
@@ -11,12 +12,22 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser()
 parser.add_argument("usd")
 parser.add_argument("--flatten-output")
+parser.add_argument("--json-output")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
-from pxr import Usd  # noqa: E402
+from pxr import Usd, UsdPhysics  # noqa: E402
+
+
+def _plain(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    try:
+        return [_plain(item) for item in value]
+    except TypeError:
+        return str(value)
 
 
 def main() -> int:
@@ -27,6 +38,7 @@ def main() -> int:
             raise RuntimeError(f"failed to export {args.flatten_output}")
         print(f"FLATTENED {args.flatten_output}", flush=True)
     print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}", flush=True)
+    records = []
     interesting = (
         "localPos",
         "localRot",
@@ -57,6 +69,29 @@ def main() -> int:
                 f"attrs={attributes} rels={relationships}",
                 flush=True,
             )
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI) or "Joint" in prim.GetTypeName():
+            record = {"path": str(prim.GetPath()), "type": prim.GetTypeName()}
+            for name in (
+                "xformOp:translate",
+                "xformOp:orient",
+                "physics:localPos0",
+                "physics:localPos1",
+                "physics:localRot0",
+                "physics:localRot1",
+                "physics:axis",
+            ):
+                attribute = prim.GetAttribute(name)
+                if attribute:
+                    record[name] = _plain(attribute.Get())
+            for name in ("physics:body0", "physics:body1"):
+                relationship = prim.GetRelationship(name)
+                if relationship:
+                    record[name] = [str(item) for item in relationship.GetTargets()]
+            records.append(record)
+    if args.json_output:
+        with open(args.json_output, "w", encoding="utf-8") as stream:
+            json.dump(records, stream, indent=2)
+            stream.write("\n")
     return 0
 
 
