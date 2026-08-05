@@ -131,7 +131,11 @@ def prepare_generated_runtime(
             None,
         )
         rebuild_preprocess = (
-            source is None or "direct_geometry_audit" not in source
+            source is None
+            or not (
+                "canonicalization" in source
+                or "direct_geometry_audit" in source
+            )
         )
     compile_command = [
         sys.executable,

@@ -36,7 +36,13 @@ def _inverse_source_linear(source_hand: str) -> tuple[float, np.ndarray]:
     source = next(
         hand for hand in payload["hands"] if hand["hand_id"] == source_hand
     )
-    audit = source["direct_geometry_audit"]
+    # Current preprocessing names this record ``canonicalization``; accept the
+    # earlier cache key so existing content-addressed artifacts remain usable.
+    audit = source.get("canonicalization", source.get("direct_geometry_audit"))
+    if audit is None:
+        raise ValueError(
+            f"{source_hand}: reference graph lacks canonicalization metadata"
+        )
     return (
         float(audit["similarity_scale"]),
         np.asarray(audit["similarity_rotation"], dtype=np.float64),
