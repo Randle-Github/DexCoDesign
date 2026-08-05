@@ -751,6 +751,10 @@ class ManoResidualEnv(DirectRLEnv):
             hand_prim = stage.GetPrimAtPath(hand_root)
             if not hand_prim.IsValid():
                 raise ValueError(f"missing spawned morphology hand at {hand_root}")
+            # Imported hands are instanceable by default. Their descendants
+            # are read-only instance proxies, so make only the env root
+            # editable before authoring candidate-local morphology opinions.
+            hand_prim.SetInstanceable(False)
             link_children = {child.GetName() for child in hand_prim.GetChildren()}
             joint_scope = stage.GetPrimAtPath(f"{hand_root}/joints")
             joint_children = (
