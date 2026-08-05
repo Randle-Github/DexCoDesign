@@ -122,10 +122,30 @@ def attach_parametric_collisions(
     if len(joint_names) != len(joint_local_positions):
         raise ValueError("parametric joint/position count mismatch")
     joint_scope = candidate_root.AppendChild("joints")
+    template_joint_scope = template_root.AppendChild("joints")
     for joint_name, position in zip(
         joint_names, joint_local_positions, strict=True
     ):
-        joint = candidate_stage.OverridePrim(joint_scope.AppendChild(joint_name))
+        resolved_name = joint_name
+        template_joint = template_stage.GetPrimAtPath(
+            template_joint_scope.AppendChild(resolved_name)
+        )
+        if not template_joint:
+            matches = [
+                child.GetName()
+                for child in template_stage.GetPrimAtPath(
+                    template_joint_scope
+                ).GetChildren()
+                if child.GetName().endswith(f"__{joint_name}")
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"cannot uniquely map template joint {joint_name}: {matches}"
+                )
+            resolved_name = matches[0]
+        joint = candidate_stage.OverridePrim(
+            joint_scope.AppendChild(resolved_name)
+        )
         joint.GetAttribute("physics:localPos0").Set(Gf.Vec3f(*position))
     candidate_stage.GetRootLayer().Save()
 
