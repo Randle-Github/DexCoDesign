@@ -5,13 +5,20 @@ from __future__ import annotations
 
 import argparse
 
-from pxr import Usd
+from isaaclab.app import AppLauncher
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("usd")
+AppLauncher.add_app_launcher_args(parser)
+args = parser.parse_args()
+app_launcher = AppLauncher(args)
+simulation_app = app_launcher.app
+
+from pxr import Usd  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("usd")
-    args = parser.parse_args()
     stage = Usd.Stage.Open(args.usd)
     print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}")
     interesting = (
@@ -47,4 +54,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    finally:
+        simulation_app.close()
