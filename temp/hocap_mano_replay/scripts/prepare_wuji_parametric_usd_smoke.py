@@ -73,8 +73,13 @@ def main() -> int:
     references = []
     link_names = []
     relative_transforms = []
+    link_translations = []
+    joint_names = []
+    joint_local_positions = []
     baseline = by_id[candidate_ids[0]]
-    _, source_rotation = _inverse_source_linear(str(baseline["seed_source"]))
+    source_scale, source_rotation = _inverse_source_linear(
+        str(baseline["seed_source"])
+    )
     reflection = np.diag((-1.0, 1.0, 1.0))
     polar_linear = source_rotation.T @ reflection
     baseline_linear = {
@@ -125,6 +130,9 @@ def main() -> int:
         ]
         link_names.append(ordered_links)
         transforms = []
+        candidate_world_positions: dict[int, np.ndarray] = {}
+        candidate_joint_names = []
+        candidate_joint_positions = []
         for part in candidate["parts"]:
             part_id = int(part["id"])
             current = np.asarray(part["mesh_linear"], dtype=np.float64)
@@ -138,7 +146,27 @@ def main() -> int:
             matrix = np.eye(4, dtype=np.float64)
             matrix[:3, :3] = relative
             transforms.append(matrix.tolist())
+            local_position = (
+                np.asarray(part["relative_pos"], dtype=np.float64)
+                @ polar_linear
+                / source_scale
+            )
+            parent = part["parent"]
+            world_position = local_position.copy()
+            if parent is not None:
+                world_position += candidate_world_positions[int(parent)]
+                candidate_joint_names.append(str(part["joint_name"]))
+                candidate_joint_positions.append(local_position.tolist())
+            candidate_world_positions[part_id] = world_position
         relative_transforms.append(transforms)
+        link_translations.append(
+            [
+                candidate_world_positions[int(part["id"])].tolist()
+                for part in candidate["parts"]
+            ]
+        )
+        joint_names.append(candidate_joint_names)
+        joint_local_positions.append(candidate_joint_positions)
 
     manifest = {
         "schema_version": 2,
@@ -152,6 +180,9 @@ def main() -> int:
         ),
         "parametric_link_names": link_names,
         "parametric_relative_transforms": relative_transforms,
+        "parametric_link_translations": link_translations,
+        "parametric_joint_names": joint_names,
+        "parametric_joint_local_positions": joint_local_positions,
         "all_candidates_require_physical_rollout": True,
         "proxy_used": False,
     }

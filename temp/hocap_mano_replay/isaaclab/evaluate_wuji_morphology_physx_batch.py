@@ -54,6 +54,9 @@ def attach_parametric_collisions(
     template_usd: Path,
     link_names: list[str],
     transforms: list[list[list[float]]],
+    link_translations: list[list[float]],
+    joint_names: list[str],
+    joint_local_positions: list[list[float]],
 ) -> None:
     """Create a thin candidate overlay on the complete shared articulation."""
     template_stage = Usd.Stage.Open(str(template_usd))
@@ -64,9 +67,11 @@ def attach_parametric_collisions(
     # without an extra reference or sublayer composition wrapper.
     candidate_stage = Usd.Stage.Open(str(candidate_usd))
     candidate_root = candidate_stage.GetDefaultPrim().GetPath()
-    if len(link_names) != len(transforms):
+    if not (len(link_names) == len(transforms) == len(link_translations)):
         raise ValueError("parametric link/transform count mismatch")
-    for link_name, transform in zip(link_names, transforms, strict=True):
+    for link_name, transform, translation in zip(
+        link_names, transforms, link_translations, strict=True
+    ):
         # Isaac's earlier generated-hand exporter names the imported links
         # ``hand__part_*`` while the geometry-free URDF importer keeps the
         # canonical ``part_*`` names. Resolve that importer namespace only on
@@ -86,6 +91,10 @@ def attach_parametric_collisions(
         candidate_path = candidate_root.AppendChild(
             template_link.name
         ).AppendChild("collisions")
+        candidate_link = candidate_stage.OverridePrim(candidate_path.GetParentPath())
+        candidate_link.GetAttribute("xformOp:translate").Set(
+            Gf.Vec3d(*translation)
+        )
         template_path = template_link.AppendChild("collisions")
         template_collision = template_stage.GetPrimAtPath(template_path)
         if not template_collision:
@@ -110,6 +119,14 @@ def attach_parametric_collisions(
             xform = UsdGeom.Xformable(collision)
             xform.ClearXformOpOrder()
             xform.AddTransformOp().Set(Gf.Matrix4d(*matrix.reshape(-1).tolist()))
+    if len(joint_names) != len(joint_local_positions):
+        raise ValueError("parametric joint/position count mismatch")
+    joint_scope = candidate_root.AppendChild("joints")
+    for joint_name, position in zip(
+        joint_names, joint_local_positions, strict=True
+    ):
+        joint = candidate_stage.OverridePrim(joint_scope.AppendChild(joint_name))
+        joint.GetAttribute("physics:localPos0").Set(Gf.Vec3f(*position))
     candidate_stage.GetRootLayer().Save()
 
 
@@ -164,6 +181,9 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                 template_usd,
                 manifest["parametric_link_names"][index],
                 manifest["parametric_relative_transforms"][index],
+                manifest["parametric_link_translations"][index],
+                manifest["parametric_joint_names"][index],
+                manifest["parametric_joint_local_positions"][index],
             )
         print(
             "WUJI_PARAMETRIC_COLLISIONS_ATTACHED "
