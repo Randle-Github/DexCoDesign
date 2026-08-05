@@ -56,10 +56,21 @@ def main() -> int:
     update = None
     if args.exact_summary is not None:
         summary = json.loads(args.exact_summary.read_text(encoding="utf-8"))
-        completed = [
-            row for row in summary["results"] if row.get("status") == "completed"
-        ]
-        completed.sort(key=lambda row: float(row["objective"]), reverse=True)
+        if not summary.get("all_candidates_physically_evaluated", False):
+            raise ValueError(
+                "CEM updates require all_candidates_physically_evaluated=true"
+            )
+        if summary.get("proxy_used", True):
+            raise ValueError("proxy scores must never update morphology CEM")
+        if summary.get("top_k_prefilter_used", True):
+            raise ValueError("top-k prefiltering is forbidden for morphology CEM")
+        completed = list(summary["results"])
+        expected = int(summary["candidate_count"])
+        if len(completed) != expected or int(summary["completed"]) != expected:
+            raise ValueError(
+                f"physical evaluation incomplete: {len(completed)}/{expected}"
+            )
+        completed.sort(key=lambda row: float(row["total_reward"]), reverse=True)
         if len(completed) < 2:
             raise ValueError("exact summary needs at least two completed candidates")
         elite_count = max(2, int(np.ceil(0.25 * len(completed))))
@@ -74,7 +85,7 @@ def main() -> int:
         update = {
             "exact_summary": str(args.exact_summary.resolve()),
             "elite_count": elite_count,
-            "best_exact_objective": float(completed[0]["objective"]),
+            "best_exact_objective": float(completed[0]["total_reward"]),
             "best_exact_vector": completed[0]["vector"],
         }
         generation += 1

@@ -1,32 +1,32 @@
 # GPU morphology search
 
-The WUJI search is split into a high-throughput proposal stage and a small
-exact stage. This avoids instantiating thousands of high-face-count collision
-models while keeping the optimization objective equal to the physical
-rollout reward.
+The production WUJI search evaluates every sampled morphology with the same
+Isaac Lab/PhysX rollout semantics as residual RL. There is no kinematic/contact
+proxy and no top-k prefilter.
 
-1. `update_gpu_wuji_cem.py` samples 4,096 or more reshape vectors.
-2. `gpu_wuji_retarget.py` reuses the exact source-hand 446-frame trajectory
-   and runs batched Torch DLS on one GPU. It also computes a broad distal-link
-   contact proxy for proposal ranking.
-3. `evaluate_gpu_wuji_topk.py` compiles the top 32/64 graphs in one shared
-   batch, exports them in parallel, uses the GPU trajectories as per-frame
-   exact-IK warm starts, and recomputes the exact MuJoCo C-error plus binary
-   pinch-contact reward.
-4. The exact rollout summary, never the proxy score, updates CEM for the next
-   generation.
+For every generation:
 
-Recommended defaults are `population=4096`, `top_k=32`, four GPU DLS
-iterations, four exact correction iterations, and 16/32 CPU workers. Raise
-the population to 16,384 without increasing GPU memory by keeping
-`candidate_chunk=128`.
+1. `update_gpu_wuji_cem.py` samples the complete reshape-vector population.
+2. `gpu_wuji_retarget.py --save-trajectories --skip-proxy` retargets the
+   446-frame Human/MANO command trajectory to every candidate on the GPU.
+3. `prepare_wuji_morphology_physx_batch.py` generates every graph, mesh, URDF,
+   and per-candidate reference. Mesh compilation and export are CPU-parallel.
+4. `evaluate_wuji_morphology_physx_batch.py` creates one distinct hand asset per
+   PhysX environment and rolls out all candidates concurrently. It calls the
+   normal residual-RL environment reward/contact/termination implementation:
+   C-error pose reward, binary thumb-versus-other-finger pinch contact, dynamic
+   object physics, and 5 cm / 1.5 rad early termination.
+5. CEM is updated only if the result proves that the entire sampled population
+   completed physical evaluation. Proxy or partial summaries are rejected.
 
-The implementation follows Isaac Lab's damped-least-squares differential IK
-algorithm, but uses a custom Torch FK/Jacobian kernel because Isaac Lab's
-standard controller batches environments of one robot model and does not
-natively batch thousands of different morphology parameters.
+`launch_gpu_wuji_cem.py` submits one persistent Slurm allocation for all
+generations. The allocation therefore does not return to the queue between
+sampling, retargeting, asset generation, PhysX rollout, and distribution
+update. Isaac may restart inside that allocation when the morphology set
+changes, but the node and GPU remain assigned to the same workflow.
 
-Do not copy a full mesh-based MJX model per proposal. A 1,024-model WUJI test
-requested about 131 GiB of device memory. MJX or MuJoCo is appropriate for a
-small exact top-k; shared-topology mesh-free FK/IK is appropriate for the
-thousands-wide proposal stage.
+Start with a population that fits distinct USD assets in GPU memory, then scale
+from measured memory and throughput. The 64-candidate validation completed all
+64 real rollouts concurrently; its PhysX rollout itself took about 12 seconds.
+Asset generation and USD conversion, not simulation, are currently the main
+scaling costs.

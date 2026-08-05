@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """GPU-batched warm-start retargeting for thousands of WUJI morphologies.
 
-This is the high-throughput proposal stage of morphology search.  It reuses
+This is the high-throughput retargeting stage of morphology search. It reuses
 the exact source-hand retargeted trajectory as the initial value, evaluates a
 same-topology parametric WUJI kinematic model in Torch, and applies the same
 damped-least-squares update used by Isaac Lab's Differential IK controller.
-Visual/collision meshes are deliberately absent here; only exact top-k
-candidates are compiled and physically rescored by MuJoCo/MJX.
+Visual/collision meshes are deliberately absent in this retargeting stage.
+The production search subsequently compiles every candidate and evaluates the
+entire population in the physical Isaac Lab backend.
 """
 
 from __future__ import annotations
