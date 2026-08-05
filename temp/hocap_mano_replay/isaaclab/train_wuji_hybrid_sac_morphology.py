@@ -180,7 +180,11 @@ def prepare_assets(
     manifest_path = prepared / "physx_batch_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     start = time.perf_counter()
-    timings["usd_attach_seconds"] = attach_manifest(manifest)
+    timings["usd_attach_seconds"] = (
+        0.0
+        if manifest.get("runtime_parametric_overlays", False)
+        else attach_manifest(manifest)
+    )
     timings["usd_attach_total_seconds"] = time.perf_counter() - start
     manifest["parametric_template_usd"] = None
     manifest["parametric_template_usd_paths"] = None

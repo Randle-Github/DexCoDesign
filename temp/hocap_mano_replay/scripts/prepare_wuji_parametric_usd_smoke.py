@@ -153,26 +153,15 @@ def main() -> int:
         urdfs.append("")
         candidate_usd = candidate_root / "asset" / "hand.usd"
         if not args.direct_template and args.direct_candidate_assets is None:
-            candidate_usd.parent.mkdir(parents=True, exist_ok=True)
             if bank_rows is not None:
-                # Sublayer the prototype from its original directory so USD
-                # resolves and caches its heavy configuration/mesh layers by
-                # one canonical identifier. Copying the top layer made every
-                # candidate's relative ``configuration/`` path unique and
-                # forced Kit to parse the same 4.6 MB layer thousands of
-                # times. Candidate-local transform opinions are authored into
-                # this tiny wrapper by ``attach_manifest``.
-                prototype_root = f"{prototype_row['candidate_id']}_rl"
-                prototype_asset = template_usd.as_posix().replace("@", "@@")
-                candidate_usd.write_text(
-                    "#usda 1.0\n"
-                    "(\n"
-                    f'    defaultPrim = "{prototype_root}"\n'
-                    f"    subLayers = [@{prototype_asset}@]\n"
-                    ")\n",
-                    encoding="utf-8",
-                )
+                # Spawn the canonical prototype directly. The environment
+                # authors candidate-local continuous morphology overrides on
+                # each env prim before simulation starts. Repeated paths can
+                # therefore share one imported prototype instead of parsing a
+                # candidate wrapper/configuration stack per environment.
+                candidate_usd = template_usd
             else:
+                candidate_usd.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(template_usd, candidate_usd)
                 for child in template_usd.parent.iterdir():
                     if child.name == template_usd.name:
@@ -279,6 +268,7 @@ def main() -> int:
         "parametric_joint_names": joint_names,
         "parametric_joint_local_positions": joint_local_positions,
         "all_candidates_require_physical_rollout": True,
+        "runtime_parametric_overlays": bank_rows is not None,
         "proxy_used": False,
     }
     path = root / "physx_batch_manifest.json"

@@ -19,7 +19,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from pxr import Usd, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -200,6 +200,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
             sim_utils.MultiUsdFileCfg(
                 usd_path=[str(path) for path in _batch_usd_paths],
                 random_choice=False,
+                reuse_duplicate_assets=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=True,
                     max_depenetration_velocity=1.0,
@@ -628,6 +629,7 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _setup_scene(self) -> None:
         self.hand = Articulation(self.cfg.hand_cfg)
+        self._apply_morphology_batch_overlays()
         visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
         if HAND_ID == "mano" and visual_manifest_path.is_file():
             visual_manifest = json.loads(visual_manifest_path.read_text(encoding="utf-8"))
@@ -713,6 +715,81 @@ class ManoResidualEnv(DirectRLEnv):
         self.scene.sensors["object_all_hand_contact"] = self._all_hand_contact_sensor
         light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _apply_morphology_batch_overlays(self) -> None:
+        """Author per-env continuous morphology before PhysX parses the stage.
+
+        The discrete palm mesh comes from one of the canonical prototype USDs.
+        Only the affine link geometry and joint-frame opinions vary per env.
+        Keeping those opinions in the scene root lets the multi-asset spawner
+        reuse 32 prototypes for thousands of candidates.
+        """
+
+        manifest = MORPHOLOGY_BATCH_MANIFEST
+        if not (
+            self._morphology_batch
+            and manifest is not None
+            and manifest.get("runtime_parametric_overlays", False)
+        ):
+            return
+        count = len(manifest["hand_usd_paths"])
+        required = (
+            "parametric_link_names",
+            "parametric_relative_transforms",
+            "parametric_link_translations",
+            "parametric_joint_names",
+            "parametric_joint_local_positions",
+        )
+        for key in required:
+            if len(manifest[key]) != count:
+                raise ValueError(f"runtime morphology overlay count mismatch for {key}")
+        stage = self.scene.stage
+        with Sdf.ChangeBlock():
+            for index in range(count):
+                hand_root = f"/World/envs/env_{index}/Hand"
+                links = manifest["parametric_link_names"][index]
+                transforms = manifest["parametric_relative_transforms"][index]
+                translations = manifest["parametric_link_translations"][index]
+                if not (len(links) == len(transforms) == len(translations)):
+                    raise ValueError(
+                        f"runtime morphology link overlay mismatch at env {index}"
+                    )
+                for link_name, transform, translation in zip(
+                    links, transforms, translations, strict=True
+                ):
+                    link_path = f"{hand_root}/{link_name}"
+                    link = stage.OverridePrim(link_path)
+                    link.GetAttribute("xformOp:translate").Set(
+                        Gf.Vec3d(*translation)
+                    )
+                    matrix = np.asarray(transform, dtype=np.float64)
+                    if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
+                        collision = stage.OverridePrim(f"{link_path}/collisions")
+                        xform = UsdGeom.Xformable(collision)
+                        xform.ClearXformOpOrder()
+                        xform.AddTransformOp().Set(
+                            Gf.Matrix4d(*matrix.reshape(-1).tolist())
+                        )
+                joint_names = manifest["parametric_joint_names"][index]
+                positions = manifest["parametric_joint_local_positions"][index]
+                if len(joint_names) != len(positions):
+                    raise ValueError(
+                        f"runtime morphology joint overlay mismatch at env {index}"
+                    )
+                for joint_name, position in zip(
+                    joint_names, positions, strict=True
+                ):
+                    joint = stage.OverridePrim(
+                        f"{hand_root}/joints/{joint_name}"
+                    )
+                    joint.GetAttribute("physics:localPos0").Set(
+                        Gf.Vec3f(*position)
+                    )
+        print(
+            "[MORPHOLOGY_RUNTIME_OVERLAYS] "
+            f"authored={count} prototypes={len(set(manifest['hand_usd_paths']))}",
+            flush=True,
+        )
 
     def _validate_collision_coverage(
         self,

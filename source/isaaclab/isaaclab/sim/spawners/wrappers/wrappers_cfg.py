@@ -41,6 +41,14 @@ class MultiAssetSpawnerCfg(RigidObjectSpawnerCfg, DeformableObjectSpawnerCfg):
     If True, a random asset configuration is selected for each spawn.
     """
 
+    reuse_duplicate_assets: bool = False
+    """Spawn identical USD prototypes once while preserving assignment order.
+
+    This is opt-in because arbitrary spawner configurations may carry state
+    beyond their asset path. It is safe for morphology batches whose repeated
+    :class:`UsdFileCfg` entries differ only by ``usd_path``.
+    """
+
 
 @configclass
 class MultiUsdFileCfg(UsdFileCfg):
@@ -65,3 +73,6 @@ class MultiUsdFileCfg(UsdFileCfg):
     If False, the asset configurations are spawned in the order they are provided in the list.
     If True, a random asset configuration is selected for each spawn.
     """
+
+    reuse_duplicate_assets: bool = False
+    """Reuse one spawned prototype for repeated identical ``usd_path`` values."""
