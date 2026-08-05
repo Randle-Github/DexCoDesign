@@ -24,6 +24,7 @@ conda activate codesign
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}"
 export OMP_NUM_THREADS=1
+export OMNI_KIT_ACCEPT_EULA=YES
 
 python temp/hocap_mano_replay/scripts/gpu_wuji_retarget.py \
   --seed-trajectory "${SEED_TRAJECTORY}" \
