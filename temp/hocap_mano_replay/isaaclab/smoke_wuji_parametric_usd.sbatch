@@ -18,6 +18,7 @@ RETARGET_BATCH="${RETARGET_BATCH:?set RETARGET_BATCH}"
 COMPILED_HANDS="${COMPILED_HANDS:?set COMPILED_HANDS}"
 TEMPLATE_USD="${TEMPLATE_USD:?set TEMPLATE_USD}"
 TEMPLATE_REFERENCE="${TEMPLATE_REFERENCE:?set TEMPLATE_REFERENCE}"
+DIRECT_TEMPLATE="${DIRECT_TEMPLATE:-0}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -25,18 +26,25 @@ cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
 
+PREP_FLAGS=()
+EVAL_FLAGS=(--convert-urdf)
+if [[ "${DIRECT_TEMPLATE}" == "1" ]]; then
+  PREP_FLAGS+=(--direct-template)
+  EVAL_FLAGS=()
+fi
+
 python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_usd_smoke.py \
   "${RETARGET_BATCH}" "${COMPILED_HANDS}" \
   --template-usd "${TEMPLATE_USD}" \
   --template-reference "${TEMPLATE_REFERENCE}" \
   --output-root "${OUTPUT_ROOT}/prepared" \
-  --limit "${LIMIT}"
+  --limit "${LIMIT}" "${PREP_FLAGS[@]}"
 
 ./isaaclab.sh -p \
   temp/hocap_mano_replay/isaaclab/evaluate_wuji_morphology_physx_batch.py \
   "${OUTPUT_ROOT}/prepared/physx_batch_manifest.json" \
   --output "${OUTPUT_ROOT}/physx_results.json" \
-  --convert-urdf --headless
+  "${EVAL_FLAGS[@]}" --headless
 
 test -s "${OUTPUT_ROOT}/physx_results.json"
 printf 'WUJI_PARAMETRIC_USD_SMOKE_COMPLETE count=%s output=%s\n' \

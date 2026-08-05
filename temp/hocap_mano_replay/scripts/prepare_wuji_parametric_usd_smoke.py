@@ -59,6 +59,7 @@ def main() -> int:
     parser.add_argument("--template-reference", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=1)
+    parser.add_argument("--direct-template", action="store_true")
     args = parser.parse_args()
 
     root = args.output_root.resolve()
@@ -92,8 +93,9 @@ def main() -> int:
         candidate = by_id[candidate_id]
         candidate_root = root / "candidates" / candidate_id
         runtime = candidate_root / "runtime"
-        run(
-            [
+        if not args.direct_template:
+            run(
+                [
                 sys.executable,
                 str(SCRIPT_ROOT / "export_compiled_hand_urdf.py"),
                 str(args.compiled_hands.resolve()),
@@ -106,11 +108,20 @@ def main() -> int:
                 "--display-name",
                 candidate_id,
                 "--skeleton-only",
-            ]
-        )
-        metadata = json.loads(
-            (runtime / "runtime_metadata.json").read_text(encoding="utf-8")
-        )
+                ]
+            )
+            metadata = json.loads(
+                (runtime / "runtime_metadata.json").read_text(encoding="utf-8")
+            )
+        else:
+            metadata = {
+                "link_names": {
+                    str(part["id"]): (
+                        f"part_{int(part['id']):02d}_{part['role']}"
+                    )
+                    for part in candidate["parts"]
+                }
+            }
         reference = candidate_root / "reference.npz"
         save_reference(
             args.template_reference.resolve(),
@@ -121,9 +132,15 @@ def main() -> int:
             wrist_quaternion[index],
         )
         urdfs.append(
-            str(runtime / candidate_id / "left" / "hand.urdf")
+            ""
+            if args.direct_template
+            else str(runtime / candidate_id / "left" / "hand.urdf")
         )
-        usds.append(str(candidate_root / "asset" / "hand.usd"))
+        usds.append(
+            str(args.template_usd.resolve())
+            if args.direct_template
+            else str(candidate_root / "asset" / "hand.usd")
+        )
         references.append(str(reference))
         ordered_links = [
             metadata["link_names"][str(part["id"])]
@@ -153,7 +170,9 @@ def main() -> int:
         "hand_urdf_paths": urdfs,
         "hand_usd_paths": usds,
         "reference_paths": references,
-        "parametric_template_usd": str(args.template_usd.resolve()),
+        "parametric_template_usd": (
+            None if args.direct_template else str(args.template_usd.resolve())
+        ),
         "parametric_link_names": link_names,
         "parametric_relative_transforms": relative_transforms,
         "all_candidates_require_physical_rollout": True,
