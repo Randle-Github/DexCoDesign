@@ -20,7 +20,7 @@ from pxr import Usd  # noqa: E402
 
 def main() -> int:
     stage = Usd.Stage.Open(args.usd)
-    print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}")
+    print(f"DEFAULT {stage.GetDefaultPrim().GetPath()}", flush=True)
     interesting = (
         "localPos",
         "localRot",
@@ -48,7 +48,8 @@ def main() -> int:
         }:
             print(
                 f"PRIM {prim.GetPath()} type={prim.GetTypeName()} "
-                f"attrs={attributes} rels={relationships}"
+                f"attrs={attributes} rels={relationships}",
+                flush=True,
             )
     return 0
 
