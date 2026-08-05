@@ -808,10 +808,16 @@ class ManoResidualEnv(DirectRLEnv):
                     if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
                         collision = stage.OverridePrim(f"{link_path}/collisions")
                         xform = UsdGeom.Xformable(collision)
-                        xform.ClearXformOpOrder()
-                        xform.AddTransformOp().Set(
-                            Gf.Matrix4d(*matrix.reshape(-1).tolist())
+                        matrix_value = Gf.Matrix4d(
+                            *matrix.reshape(-1).tolist()
                         )
+                        transform_attr = collision.GetAttribute(
+                            "xformOp:transform"
+                        )
+                        if transform_attr.IsValid():
+                            transform_attr.Set(matrix_value)
+                        else:
+                            xform.AddTransformOp().Set(matrix_value)
                 joint_names = resolved_joints[index]
                 positions = manifest["parametric_joint_local_positions"][index]
                 if len(joint_names) != len(positions):
