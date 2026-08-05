@@ -19,7 +19,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdPhysics
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -800,14 +800,15 @@ class ManoResidualEnv(DirectRLEnv):
                     links, transforms, translations, strict=True
                 ):
                     link_path = f"{hand_root}/{link_name}"
-                    link = stage.OverridePrim(link_path)
+                    link = stage.GetPrimAtPath(link_path)
                     link.GetAttribute("xformOp:translate").Set(
                         Gf.Vec3d(*translation)
                     )
                     matrix = np.asarray(transform, dtype=np.float64)
                     if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
-                        collision = stage.OverridePrim(f"{link_path}/collisions")
-                        xform = UsdGeom.Xformable(collision)
+                        collision = stage.GetPrimAtPath(
+                            f"{link_path}/collisions"
+                        )
                         matrix_value = Gf.Matrix4d(
                             *matrix.reshape(-1).tolist()
                         )
@@ -817,7 +818,10 @@ class ManoResidualEnv(DirectRLEnv):
                         if transform_attr.IsValid():
                             transform_attr.Set(matrix_value)
                         else:
-                            xform.AddTransformOp().Set(matrix_value)
+                            raise ValueError(
+                                f"missing xformOp:transform at "
+                                f"{collision.GetPath()}"
+                            )
                 joint_names = resolved_joints[index]
                 positions = manifest["parametric_joint_local_positions"][index]
                 if len(joint_names) != len(positions):
@@ -827,7 +831,7 @@ class ManoResidualEnv(DirectRLEnv):
                 for joint_name, position in zip(
                     joint_names, positions, strict=True
                 ):
-                    joint = stage.OverridePrim(
+                    joint = stage.GetPrimAtPath(
                         f"{hand_root}/joints/{joint_name}"
                     )
                     joint.GetAttribute("physics:localPos0").Set(
