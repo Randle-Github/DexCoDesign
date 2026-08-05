@@ -40,6 +40,11 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=32)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument(
+        "--include-visuals",
+        action="store_true",
+        help="export complete visual meshes in addition to exact collisions",
+    )
     args = parser.parse_args()
 
     source = args.retarget_batch.expanduser().resolve()
@@ -138,21 +143,23 @@ def main() -> int:
 
     def export_and_prepare(row: dict[str, object]) -> None:
         candidate = Path(row["candidate"])
+        export_command = [
+            sys.executable,
+            str(SCRIPT_ROOT / "export_compiled_hand_urdf.py"),
+            str(compiled_root / "compiled_hands.json"),
+            "--compiled-hand-id",
+            str(row["hand_id"]),
+            "--output-root",
+            str(row["runtime"]),
+            "--hand-id",
+            str(row["hand_id"]),
+            "--display-name",
+            str(row["hand_id"]),
+        ]
+        if not args.include_visuals:
+            export_command.append("--physics-only")
         run(
-            [
-                sys.executable,
-                str(SCRIPT_ROOT / "export_compiled_hand_urdf.py"),
-                str(compiled_root / "compiled_hands.json"),
-                "--compiled-hand-id",
-                str(row["hand_id"]),
-                "--output-root",
-                str(row["runtime"]),
-                "--hand-id",
-                str(row["hand_id"]),
-                "--display-name",
-                str(row["hand_id"]),
-                "--physics-only",
-            ],
+            export_command,
             candidate / "export.log",
         )
         run(
