@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=all-palm-banks
-#SBATCH --partition=cpu-small
+#SBATCH --partition=rl2-lab
 #SBATCH --account=rl2-lab
 #SBATCH --qos=short
 #SBATCH --cpus-per-task=32
