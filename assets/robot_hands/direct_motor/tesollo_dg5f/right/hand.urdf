@@ -53,6 +53,15 @@
         <mesh filename="meshes/0004_rl_dg_palm_00.obj" />
       </geometry>
     </visual>
+    <visual name="visual_solid_palm_core">
+      <origin xyz="-0.0045 0 0.052" rpy="0 0 0" />
+      <geometry>
+        <box size="0.045 0.055 0.07" />
+      </geometry>
+      <material name="tesollo_palm_core">
+        <color rgba="0.72 0.72 0.72 1" />
+      </material>
+    </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
