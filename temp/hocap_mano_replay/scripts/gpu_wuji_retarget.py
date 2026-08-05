@@ -43,6 +43,16 @@ DEFAULT_CAPTURE = (
     / "20231022_192832"
     / "isaaclab_reference.npz"
 )
+OBJECT_MESH = (
+    REPO_ROOT
+    / "temp"
+    / "hocap_mano_replay"
+    / "data"
+    / "subset"
+    / "models"
+    / "G04_1"
+    / "cleaned_mesh_2000.obj"
+)
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 TIP_LINKS = {
     "thumb": "l_thumb_tip",
@@ -409,6 +419,110 @@ class WujiBatchKinematics:
             "frame_solves_per_second": candidate_count * frame_count / elapsed,
         }
 
+    def score_contact_proxy(
+        self,
+        vectors: torch.Tensor,
+        q_cpu: torch.Tensor,
+        wrist_delta_cpu: torch.Tensor,
+        wrist_position: torch.Tensor,
+        wrist_quaternion_xyzw: torch.Tensor,
+        object_pose_wxyz: torch.Tensor,
+        candidate_chunk: int,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """GPU ranker using the reference object surface and distal radii.
+
+        This is intentionally only a proposal score. Exact C-error + binary
+        pinch reward is always recomputed for top-k in the physical backend.
+        """
+        vertices = []
+        with OBJECT_MESH.open(encoding="utf-8", errors="ignore") as stream:
+            for line in stream:
+                if line.startswith("v "):
+                    vertices.append([float(value) for value in line.split()[1:4]])
+        mesh_vertices = np.asarray(vertices, dtype=np.float32)
+        center_xz = mesh_vertices[:, (0, 2)].mean(axis=0)
+        local_y = mesh_vertices[:, 1]
+        y_min, y_max = float(local_y.min()), float(local_y.max())
+        bin_count = 96
+        bin_index = np.clip(
+            ((local_y - y_min) / (y_max - y_min) * (bin_count - 1)).astype(int),
+            0,
+            bin_count - 1,
+        )
+        radial = np.linalg.norm(mesh_vertices[:, (0, 2)] - center_xz, axis=1)
+        profile = np.zeros(bin_count, dtype=np.float32)
+        for index in range(bin_count):
+            values = radial[bin_index == index]
+            profile[index] = float(values.max()) if len(values) else np.nan
+        valid = np.flatnonzero(np.isfinite(profile))
+        profile = np.interp(np.arange(bin_count), valid, profile[valid]).astype(np.float32)
+        profile_t = torch.from_numpy(profile).to(self.device)
+        center_t = torch.tensor(center_xz, device=self.device, dtype=self.dtype)
+        wrist_rotation = quat_xyzw_matrix(wrist_quaternion_xyzw)
+        object_quaternion_xyzw = torch.cat(
+            (object_pose_wxyz[:, 4:7], object_pose_wxyz[:, 3:4]), dim=-1
+        )
+        object_rotation = quat_xyzw_matrix(object_quaternion_xyzw)
+        object_position = object_pose_wxyz[:, :3]
+        scores = torch.empty(vectors.shape[0], dtype=self.dtype, device="cpu")
+        hard_pinch_frames = torch.empty_like(scores)
+        start = time.perf_counter()
+        for begin in range(0, vectors.shape[0], candidate_chunk):
+            end = min(begin + candidate_chunk, vectors.shape[0])
+            count = end - begin
+            vector = vectors[begin:end, None, :].expand(count, q_cpu.shape[1], -1)
+            q = q_cpu[begin:end].to(self.device, non_blocking=True)
+            wrist_delta = wrist_delta_cpu[begin:end].to(self.device, non_blocking=True)
+            local_tips = []
+            for finger_index in range(5):
+                point, _, _, _ = self.forward_finger(finger_index, vector, q)
+                local_tips.append(point + wrist_delta)
+            local_tip = torch.stack(local_tips, dim=2)
+            world_tip = wrist_position[None, :, None] + (
+                wrist_rotation[None, :, None]
+                @ local_tip.unsqueeze(-1)
+            ).squeeze(-1)
+            object_local = (
+                object_rotation.mT[None, :, None]
+                @ (world_tip - object_position[None, :, None]).unsqueeze(-1)
+            ).squeeze(-1)
+            y = object_local[..., 1]
+            normalized_y = ((y - y_min) / (y_max - y_min) * (bin_count - 1)).clamp(
+                0.0, bin_count - 1.0001
+            )
+            low = normalized_y.floor().long()
+            fraction = normalized_y - low
+            radius_at_y = profile_t[low] * (1.0 - fraction) + profile_t[low + 1] * fraction
+            point_radius = torch.linalg.vector_norm(
+                object_local[..., (0, 2)] - center_t, dim=-1
+            )
+            side_distance = (point_radius - radius_at_y).abs()
+            cap_distance = torch.where(
+                y < y_min,
+                torch.sqrt(side_distance.square() + (y_min - y).square()),
+                torch.where(
+                    y > y_max,
+                    torch.sqrt(side_distance.square() + (y - y_max).square()),
+                    side_distance,
+                ),
+            )
+            tip_radius = 0.009 * vector[..., 9:14]
+            # Smooth proposal score avoids the zero-gradient/zero-ranking
+            # problem of exact binary contact. Exact top-k uses binary reward.
+            soft_contact = torch.sigmoid((tip_radius - cap_distance) / 0.0025)
+            soft_pinch = soft_contact[..., 0] * soft_contact[..., 1:].amax(dim=-1)
+            hard_contact = cap_distance <= tip_radius
+            hard_pinch = hard_contact[..., 0] & hard_contact[..., 1:].any(dim=-1)
+            scores[begin:end] = (2.0 * soft_pinch.sum(dim=-1)).detach().cpu()
+            hard_pinch_frames[begin:end] = hard_pinch.sum(dim=-1).detach().cpu()
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        elapsed = time.perf_counter() - start
+        return torch.stack((scores, hard_pinch_frames), dim=-1), {
+            "seconds": elapsed,
+            "candidates_per_second": vectors.shape[0] / elapsed,
+        }
+
 
 def joint_names_from_seed(seed: np.lib.npyio.NpzFile) -> list[str]:
     if "joint_names" in seed:
@@ -450,6 +564,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260805)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--save-trajectories", action="store_true")
+    parser.add_argument("--top-k", type=int, default=64)
     args = parser.parse_args()
 
     if args.candidates < 1:
@@ -470,6 +585,19 @@ def main() -> int:
     q, wrist_delta, benchmark = kinematics.solve(
         vectors, seed_q, args.iterations, args.candidate_chunk
     )
+    with np.load(DEFAULT_CAPTURE) as capture:
+        object_pose = capture["object_pose_wxyz"][: len(seed_q_np)].astype(np.float32)
+    proxy, proxy_benchmark = kinematics.score_contact_proxy(
+        vectors,
+        q,
+        wrist_delta,
+        torch.from_numpy(wrist_position).to(device),
+        torch.from_numpy(wrist_quaternion).to(device),
+        torch.from_numpy(object_pose).to(device),
+        args.candidate_chunk,
+    )
+    top_count = min(max(args.top_k, 1), args.candidates)
+    top_indices = torch.topk(proxy[:, 0], k=top_count).indices
     payload = {
         "schema_version": 1,
         "backend": "torch_gpu_batched_dls",
@@ -477,6 +605,10 @@ def main() -> int:
         "warm_start": str(args.seed_trajectory.resolve()),
         "vector_names": list(VECTOR_NAMES),
         "benchmark": benchmark,
+        "contact_proxy_benchmark": proxy_benchmark,
+        "top_k": top_count,
+        "maximum_soft_pinch_return": float(proxy[:, 0].max()),
+        "maximum_hard_pinch_frames": int(proxy[:, 1].max()),
         "device": str(device),
         "torch_version": torch.__version__,
     }
@@ -488,6 +620,12 @@ def main() -> int:
         "wrist_position": wrist_position,
         "wrist_quaternion_xyzw": wrist_quaternion,
         "metadata_json": np.asarray(json.dumps(payload)),
+        "proxy_soft_pinch_return": proxy[:, 0].numpy(),
+        "proxy_hard_pinch_frames": proxy[:, 1].numpy(),
+        "top_indices": top_indices.numpy(),
+        "top_vectors": vectors_np[top_indices.numpy()],
+        "top_qpos": q[top_indices].numpy(),
+        "top_wrist_delta_local": wrist_delta[top_indices].numpy(),
     }
     if args.save_trajectories:
         arrays["qpos"] = q.numpy()
