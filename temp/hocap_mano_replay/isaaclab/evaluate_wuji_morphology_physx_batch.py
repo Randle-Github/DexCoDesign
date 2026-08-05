@@ -25,6 +25,11 @@ parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--task", default="DexCoDesign-Hand-Residual-Direct-v0")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument(
+    "--no-seed",
+    action="store_true",
+    help="leave the Isaac Lab environment seed unset, matching morphology search",
+)
+parser.add_argument(
     "--convert-urdf",
     action="store_true",
     help="convert every manifest URDF before creating the PhysX batch",
@@ -221,7 +226,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     env_cfg.scene.clone_in_fabric = False
     env_cfg.randomize_start_phase = False
     env_cfg.episode_length_s = 15.0
-    env_cfg.seed = args_cli.seed
+    env_cfg.seed = None if args_cli.no_seed else args_cli.seed
 
     start = time.perf_counter()
     env = gym.make(args_cli.task, cfg=env_cfg)

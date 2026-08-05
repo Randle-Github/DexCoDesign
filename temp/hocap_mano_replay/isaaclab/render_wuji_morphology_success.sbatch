@@ -18,7 +18,10 @@ CANDIDATE_INDEX="${CANDIDATE_INDEX:-3527}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/success_candidate_003527}"
 PREPARED="${OUTPUT_ROOT}/prepared"
 MANIFEST="${PREPARED}/physx_batch_manifest.json"
+SEARCH_MANIFEST="${SEARCH_ROOT}/generation_000/prepared/physx_batch_manifest.json"
+CAPTURE_MANIFEST="${OUTPUT_ROOT}/capture_replicas_manifest.json"
 CAPTURE="${OUTPUT_ROOT}/successful_rollout.npz"
+CAPTURE_REPLICAS="${CAPTURE_REPLICAS:-1024}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
@@ -39,17 +42,27 @@ python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
   temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
   "${MANIFEST}" --headless
 
-export DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST="${MANIFEST}"
+python temp/hocap_mano_replay/scripts/repeat_wuji_morphology_manifest.py \
+  "${SEARCH_MANIFEST}" "${CAPTURE_MANIFEST}" \
+  --index "${CANDIDATE_INDEX}" \
+  --repeats "${CAPTURE_REPLICAS}"
+
+# Capture with the exact physics-only prototype and runtime overlays used by
+# generation 0.  Replicas expose the GPU PhysX contact nondeterminism that made
+# this morphology successful in the original 4096-environment evaluation.
+export DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST="${CAPTURE_MANIFEST}"
 export HAND_SUCCESS_TRAJECTORY_PATH="${CAPTURE}"
 export HAND_BEST_ROLLOUT_PATH="${OUTPUT_ROOT}/farthest_rollout.npz"
 ./isaaclab.sh -p \
   temp/hocap_mano_replay/isaaclab/evaluate_wuji_morphology_physx_batch.py \
-  "${MANIFEST}" \
+  "${CAPTURE_MANIFEST}" \
   --output "${OUTPUT_ROOT}/capture_evaluation.json" \
+  --no-seed \
   --headless
 test -s "${CAPTURE}"
 
 unset HAND_SUCCESS_TRAJECTORY_PATH HAND_BEST_ROLLOUT_PATH
+export DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST="${MANIFEST}"
 ./isaaclab.sh -p \
   temp/hocap_mano_replay/isaaclab/replay_hand_rollout.py \
   --trajectory "${CAPTURE}" \
