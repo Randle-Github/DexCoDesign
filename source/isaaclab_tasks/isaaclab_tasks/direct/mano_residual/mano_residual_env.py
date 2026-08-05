@@ -744,10 +744,52 @@ class ManoResidualEnv(DirectRLEnv):
             if len(manifest[key]) != count:
                 raise ValueError(f"runtime morphology overlay count mismatch for {key}")
         stage = self.scene.stage
+        resolved_links: list[list[str]] = []
+        resolved_joints: list[list[str]] = []
+        for index in range(count):
+            hand_root = f"/World/envs/env_{index}/Hand"
+            hand_prim = stage.GetPrimAtPath(hand_root)
+            if not hand_prim.IsValid():
+                raise ValueError(f"missing spawned morphology hand at {hand_root}")
+            link_children = {child.GetName() for child in hand_prim.GetChildren()}
+            joint_scope = stage.GetPrimAtPath(f"{hand_root}/joints")
+            joint_children = (
+                {child.GetName() for child in joint_scope.GetChildren()}
+                if joint_scope.IsValid()
+                else set()
+            )
+
+            def resolve(raw_name: str, available: set[str], kind: str) -> str:
+                if raw_name in available:
+                    return raw_name
+                matches = [
+                    value
+                    for value in available
+                    if value.endswith(f"__{raw_name}")
+                ]
+                if len(matches) != 1:
+                    raise ValueError(
+                        f"cannot uniquely resolve morphology {kind} {raw_name} "
+                        f"at env {index}: {matches}"
+                    )
+                return matches[0]
+
+            resolved_links.append(
+                [
+                    resolve(name, link_children, "link")
+                    for name in manifest["parametric_link_names"][index]
+                ]
+            )
+            resolved_joints.append(
+                [
+                    resolve(name, joint_children, "joint")
+                    for name in manifest["parametric_joint_names"][index]
+                ]
+            )
         with Sdf.ChangeBlock():
             for index in range(count):
                 hand_root = f"/World/envs/env_{index}/Hand"
-                links = manifest["parametric_link_names"][index]
+                links = resolved_links[index]
                 transforms = manifest["parametric_relative_transforms"][index]
                 translations = manifest["parametric_link_translations"][index]
                 if not (len(links) == len(transforms) == len(translations)):
@@ -770,7 +812,7 @@ class ManoResidualEnv(DirectRLEnv):
                         xform.AddTransformOp().Set(
                             Gf.Matrix4d(*matrix.reshape(-1).tolist())
                         )
-                joint_names = manifest["parametric_joint_names"][index]
+                joint_names = resolved_joints[index]
                 positions = manifest["parametric_joint_local_positions"][index]
                 if len(joint_names) != len(positions):
                     raise ValueError(
