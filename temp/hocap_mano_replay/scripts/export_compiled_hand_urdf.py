@@ -247,7 +247,11 @@ def main() -> int:
         )
         exported_files: dict[str, str] = {}
         mesh_sources = (
-            (("collision", collision_source),)
+            # The established generated-hand RL assets intentionally use the
+            # visual surface as their collision surface (see the legacy branch
+            # below). Physics-only search must retain those exact vertices;
+            # it merely avoids exporting/authoring the same mesh twice.
+            (("collision", visual_source),)
             if args.physics_only
             else (("visual", visual_source), ("collision", collision_source))
         )
