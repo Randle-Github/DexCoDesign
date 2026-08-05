@@ -235,8 +235,8 @@ class WujiBatchKinematics:
         finger_index: int,
         vector: torch.Tensor,
         q: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return tip point/direction and position/angular Jacobians."""
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return tip pose, Jacobians, and distal-link start point."""
         chain = self.chains[FINGERS[finger_index]]
         batch_shape = q.shape[:-1]
         rotation = torch.eye(3, device=self.device, dtype=self.dtype).expand(
@@ -292,7 +292,8 @@ class WujiBatchKinematics:
         lever = position.unsqueeze(-2) - joint_positions_tensor
         jacobian_position = torch.linalg.cross(joint_axes_tensor, lever, dim=-1).mT
         jacobian_rotation = joint_axes_tensor.mT
-        return position, direction, jacobian_position, jacobian_rotation
+        distal_start = joint_positions_tensor[..., -1, :]
+        return position, direction, jacobian_position, jacobian_rotation, distal_start
 
     def solve(
         self,
@@ -312,7 +313,7 @@ class WujiBatchKinematics:
         target_points = []
         target_directions = []
         for finger_index in range(5):
-            point, direction, _, _ = self.forward_finger(
+            point, direction, _, _, _ = self.forward_finger(
                 finger_index, identity_vector, source_q
             )
             target_points.append(point[0])
@@ -343,7 +344,7 @@ class WujiBatchKinematics:
                 rows = []
                 errors = []
                 for finger_index in range(5):
-                    point, direction, jac_p, jac_r = self.forward_finger(
+                    point, direction, jac_p, jac_r, _ = self.forward_finger(
                         finger_index, vector, q
                     )
                     row_position = torch.zeros(
@@ -473,18 +474,30 @@ class WujiBatchKinematics:
             vector = vectors[begin:end, None, :].expand(count, q_cpu.shape[1], -1)
             q = q_cpu[begin:end].to(self.device, non_blocking=True)
             wrist_delta = wrist_delta_cpu[begin:end].to(self.device, non_blocking=True)
-            local_tips = []
+            local_segments = []
             for finger_index in range(5):
-                point, _, _, _ = self.forward_finger(finger_index, vector, q)
-                local_tips.append(point + wrist_delta)
-            local_tip = torch.stack(local_tips, dim=2)
-            world_tip = wrist_position[None, :, None] + (
-                wrist_rotation[None, :, None]
-                @ local_tip.unsqueeze(-1)
+                point, _, _, _, distal_start = self.forward_finger(
+                    finger_index, vector, q
+                )
+                alpha = torch.linspace(
+                    0.0, 1.0, 7, device=self.device, dtype=self.dtype
+                )
+                segment = (
+                    distal_start.unsqueeze(-2) * (1.0 - alpha[None, None, :, None])
+                    + point.unsqueeze(-2) * alpha[None, None, :, None]
+                    + wrist_delta.unsqueeze(-2)
+                )
+                local_segments.append(segment)
+            local_segment = torch.stack(local_segments, dim=2)
+            world_segment = wrist_position[None, :, None, None] + (
+                wrist_rotation[None, :, None, None]
+                @ local_segment.unsqueeze(-1)
             ).squeeze(-1)
             object_local = (
-                object_rotation.mT[None, :, None]
-                @ (world_tip - object_position[None, :, None]).unsqueeze(-1)
+                object_rotation.mT[None, :, None, None]
+                @ (
+                    world_segment - object_position[None, :, None, None]
+                ).unsqueeze(-1)
             ).squeeze(-1)
             y = object_local[..., 1]
             normalized_y = ((y - y_min) / (y_max - y_min) * (bin_count - 1)).clamp(
@@ -506,6 +519,7 @@ class WujiBatchKinematics:
                     side_distance,
                 ),
             )
+            cap_distance = cap_distance.amin(dim=-1)
             tip_radius = 0.009 * vector[..., 9:14]
             # Smooth proposal score avoids the zero-gradient/zero-ranking
             # problem of exact binary contact. Exact top-k uses binary reward.
