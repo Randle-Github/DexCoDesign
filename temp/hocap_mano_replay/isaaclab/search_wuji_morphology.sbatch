@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-RESULT_ROOT="${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_mano_command"
+RESULT_ROOT="${RESULT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward}"
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
 cd "${REPO_ROOT}"
