@@ -50,8 +50,11 @@ def vector_to_graph(vector: np.ndarray, hand_id: str) -> dict[str, object]:
         raise ValueError(
             f"expected {len(VECTOR_NAMES)} reshape values, got {vector.shape}"
         )
-    if np.any(vector < LOWER_BOUNDS) or np.any(vector > UPPER_BOUNDS):
+    if np.any(vector < LOWER_BOUNDS - 1e-6) or np.any(vector > UPPER_BOUNDS + 1e-6):
         raise ValueError("reshape vector lies outside the certified search bounds")
+    # GPU proposal vectors are float32. Values sampled exactly on a certified
+    # boundary can differ from the float64 constant by a few ulps.
+    vector = np.clip(vector, LOWER_BOUNDS, UPPER_BOUNDS)
     finger_length = vector[4:9]
     finger_radius = vector[9:14]
     return {
