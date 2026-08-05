@@ -20,28 +20,23 @@ import retarget_all_hands as retarget  # noqa: E402
 import simulate_retargeted_all_hands as physics  # noqa: E402
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("runtime_root", type=Path)
-    parser.add_argument("--iterations", type=int, default=18)
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--width", type=int, default=960)
-    parser.add_argument("--height", type=int, default=720)
-    parser.add_argument("--reuse-ik", action="store_true")
-    args = parser.parse_args()
-
-    runtime_root = args.runtime_root.resolve()
+def prepare_retarget(
+    runtime_root: Path,
+    *,
+    iterations: int = 18,
+    reuse_ik: bool = False,
+) -> tuple[dict[str, object], Path]:
+    """Retarget the fixed pre-RL MANO command trajectory to one generated hand."""
+    runtime_root = runtime_root.resolve()
     metadata = json.loads(
         (runtime_root / "runtime_metadata.json").read_text(encoding="utf-8")
     )
-    hand_id = metadata["hand_id"]
+    hand_id = str(metadata["hand_id"])
     output_root = runtime_root.parent / "retarget_physics"
     ik_root = output_root / "ik"
     cache_root = ik_root / "cache"
     retarget_root = output_root / "retargeted"
-    rollout_root = output_root / "physical_rollout"
-    physics_cache = output_root / "physics_cache"
-    for path in (ik_root, cache_root, retarget_root, rollout_root, physics_cache):
+    for path in (ik_root, cache_root, retarget_root):
         path.mkdir(parents=True, exist_ok=True)
 
     registry = {
@@ -62,16 +57,17 @@ def main() -> int:
         }
     }
     registry_path = runtime_root / "registry.json"
-    registry_path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+    registry_path.write_text(
+        json.dumps(registry, indent=2) + "\n", encoding="utf-8"
+    )
 
-    # Isolate this one-off hand from the static all-hands registry and caches.
     retarget.DIRECT_ROOT = runtime_root
     retarget.REGISTRY = registry_path
     retarget.ARTIFACT_ROOT = ik_root
     retarget.CACHE_ROOT = cache_root
     retarget.TIP_LINKS[hand_id] = metadata["tips"]
     ik_trajectory = cache_root / f"{hand_id}_ik.npz"
-    if not args.reuse_ik or not ik_trajectory.is_file():
+    if not reuse_ik or not ik_trajectory.is_file():
         original_argv = sys.argv
         try:
             sys.argv = [
@@ -79,7 +75,9 @@ def main() -> int:
                 "--stride",
                 "1",
                 "--iterations",
-                str(args.iterations),
+                str(iterations),
+                "--reference-source",
+                "mano_command",
                 "--solve-only",
             ]
             retarget.main()
@@ -89,6 +87,31 @@ def main() -> int:
     hand_retarget_root.mkdir(parents=True, exist_ok=True)
     trajectory_path = hand_retarget_root / "retargeted_trajectory.npz"
     shutil.copyfile(ik_trajectory, trajectory_path)
+    return metadata, trajectory_path
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("runtime_root", type=Path)
+    parser.add_argument("--iterations", type=int, default=18)
+    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--width", type=int, default=960)
+    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--reuse-ik", action="store_true")
+    args = parser.parse_args()
+
+    runtime_root = args.runtime_root.resolve()
+    metadata, trajectory_path = prepare_retarget(
+        runtime_root,
+        iterations=args.iterations,
+        reuse_ik=args.reuse_ik,
+    )
+    hand_id = str(metadata["hand_id"])
+    output_root = runtime_root.parent / "retarget_physics"
+    rollout_root = output_root / "physical_rollout"
+    physics_cache = output_root / "physics_cache"
+    for path in (rollout_root, physics_cache):
+        path.mkdir(parents=True, exist_ok=True)
 
     physics.PHYSICS_CACHE = physics_cache
     captured = np.load(physics.DEFAULT_CAPTURE)

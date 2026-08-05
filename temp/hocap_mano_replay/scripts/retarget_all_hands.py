@@ -27,7 +27,8 @@ from scipy.spatial.transform import Rotation
 
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EXPERIMENT_ROOT.parents[1]
-DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
+SOURCE_DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
+DIRECT_ROOT = SOURCE_DIRECT_ROOT
 REGISTRY = DIRECT_ROOT / "registry.json"
 SEQUENCE_ROOT = (
     EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
@@ -42,6 +43,7 @@ OBJECT_MESH = (
 )
 ARTIFACT_ROOT = EXPERIMENT_ROOT / "artifacts"
 CACHE_ROOT = ARTIFACT_ROOT / "all_hands_ik_cache"
+MANO_COMMAND_REFERENCE = SEQUENCE_ROOT / "isaaclab_reference.npz"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay_mujoco import (  # noqa: E402
@@ -399,6 +401,98 @@ def reference_trajectory(
         wrist_quat,
         {k: np.asarray(v) for k, v in positions.items()},
         {k: np.asarray(v) for k, v in rotations.items()},
+    )
+
+
+def mano_command_reference_trajectory(
+    reference_path: Path = MANO_COMMAND_REFERENCE,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+]:
+    """Build retarget targets from the saved pre-RL MANO command trajectory.
+
+    This deliberately evaluates ``hand_ctrl`` through the reviewed MANO URDF
+    instead of returning to the raw HO-Cap keypoints.  Morphology search can
+    therefore hold the human action command and object trajectory fixed while
+    changing only the robot-hand reshape vector.
+    """
+    reference = np.load(reference_path)
+    if "hand_ctrl" not in reference or "joint_names" not in reference:
+        raise ValueError(
+            f"{reference_path} must contain hand_ctrl and joint_names"
+        )
+    commands = reference["hand_ctrl"].astype(np.float64)
+    joint_names = reference["joint_names"].tolist()
+    if commands.shape != (len(commands), len(joint_names)):
+        raise ValueError(
+            f"invalid MANO command shape {commands.shape} for "
+            f"{len(joint_names)} joints"
+        )
+
+    # Generated-hand evaluators temporarily redirect DIRECT_ROOT to an
+    # isolated runtime registry.  The human command source must always remain
+    # the canonical MANO asset, independent of the candidate being evaluated.
+    global DIRECT_ROOT
+    candidate_direct_root = DIRECT_ROOT
+    try:
+        DIRECT_ROOT = SOURCE_DIRECT_ROOT
+        scene = make_scene("mano")
+    finally:
+        DIRECT_ROOT = candidate_direct_root
+    model = mujoco.MjModel.from_xml_path(str(scene))
+    data = mujoco.MjData(model)
+    qpos_ids = np.asarray(
+        [int(model.joint(name).qposadr[0]) for name in joint_names],
+        dtype=int,
+    )
+    tip_ids = {
+        finger: int(model.body(link_name).id)
+        for finger, link_name in MANO_TIPS.items()
+    }
+    offsets = mano_fingertip_offsets()
+    directions = {
+        finger: offset / (np.linalg.norm(offset) + 1e-12)
+        for finger, offset in offsets.items()
+    }
+    wrist_id = lowest_common_ancestor(model, list(tip_ids.values()))
+    wrapper_mocap_id = int(
+        model.body_mocapid[model.body("retarget_wrapper").id]
+    )
+    data.mocap_pos[wrapper_mocap_id] = 0.0
+    data.mocap_quat[wrapper_mocap_id] = (1.0, 0.0, 0.0, 0.0)
+
+    wrist_positions: list[np.ndarray] = []
+    wrist_quaternions: list[np.ndarray] = []
+    positions = {finger: [] for finger in FINGERS}
+    rotations = {finger: [] for finger in FINGERS}
+    for command in commands:
+        data.qpos[qpos_ids] = command
+        mujoco.mj_forward(model, data)
+        wrist_position = data.xpos[wrist_id].copy()
+        wrist_rotation = Rotation.from_matrix(rotation_matrix(data, wrist_id))
+        wrist_positions.append(wrist_position)
+        wrist_quaternions.append(wrist_rotation.as_quat())
+        for finger in FINGERS:
+            body_id = tip_ids[finger]
+            body_rotation = rotation_matrix(data, body_id)
+            tip_position = data.xpos[body_id] + body_rotation @ offsets[finger]
+            tip_direction = body_rotation @ directions[finger]
+            positions[finger].append(
+                wrist_rotation.inv().apply(tip_position - wrist_position)
+            )
+            local_direction = wrist_rotation.inv().apply(tip_direction)
+            rotations[finger].append(
+                direction_rotation(local_direction, np.array([0.0, 1.0, 0.0])).as_quat()
+            )
+
+    return (
+        np.asarray(wrist_positions),
+        np.asarray(wrist_quaternions),
+        {finger: np.asarray(values) for finger, values in positions.items()},
+        {finger: np.asarray(values) for finger, values in rotations.items()},
     )
 
 
@@ -924,6 +1018,15 @@ def main() -> None:
     parser.add_argument("--tile-height", type=int, default=270)
     parser.add_argument("--solve-only", action="store_true")
     parser.add_argument(
+        "--reference-source",
+        choices=("hocap_targets", "mano_command"),
+        default="hocap_targets",
+        help=(
+            "retarget either the raw reviewed HO-Cap targets or FK targets "
+            "from the saved pre-RL MANO hand_ctrl command trajectory"
+        ),
+    )
+    parser.add_argument(
         "--reuse-cache",
         action="store_true",
         help="Render previously solved trajectories without rerunning IK",
@@ -935,9 +1038,14 @@ def main() -> None:
     mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
     hand_joints_world = np.load(HAND_JOINTS_WORLD)
     object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
-    wrist_pos, wrist_quat, ref_positions, ref_rotations = reference_trajectory(
-        mano_pose, hand_joints_world
-    )
+    if args.reference_source == "mano_command":
+        wrist_pos, wrist_quat, ref_positions, ref_rotations = (
+            mano_command_reference_trajectory()
+        )
+    else:
+        wrist_pos, wrist_quat, ref_positions, ref_rotations = reference_trajectory(
+            mano_pose, hand_joints_world
+        )
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
     hand_ids = [hand_id for hand_id in registry["hands"] if hand_id != "mano"]
     hands = [
@@ -950,9 +1058,13 @@ def main() -> None:
         for hand_id in hand_ids
     ]
 
-    frame_ids = np.arange(0, len(mano_pose), args.stride, dtype=int)
+    frame_ids = np.arange(0, len(wrist_pos), args.stride, dtype=int)
     diagnostics = {
-        "reference_source": "HO-Cap official hand_joints_3d",
+        "reference_source": (
+            "pre-RL MANO hand_ctrl forward kinematics"
+            if args.reference_source == "mano_command"
+            else "HO-Cap official hand_joints_3d"
+        ),
         "surface_projection": False,
         "fingertip_position_semantics": "physical terminal mesh surface",
         "fingertip_orientation_semantics": (

@@ -233,6 +233,8 @@ def simulate_hand(
     fps: int,
     width: int,
     height: int,
+    *,
+    render_video: bool = True,
 ) -> dict[str, object]:
     targets = np.load(trajectory_path)
     q_targets = targets["qpos"].astype(np.float64)
@@ -320,36 +322,42 @@ def simulate_hand(
     camera.distance = 0.72
     camera.azimuth = 132
     camera.elevation = -25
-    renderer = mujoco.Renderer(model, height=height, width=width)
-    ffmpeg = subprocess.Popen(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-f",
-            "rawvideo",
-            "-pixel_format",
-            "rgb24",
-            "-video_size",
-            f"{width}x{height}",
-            "-framerate",
-            str(fps),
-            "-i",
-            "-",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "19",
-            "-pix_fmt",
-            "yuv420p",
-            str(temporary_path),
-        ],
-        stdin=subprocess.PIPE,
+    renderer = (
+        mujoco.Renderer(model, height=height, width=width)
+        if render_video
+        else None
     )
+    ffmpeg = None
+    if render_video:
+        ffmpeg = subprocess.Popen(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "rawvideo",
+                "-pixel_format",
+                "rgb24",
+                "-video_size",
+                f"{width}x{height}",
+                "-framerate",
+                str(fps),
+                "-i",
+                "-",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "19",
+                "-pix_fmt",
+                "yuv420p",
+                str(temporary_path),
+            ],
+            stdin=subprocess.PIPE,
+        )
 
     position_errors = []
     orientation_errors = []
@@ -398,26 +406,32 @@ def simulate_hand(
                 )
             )
 
-            renderer.update_scene(data, camera=camera)
-            pixels = renderer.render()
-            assert ffmpeg.stdin is not None
-            ffmpeg.stdin.write(pixels.tobytes())
-            if frame_index == frame_count // 2:
-                Image.fromarray(pixels).save(preview_path)
+            if render_video:
+                assert renderer is not None and ffmpeg is not None
+                renderer.update_scene(data, camera=camera)
+                pixels = renderer.render()
+                assert ffmpeg.stdin is not None
+                ffmpeg.stdin.write(pixels.tobytes())
+                if frame_index == frame_count // 2:
+                    Image.fromarray(pixels).save(preview_path)
     except Exception:
-        if ffmpeg.stdin is not None:
-            ffmpeg.stdin.close()
-        ffmpeg.wait()
-        renderer.close()
+        if ffmpeg is not None:
+            if ffmpeg.stdin is not None:
+                ffmpeg.stdin.close()
+            ffmpeg.wait()
+        if renderer is not None:
+            renderer.close()
         raise
     else:
-        assert ffmpeg.stdin is not None
-        ffmpeg.stdin.close()
-        return_code = ffmpeg.wait()
-        renderer.close()
-        if return_code != 0:
-            raise RuntimeError(f"ffmpeg failed with exit code {return_code}")
-        os.replace(temporary_path, output_path)
+        if render_video:
+            assert ffmpeg is not None and ffmpeg.stdin is not None
+            ffmpeg.stdin.close()
+            return_code = ffmpeg.wait()
+            assert renderer is not None
+            renderer.close()
+            if return_code != 0:
+                raise RuntimeError(f"ffmpeg failed with exit code {return_code}")
+            os.replace(temporary_path, output_path)
 
     np.savez_compressed(
         diagnostics_path,
@@ -428,17 +442,34 @@ def simulate_hand(
         hand_object_contact_count=np.asarray(contact_counts),
         mean_abs_joint_tracking_error_rad=np.asarray(q_tracking_errors),
     )
+    position_errors_array = np.asarray(position_errors)
+    orientation_errors_array = np.asarray(orientation_errors)
+    pose_errors = np.sqrt(
+        position_errors_array**2 + (0.3 * orientation_errors_array) ** 2
+    )
+    reward_offset_c = float(np.sqrt(0.05**2 + (0.3 * 1.5) ** 2))
+    pose_rewards = reward_offset_c - pose_errors
+    failures = np.flatnonzero(
+        (position_errors_array > 0.05)
+        | (orientation_errors_array > 1.5)
+    )
+    final_phase = int(failures[0]) if len(failures) else frame_count - 1
+    evaluated_steps = final_phase + 1
     return {
         "status": "completed",
         "frames": frame_count,
-        "video": str(output_path),
-        "preview": str(preview_path),
+        "video": str(output_path) if render_video else None,
+        "preview": str(preview_path) if render_video else None,
         "diagnostics": str(diagnostics_path),
         "final_object_position_error_m": position_errors[-1],
         "max_object_position_error_m": float(np.max(position_errors)),
         "final_object_orientation_error_rad": orientation_errors[-1],
         "contact_frame_fraction": float(np.mean(np.asarray(contact_counts) > 0)),
         "mean_abs_joint_tracking_error_rad": float(np.mean(q_tracking_errors)),
+        "strict_final_phase": final_phase,
+        "strict_success": bool(final_phase == frame_count - 1),
+        "pose_tracking_return": float(np.sum(pose_rewards[:evaluated_steps])),
+        "reward_offset_c": reward_offset_c,
     }
 def main() -> None:
     parser = argparse.ArgumentParser()
