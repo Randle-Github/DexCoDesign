@@ -19,7 +19,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from pxr import Gf, Sdf, Usd, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -806,26 +806,17 @@ class ManoResidualEnv(DirectRLEnv):
                     )
                     matrix = np.asarray(transform, dtype=np.float64)
                     if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
-                        collision_path = f"{link_path}/collisions"
+                        collision = stage.GetPrimAtPath(
+                            f"{link_path}/collisions"
+                        )
                         matrix_value = Gf.Matrix4d(
                             *matrix.reshape(-1).tolist()
                         )
-                        collision_spec = stage.GetRootLayer().GetPrimAtPath(
-                            Sdf.Path(collision_path)
+                        xform = UsdGeom.Xformable(collision)
+                        xform.ClearXformOpOrder()
+                        xform.AddTransformOp(opSuffix="morphology").Set(
+                            matrix_value
                         )
-                        transform_spec = (
-                            None
-                            if collision_spec is None
-                            else collision_spec.attributes.get(
-                                "xformOp:transform"
-                            )
-                        )
-                        if transform_spec is None:
-                            raise ValueError(
-                                f"missing root-layer xformOp:transform at "
-                                f"{collision_path}"
-                            )
-                        transform_spec.default = matrix_value
                 joint_names = resolved_joints[index]
                 positions = manifest["parametric_joint_local_positions"][index]
                 if len(joint_names) != len(positions):
