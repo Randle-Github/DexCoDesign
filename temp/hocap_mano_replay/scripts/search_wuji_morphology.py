@@ -117,8 +117,7 @@ def compose(source_video: Path, best_video: Path, output: Path) -> None:
         import imageio_ffmpeg
 
         ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    subprocess.run(
-        [
+    labeled_command = [
             ffmpeg, "-y", "-loglevel", "error",
             "-i", str(source_video), "-i", str(best_video),
             "-filter_complex",
@@ -131,10 +130,24 @@ def compose(source_video: Path, best_video: Path, output: Path) -> None:
             ),
             "-map", "[out]", "-an", "-c:v", "libx264", "-crf", "19",
             "-pix_fmt", "yuv420p", str(output),
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-    )
+        ]
+    try:
+        subprocess.run(labeled_command, cwd=REPO_ROOT, check=True)
+    except subprocess.CalledProcessError:
+        # imageio-ffmpeg's compact binary may omit libfreetype/drawtext. The
+        # side-by-side comparison is still the required artifact; labels are
+        # optional and must not make an otherwise successful search fail.
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-loglevel", "error",
+                "-i", str(source_video), "-i", str(best_video),
+                "-filter_complex", "[0:v][1:v]hstack=inputs=2[out]",
+                "-map", "[out]", "-an", "-c:v", "libx264", "-crf", "19",
+                "-pix_fmt", "yuv420p", str(output),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+        )
 
 
 def main() -> int:
