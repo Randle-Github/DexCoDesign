@@ -806,22 +806,26 @@ class ManoResidualEnv(DirectRLEnv):
                     )
                     matrix = np.asarray(transform, dtype=np.float64)
                     if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
-                        collision = stage.GetPrimAtPath(
-                            f"{link_path}/collisions"
-                        )
+                        collision_path = f"{link_path}/collisions"
                         matrix_value = Gf.Matrix4d(
                             *matrix.reshape(-1).tolist()
                         )
-                        transform_attr = collision.GetAttribute(
-                            "xformOp:transform"
+                        collision_spec = stage.GetRootLayer().GetPrimAtPath(
+                            Sdf.Path(collision_path)
                         )
-                        if transform_attr.IsValid():
-                            transform_attr.Set(matrix_value)
-                        else:
-                            raise ValueError(
-                                f"missing xformOp:transform at "
-                                f"{collision.GetPath()}"
+                        transform_spec = (
+                            None
+                            if collision_spec is None
+                            else collision_spec.attributes.get(
+                                "xformOp:transform"
                             )
+                        )
+                        if transform_spec is None:
+                            raise ValueError(
+                                f"missing root-layer xformOp:transform at "
+                                f"{collision_path}"
+                            )
+                        transform_spec.default = matrix_value
                 joint_names = resolved_joints[index]
                 positions = manifest["parametric_joint_local_positions"][index]
                 if len(joint_names) != len(positions):
