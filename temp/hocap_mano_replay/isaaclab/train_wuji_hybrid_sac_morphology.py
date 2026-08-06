@@ -30,6 +30,11 @@ parser.add_argument(
     ),
 )
 parser.add_argument("--generations", type=int, default=20)
+parser.add_argument(
+    "--continue-after-success",
+    action="store_true",
+    help="run every requested generation even when a 445/445 candidate exists",
+)
 parser.add_argument("--sac-updates", type=int, default=400)
 parser.add_argument("--retarget-iterations", type=int, default=4)
 parser.add_argument("--seed", type=int, default=20260805)
@@ -431,7 +436,8 @@ def main(env_cfg, _agent_cfg) -> None:
         previous_summary = summary_path
         if any(row["success"] for row in rows):
             print("WUJI_HYBRID_SAC_SUCCESS", flush=True)
-            break
+            if not args_cli.continue_after_success:
+                break
 
 
 if __name__ == "__main__":

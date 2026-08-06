@@ -540,6 +540,7 @@ class ManoResidualEnv(DirectRLEnv):
             else None
         )
         self._best_rollout_phase = -1
+        self._best_rollout_return = float("-inf")
         if self._best_rollout_path is not None and self._best_rollout_path.is_file():
             try:
                 with np.load(self._best_rollout_path) as previous_rollout:
@@ -548,6 +549,10 @@ class ManoResidualEnv(DirectRLEnv):
                     )
                 self._best_rollout_phase = int(
                     previous_metadata.get("final_phase", -1)
+                )
+                self._best_rollout_return = float(
+                    previous_metadata.get("pose_tracking_return", 0.0)
+                    + previous_metadata.get("contact_return", 0.0)
                 )
                 print(
                     "HAND_BEST_ROLLOUT_RESUMED "
@@ -1210,13 +1215,23 @@ class ManoResidualEnv(DirectRLEnv):
             if finished.any():
                 finished_ids = finished.nonzero(as_tuple=False).flatten()
                 finished_phases = self.phase_buf[finished_ids]
-                candidate_offset = int(torch.argmax(finished_phases).item())
-                candidate_env_id = int(finished_ids[candidate_offset].item())
-                candidate_phase = int(self.phase_buf[candidate_env_id].item())
-                if candidate_phase > self._best_rollout_phase:
-                    # Save before DirectRLEnv resets the completed environment;
-                    # otherwise phase_buf and the captured episode are overwritten.
-                    self._save_best_trajectory(candidate_env_id)
+                max_phase = finished_phases.max()
+                phase_mask = finished_phases == max_phase
+                phase_ids = finished_ids[phase_mask]
+                phase = int(max_phase.item())
+                frame_mask = (
+                    torch.arange(self._reference_length, device=self.device)[None]
+                    <= phase
+                )
+                candidate_returns = (
+                    (self._capture_pose_reward[phase_ids] * frame_mask).sum(dim=1)
+                    + (self._capture_contact_reward[phase_ids] * frame_mask).sum(dim=1)
+                )
+                candidate_offset = int(torch.argmax(candidate_returns).item())
+                candidate_env_id = int(phase_ids[candidate_offset].item())
+                # Save before DirectRLEnv resets the completed environment;
+                # otherwise phase_buf and the captured episode are overwritten.
+                self._save_best_trajectory(candidate_env_id)
         time_out = (self.episode_length_buf >= self.max_episode_length) | end_of_reference
         return invalid | object_lost, time_out
 
@@ -1281,7 +1296,14 @@ class ManoResidualEnv(DirectRLEnv):
         if self._best_rollout_path is None:
             return
         last_phase = int(self.phase_buf[env_id].item())
-        if last_phase <= self._best_rollout_phase:
+        candidate_return = float(
+            self._capture_pose_reward[env_id, : last_phase + 1].sum().item()
+            + self._capture_contact_reward[env_id, : last_phase + 1].sum().item()
+        )
+        if last_phase < self._best_rollout_phase or (
+            last_phase == self._best_rollout_phase
+            and candidate_return <= self._best_rollout_return
+        ):
             return
         metadata = self._save_rollout_trajectory(
             self._best_rollout_path,
@@ -1290,10 +1312,12 @@ class ManoResidualEnv(DirectRLEnv):
             success=last_phase >= self._reference_length - 1,
         )
         self._best_rollout_phase = last_phase
+        self._best_rollout_return = candidate_return
         print(
             "HAND_BEST_ROLLOUT_CAPTURED "
             f"hand_id={HAND_ID} path={self._best_rollout_path} "
             f"env_id={env_id} phase={last_phase} "
+            f"total_reward={candidate_return:.9f} "
             f"position_error_m={metadata['position_error_m']:.9f} "
             f"rotation_error_rad={metadata['rotation_error_rad']:.9f}",
             flush=True,
