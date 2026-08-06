@@ -36,6 +36,15 @@ parser.add_argument(
     help="run every requested generation even when a 445/445 candidate exists",
 )
 parser.add_argument("--sac-updates", type=int, default=400)
+parser.add_argument("--sac-batch-size", type=int, default=1024)
+parser.add_argument("--uniform-fraction", type=float, default=0.15)
+parser.add_argument("--reward-scale", type=float, default=0.01)
+parser.add_argument(
+    "--optimizer-backend",
+    choices=("skrl", "custom"),
+    default="skrl",
+    help="mature SKRL SAC or the preserved custom experimental baseline",
+)
 parser.add_argument("--retarget-iterations", type=int, default=4)
 parser.add_argument("--seed", type=int, default=20260805)
 parser.add_argument("--task", default="DexCoDesign-Hand-Residual-Direct-v0")
@@ -75,6 +84,10 @@ from gpu_wuji_retarget import (  # noqa: E402
 )
 from wuji_morphology_space import resolve_design_vectors  # noqa: E402
 from wuji_parametric_usd import attach_manifest  # noqa: E402
+from skrl_sac_wuji_morphology import (  # noqa: E402
+    ProposalBatch,
+    SkrlConditionalMorphologySAC,
+)
 
 
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -324,32 +337,68 @@ def main(env_cfg, _agent_cfg) -> None:
     history = []
     previous_summary: Path | None = None
     stage_created = False
+    skrl_optimizer = None
+    if args_cli.optimizer_backend == "skrl":
+        skrl_optimizer = SkrlConditionalMorphologySAC(
+            population=args_cli.population,
+            generations=args_cli.generations,
+            gradient_steps=args_cli.sac_updates,
+            batch_size=args_cli.sac_batch_size,
+            uniform_fraction=args_cli.uniform_fraction,
+            reward_scale=args_cli.reward_scale,
+            seed=args_cli.seed,
+            output_root=output,
+            device="cuda",
+        )
     for generation in range(args_cli.generations):
         generation_root = output / f"generation_{generation:03d}"
         generation_root.mkdir(parents=True, exist_ok=True)
         vectors_path = generation_root / "vectors.npy"
-        command = [
-            sys.executable,
-            str(SCRIPT_ROOT / "hybrid_sac_wuji_morphology.py"),
-            "--state",
-            str(state_path),
-            "--replay",
-            str(replay_path),
-            "--output-vectors",
-            str(vectors_path),
-            "--population",
-            str(args_cli.population),
-            "--updates",
-            str(args_cli.sac_updates),
-            "--seed",
-            str(args_cli.seed),
-            "--device",
-            "cuda",
-        ]
-        if previous_summary is not None:
-            command.extend(("--exact-summary", str(previous_summary)))
         sac_start = time.perf_counter()
-        run(command)
+        proposal: ProposalBatch | None = None
+        if skrl_optimizer is not None:
+            proposal = skrl_optimizer.propose(generation)
+            np.save(vectors_path, proposal.vectors)
+            proposal_status = {
+                "backend": "skrl-2.1-sac",
+                "generation": generation,
+                "palm_scheduler": "balanced",
+                "sample_source_counts": {
+                    source: proposal.sample_sources.count(source)
+                    for source in sorted(set(proposal.sample_sources))
+                },
+            }
+            vectors_path.with_suffix(".json").write_text(
+                json.dumps(proposal_status, indent=2) + "\n"
+            )
+        else:
+            command = [
+                sys.executable,
+                str(SCRIPT_ROOT / "hybrid_sac_wuji_morphology.py"),
+                "--state",
+                str(state_path),
+                "--replay",
+                str(replay_path),
+                "--output-vectors",
+                str(vectors_path),
+                "--population",
+                str(args_cli.population),
+                "--updates",
+                str(args_cli.sac_updates),
+                "--batch-size",
+                str(args_cli.sac_batch_size),
+                "--uniform-fraction",
+                str(args_cli.uniform_fraction),
+                "--reward-scale",
+                str(args_cli.reward_scale),
+                "--seed",
+                str(args_cli.seed),
+                "--device",
+                "cuda",
+            ]
+            if previous_summary is not None:
+                command.extend(("--exact-summary", str(previous_summary)))
+            run(command)
         timings = {"sac_update_and_sample_seconds": time.perf_counter() - sac_start}
         retarget_path = generation_root / "gpu_retarget_all.npz"
         timings["retarget"] = retarget(
@@ -394,12 +443,46 @@ def main(env_cfg, _agent_cfg) -> None:
             batch_records.append(batch_record)
             print("WUJI_SAC_PHYSX_BATCH " + json.dumps(batch_record), flush=True)
         rows.sort(key=lambda row: row["total_reward"], reverse=True)
+        optimizer_status = None
+        if skrl_optimizer is not None:
+            assert proposal is not None
+            row_by_index = {row["candidate_index"]: row for row in rows}
+            rewards = np.asarray(
+                [row_by_index[index]["total_reward"] for index in range(args_cli.population)],
+                dtype=np.float32,
+            )
+            update_start = time.perf_counter()
+            optimizer_status = skrl_optimizer.observe(generation, proposal, rewards)
+            timings["optimizer_update_seconds"] = time.perf_counter() - update_start
+            for row in rows:
+                index = row["candidate_index"]
+                row["sample_source"] = proposal.sample_sources[index]
+                row["palm_prototype_index"] = int(proposal.palm_indices[index])
+            source_metrics = {}
+            for source in sorted(set(proposal.sample_sources)):
+                source_rows = [row for row in rows if row["sample_source"] == source]
+                source_rewards = np.asarray(
+                    [row["total_reward"] for row in source_rows], dtype=np.float64
+                )
+                source_metrics[source] = {
+                    "count": len(source_rows),
+                    "reward_mean": float(source_rewards.mean()),
+                    "reward_median": float(np.median(source_rewards)),
+                    "reward_p90": float(np.quantile(source_rewards, 0.90)),
+                    "reward_max": float(source_rewards.max()),
+                    "success_count": sum(row["success"] for row in source_rows),
+                }
+            optimizer_status["sample_source_metrics"] = source_metrics
         timings["physx_initialization_seconds"] = initialization_seconds
         timings["physx_rollout_seconds"] = rollout_seconds
         summary = {
             "schema_version": 1,
             "backend": "persistent_isaaclab_physx_gpu",
-            "algorithm": "episode_level_hybrid_sac",
+            "algorithm": (
+                "skrl_sac_with_balanced_palm_context"
+                if skrl_optimizer is not None
+                else "episode_level_hybrid_sac"
+            ),
             "all_candidates_physically_evaluated": True,
             "proxy_used": False,
             "top_k_prefilter_used": False,
@@ -409,6 +492,7 @@ def main(env_cfg, _agent_cfg) -> None:
             "results": rows,
             "timings": timings,
             "batches": batch_records,
+            "optimizer_status": optimizer_status,
         }
         summary_path = generation_root / "physx_results.json"
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")

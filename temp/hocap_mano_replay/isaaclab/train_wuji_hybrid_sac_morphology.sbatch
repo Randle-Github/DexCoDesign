@@ -17,6 +17,10 @@ POPULATION="${POPULATION:-4096}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4096}"
 GENERATIONS="${GENERATIONS:-20}"
 SAC_UPDATES="${SAC_UPDATES:-400}"
+SAC_BATCH_SIZE="${SAC_BATCH_SIZE:-1024}"
+UNIFORM_FRACTION="${UNIFORM_FRACTION:-0.15}"
+REWARD_SCALE="${REWARD_SCALE:-0.01}"
+OPTIMIZER_BACKEND="${OPTIMIZER_BACKEND:-skrl}"
 RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
 KIT_ARGS="${KIT_ARGS:---/log/level=error}"
 CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-0}"
@@ -42,6 +46,10 @@ fi
   --physics-batch-size "${PHYSICS_BATCH_SIZE}" \
   --generations "${GENERATIONS}" \
   --sac-updates "${SAC_UPDATES}" \
+  --sac-batch-size "${SAC_BATCH_SIZE}" \
+  --uniform-fraction "${UNIFORM_FRACTION}" \
+  --reward-scale "${REWARD_SCALE}" \
+  --optimizer-backend "${OPTIMIZER_BACKEND}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
   "${EXTRA_ARGS[@]}" \
   --kit_args="${KIT_ARGS}" \
