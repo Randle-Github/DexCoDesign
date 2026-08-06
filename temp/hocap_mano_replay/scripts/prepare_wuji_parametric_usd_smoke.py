@@ -45,8 +45,23 @@ def save_reference(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("retarget_batch", type=Path)
+    parser.add_argument(
+        "retarget_batch",
+        type=Path,
+        help=(
+            "legacy retarget NPZ, or a design-vector NPY when "
+            "--fixed-reference is set"
+        ),
+    )
     parser.add_argument("compiled_hands", type=Path)
+    parser.add_argument(
+        "--fixed-reference",
+        type=Path,
+        help=(
+            "reuse this exact joint/reference trajectory for every morphology; "
+            "no candidate reference is generated"
+        ),
+    )
     parser.add_argument("--template-usd", type=Path, required=True)
     parser.add_argument("--template-reference", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
@@ -61,14 +76,27 @@ def main() -> int:
     root.mkdir(parents=True, exist_ok=True)
     compiled = json.loads(args.compiled_hands.read_text(encoding="utf-8"))
     by_id = {hand["hand_id"]: hand for hand in compiled["hands"]}
-    with np.load(args.retarget_batch) as data:
-        count = min(args.limit, len(data["vectors"]))
-        vectors = data["vectors"][:count].astype(np.float64)
-        qpos = data["qpos"][:count].astype(np.float32)
-        wrist_position = data["wrist_position_all"][:count].astype(np.float32)
-        wrist_quaternion = data["wrist_quaternion_xyzw_all"][:count].astype(
-            np.float32
-        )
+    fixed_reference = (
+        args.fixed_reference.expanduser().resolve()
+        if args.fixed_reference is not None
+        else None
+    )
+    if fixed_reference is not None:
+        if not fixed_reference.is_file():
+            parser.error(f"fixed reference does not exist: {fixed_reference}")
+        vector_values = np.load(args.retarget_batch)
+        count = min(args.limit, len(vector_values))
+        vectors = vector_values[:count].astype(np.float64)
+        qpos = wrist_position = wrist_quaternion = None
+    else:
+        with np.load(args.retarget_batch) as data:
+            count = min(args.limit, len(data["vectors"]))
+            vectors = data["vectors"][:count].astype(np.float64)
+            qpos = data["qpos"][:count].astype(np.float32)
+            wrist_position = data["wrist_position_all"][:count].astype(np.float32)
+            wrist_quaternion = data["wrist_quaternion_xyzw_all"][:count].astype(
+                np.float32
+            )
 
     candidate_ids = [f"wuji_physx_{index:06d}" for index in range(count)]
     urdfs = []
@@ -141,15 +169,21 @@ def main() -> int:
                 for part in candidate["parts"]
             }
         }
-        reference = candidate_root / "reference.npz"
-        save_reference(
-            args.template_reference.resolve(),
-            reference,
-            candidate_id,
-            qpos[index],
-            wrist_position[index],
-            wrist_quaternion[index],
-        )
+        if fixed_reference is not None:
+            reference = fixed_reference
+        else:
+            reference = candidate_root / "reference.npz"
+            assert qpos is not None
+            assert wrist_position is not None
+            assert wrist_quaternion is not None
+            save_reference(
+                args.template_reference.resolve(),
+                reference,
+                candidate_id,
+                qpos[index],
+                wrist_position[index],
+                wrist_quaternion[index],
+            )
         urdfs.append("")
         candidate_usd = candidate_root / "asset" / "hand.usd"
         if not args.direct_template and args.direct_candidate_assets is None:
@@ -269,6 +303,10 @@ def main() -> int:
         "parametric_joint_local_positions": joint_local_positions,
         "all_candidates_require_physical_rollout": True,
         "runtime_parametric_overlays": bank_rows is not None,
+        "fixed_reference": (
+            str(fixed_reference) if fixed_reference is not None else None
+        ),
+        "retarget_performed": fixed_reference is None,
         "proxy_used": False,
     }
     path = root / "physx_batch_manifest.json"

@@ -25,6 +25,12 @@ ELITE_MUTATION_SIGMA="${ELITE_MUTATION_SIGMA:-0.12}"
 REWARD_SCALE="${REWARD_SCALE:-0.01}"
 OPTIMIZER_BACKEND="${OPTIMIZER_BACKEND:-skrl}"
 RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
+SHARED_PPO_ITERATIONS="${SHARED_PPO_ITERATIONS:-0}"
+MORPHOLOGY_REPLICAS="${MORPHOLOGY_REPLICAS:-1}"
+GPU_COUNT="${GPU_COUNT:-1}"
+FIXED_REFERENCE="${FIXED_REFERENCE:-}"
+PPO_CHECKPOINT="${PPO_CHECKPOINT:-}"
+TARGET_REWARD="${TARGET_REWARD:-inf}"
 KIT_ARGS="${KIT_ARGS:---/log/level=error}"
 CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-0}"
 BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_32_expanded_0p70}"
@@ -40,8 +46,14 @@ EXTRA_ARGS=()
 if [[ "${CONTINUE_AFTER_SUCCESS}" == "1" ]]; then
   EXTRA_ARGS+=(--continue-after-success)
 fi
-./isaaclab.sh -p \
-  temp/hocap_mano_replay/isaaclab/train_wuji_hybrid_sac_morphology.py \
+if [[ -n "${FIXED_REFERENCE}" ]]; then
+  EXTRA_ARGS+=(--fixed-reference "${FIXED_REFERENCE}")
+fi
+if [[ -n "${PPO_CHECKPOINT}" ]]; then
+  EXTRA_ARGS+=(--ppo-checkpoint "${PPO_CHECKPOINT}")
+fi
+PROGRAM_ARGS=(
+  temp/hocap_mano_replay/isaaclab/train_wuji_hybrid_sac_morphology.py
   --output-root "${OUTPUT_ROOT}" \
   --prototype-bank-root "${BANK_ROOT}" \
   --seed-trajectory "${SEED_TRAJECTORY}" \
@@ -57,6 +69,21 @@ fi
   --reward-scale "${REWARD_SCALE}" \
   --optimizer-backend "${OPTIMIZER_BACKEND}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
+  --shared-ppo-iterations "${SHARED_PPO_ITERATIONS}" \
+  --morphology-replicas "${MORPHOLOGY_REPLICAS}" \
+  --target-reward "${TARGET_REWARD}" \
   "${EXTRA_ARGS[@]}" \
   --kit_args="${KIT_ARGS}" \
   --headless
+)
+if (( GPU_COUNT == 1 )); then
+  ./isaaclab.sh -p "${PROGRAM_ARGS[@]}"
+else
+  export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
+  ./isaaclab.sh -p -m torch.distributed.run \
+    --standalone \
+    --nnodes=1 \
+    --nproc_per_node="${GPU_COUNT}" \
+    "${PROGRAM_ARGS[@]}" \
+    --distributed
+fi
