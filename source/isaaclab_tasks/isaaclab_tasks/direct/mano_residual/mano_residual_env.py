@@ -672,6 +672,7 @@ class ManoResidualEnv(DirectRLEnv):
                     object_root_path=f"{source_root}/Object",
                 )
             self._spawn_support_ground()
+            self._spawn_dome_light()
             for index in range(
                 int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
             ):
@@ -777,7 +778,15 @@ class ManoResidualEnv(DirectRLEnv):
         self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
         self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
         self.scene.sensors["object_all_hand_contact"] = self._all_hand_contact_sensor
-        light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] setup_scene_complete", flush=True)
+        if not grouped_replicas:
+            self._spawn_dome_light()
+
+    def _spawn_dome_light(self) -> None:
+        light_cfg = sim_utils.DomeLightCfg(
+            intensity=1800.0, color=(0.85, 0.85, 0.85)
+        )
         light_cfg.func("/World/Light", light_cfg)
 
     def _spawn_support_ground(self) -> None:
