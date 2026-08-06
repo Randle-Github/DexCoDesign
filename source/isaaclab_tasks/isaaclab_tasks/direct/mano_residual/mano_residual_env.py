@@ -643,16 +643,16 @@ class ManoResidualEnv(DirectRLEnv):
         if not self._grouped_physics_replicas:
             return f"/World/envs/env_{index}"
         assert MORPHOLOGY_BATCH_MANIFEST is not None
-        replicas = int(MORPHOLOGY_BATCH_MANIFEST["morphology_replicas"])
-        morphology_index, replica_index = divmod(index, replicas)
+        unique = int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+        replica_index, morphology_index = divmod(index, unique)
         return (
-            f"/World/morphology_groups/morph_{morphology_index:06d}"
-            f"/env_{replica_index:03d}"
+            f"/World/morphology_batch/replica_{replica_index:03d}"
+            f"/morph_{morphology_index:06d}"
         )
 
     def _environment_regex(self) -> str:
         if self._grouped_physics_replicas:
-            return "/World/morphology_groups/morph_.*/env_.*"
+            return "/World/morphology_batch/replica_.*/morph_.*"
         return "/World/envs/env_.*"
 
     def _setup_scene(self) -> None:
@@ -662,11 +662,10 @@ class ManoResidualEnv(DirectRLEnv):
             self._apply_morphology_batch_overlays(
                 count=int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
             )
-            replicas = int(MORPHOLOGY_BATCH_MANIFEST["morphology_replicas"])
             for morphology_index in range(
                 int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
             ):
-                source_root = self._environment_root(morphology_index * replicas)
+                source_root = self._environment_root(morphology_index)
                 self._validate_collision_coverage(
                     hand_root_path=f"{source_root}/Hand",
                     object_root_path=f"{source_root}/Object",
@@ -677,7 +676,7 @@ class ManoResidualEnv(DirectRLEnv):
                 int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
             ):
                 self._filter_hand_support_collisions(
-                    hand_root_path=f"{self._environment_root(index * int(MORPHOLOGY_BATCH_MANIFEST['morphology_replicas']))}/Hand",
+                    hand_root_path=f"{self._environment_root(index)}/Hand",
                     support_root_path="/World/ground",
                 )
         else:
@@ -809,25 +808,32 @@ class ManoResidualEnv(DirectRLEnv):
         assert manifest is not None
         unique = int(manifest["unique_morphology_count"])
         replicas = int(manifest["morphology_replicas"])
-        origins = self.scene.env_origins.detach().cpu().numpy()
+        spacing = float(self.cfg.scene.env_spacing)
+        per_row = int(math.ceil(math.sqrt(unique)))
+        local_origins = np.zeros((unique, 3), dtype=np.float32)
         for morphology_index in range(unique):
-            group_path = (
-                f"/World/morphology_groups/morph_{morphology_index:06d}"
+            row, column = divmod(morphology_index, per_row)
+            local_origins[morphology_index, :2] = (
+                column * spacing,
+                row * spacing,
             )
-            source_path = f"{group_path}/env_000"
-            sim_utils.create_prim(group_path, "Xform")
+        source_replica = "/World/morphology_batch/replica_000"
+        sim_utils.create_prim("/World/morphology_batch", "Xform")
+        sim_utils.create_prim(source_replica, "Xform")
+        for morphology_index in range(unique):
+            source_path = (
+                f"{source_replica}/morph_{morphology_index:06d}"
+            )
             sim_utils.create_prim(
                 source_path,
                 "Xform",
-                translation=tuple(origins[morphology_index * replicas]),
+                translation=tuple(local_origins[morphology_index]),
             )
         source_parent_expression = (
-            "/World/morphology_groups/morph_.*/env_000"
+            "/World/morphology_batch/replica_000/morph_.*"
         )
         hand_spawn = copy.deepcopy(self.cfg.hand_cfg.spawn)
-        hand_spawn.usd_path = [
-            str(_batch_usd_paths[index * replicas]) for index in range(unique)
-        ]
+        hand_spawn.usd_path = [str(path) for path in _batch_usd_paths[:unique]]
         hand_spawn.func(
             f"{source_parent_expression}/Hand",
             hand_spawn,
@@ -846,14 +852,14 @@ class ManoResidualEnv(DirectRLEnv):
             f"unique={unique} total_envs={self.num_envs}",
             flush=True,
         )
+        self._morphology_local_origins = local_origins
 
     def _clone_grouped_morphology_environments(self) -> None:
-        """Clone each heterogeneous source into its homogeneous replica group.
+        """Clone one heterogeneous super-environment into PPO replicas.
 
-        USD geometry and continuous overlays are authored only for the first
-        unique-morphology block.  Isaac Sim then registers one PhysX
-        replication group per source, avoiding independent parsing of every
-        PPO replica.
+        The source contains every unique morphology. Isaac Sim therefore sees
+        one homogeneous replication operation even though each replica block
+        contains heterogeneous hands.
         """
 
         manifest = MORPHOLOGY_BATCH_MANIFEST
@@ -865,28 +871,38 @@ class ManoResidualEnv(DirectRLEnv):
                 f"grouped morphology shape {unique}x{replicas} != {self.num_envs}"
             )
         cloner = Cloner(stage=self.scene.stage)
-        origins = self.scene.env_origins.detach().cpu().numpy()
-        for morphology_index in range(unique):
-            begin = morphology_index * replicas
-            env_indices = list(range(begin, begin + replicas))
-            group_path = (
-                f"/World/morphology_groups/morph_{morphology_index:06d}"
+        local_origins = self._morphology_local_origins
+        local_extent = local_origins.max(axis=0) - local_origins.min(axis=0)
+        block_spacing = float(max(local_extent[:2]) + self.cfg.scene.env_spacing * 2.0)
+        replica_per_row = int(math.ceil(math.sqrt(replicas)))
+        block_origins = np.zeros((replicas, 3), dtype=np.float32)
+        for replica_index in range(replicas):
+            row, column = divmod(replica_index, replica_per_row)
+            block_origins[replica_index, :2] = (
+                column * block_spacing,
+                row * block_spacing,
             )
-            prim_paths = [
-                f"{group_path}/env_{replica:03d}"
-                for replica in range(replicas)
-            ]
-            cloner.clone(
-                source_prim_path=prim_paths[0],
-                prim_paths=prim_paths,
-                positions=origins[env_indices],
-                replicate_physics=True,
-                base_env_path=group_path,
-                root_path=f"{group_path}/env",
-                copy_from_source=False,
-                enable_env_ids=False,
-                clone_in_fabric=False,
-            )
+        prim_paths = [
+            f"/World/morphology_batch/replica_{replica:03d}"
+            for replica in range(replicas)
+        ]
+        cloner.clone(
+            source_prim_path=prim_paths[0],
+            prim_paths=prim_paths,
+            positions=block_origins,
+            replicate_physics=True,
+            base_env_path="/World/morphology_batch",
+            root_path="/World/morphology_batch/replica",
+            copy_from_source=False,
+            enable_env_ids=False,
+            clone_in_fabric=False,
+        )
+        flattened_origins = np.concatenate(
+            [local_origins + block_origin for block_origin in block_origins], axis=0
+        )
+        self.scene._default_env_origins = torch.as_tensor(
+            flattened_origins, device=self.device, dtype=torch.float32
+        )
         print(
             "[MORPHOLOGY_GROUPED_PHYSX_CLONES] "
             f"sources={unique} replicas={replicas} total={self.num_envs}",
@@ -923,9 +939,8 @@ class ManoResidualEnv(DirectRLEnv):
         stage = self.scene.stage
         resolved_links: list[list[str]] = []
         resolved_joints: list[list[str]] = []
-        replicas = int(manifest.get("morphology_replicas", 1))
         source_indices = (
-            [index * replicas for index in range(count)]
+            list(range(count))
             if self._grouped_physics_replicas
             else list(range(count))
         )
