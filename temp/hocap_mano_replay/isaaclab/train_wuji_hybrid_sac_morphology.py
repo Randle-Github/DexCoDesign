@@ -83,6 +83,14 @@ parser.add_argument(
     ),
 )
 parser.add_argument(
+    "--grouped-zero-action-vectors",
+    type=Path,
+    help=(
+        "debug one fixed vector population in the grouped replicated scene "
+        "with exactly zero residual actions and no PPO/SAC updates"
+    ),
+)
+parser.add_argument(
     "--ppo-checkpoint",
     type=Path,
     help="optional initial shared PPO checkpoint; subsequent generations resume automatically",
@@ -110,6 +118,10 @@ if args_cli.ppo_rollout_multiplier < 1:
     parser.error("--ppo-rollout-multiplier must be positive")
 if args_cli.fixed_reference is not None:
     args_cli.fixed_reference = args_cli.fixed_reference.expanduser().resolve()
+if args_cli.grouped_zero_action_vectors is not None:
+    args_cli.grouped_zero_action_vectors = (
+        args_cli.grouped_zero_action_vectors.expanduser().resolve()
+    )
 if args_cli.ppo_checkpoint is not None:
     args_cli.ppo_checkpoint = args_cli.ppo_checkpoint.expanduser().resolve()
 bank_manifest_path = (
@@ -270,7 +282,14 @@ def prepare_assets(
         prepare_command.extend(("--fixed-reference", str(fixed_reference)))
     elif retarget_path is None:
         raise ValueError("retarget_path is required without fixed_reference")
-    if args_cli.shared_ppo_iterations and args_cli.morphology_replicas > 1:
+    grouped_replication = (
+        args_cli.morphology_replicas > 1
+        and (
+            args_cli.shared_ppo_iterations > 0
+            or args_cli.grouped_zero_action_vectors is not None
+        )
+    )
+    if grouped_replication:
         prepare_command.append("--materialize-candidate-assets")
     run(prepare_command)
     timings["asset_overlay_prepare_seconds"] = time.perf_counter() - start
@@ -285,7 +304,7 @@ def prepare_assets(
     timings["usd_attach_total_seconds"] = time.perf_counter() - start
     manifest["parametric_template_usd"] = None
     manifest["parametric_template_usd_paths"] = None
-    if args_cli.shared_ppo_iterations and args_cli.morphology_replicas > 1:
+    if grouped_replication:
         super_usd, local_origins = build_hand_super_environment(
             manifest,
             prepared / "super_environment" / "hands.usd",
@@ -453,6 +472,107 @@ def replicate_manifest(
 def distributed_barrier() -> None:
     if skrl.config.torch.is_distributed:
         torch.distributed.barrier()
+
+
+def grouped_zero_action_debug(env_cfg, output: Path, bank_manifest: dict) -> None:
+    """Evaluate known morphologies in the replicated super-env with zero action."""
+
+    if args_cli.fixed_reference is None:
+        raise ValueError("grouped zero-action debug requires --fixed-reference")
+    if args_cli.morphology_replicas <= 1:
+        raise ValueError("grouped zero-action debug requires replicas > 1")
+    assert args_cli.grouped_zero_action_vectors is not None
+    if not args_cli.grouped_zero_action_vectors.is_file():
+        raise FileNotFoundError(
+            f"debug vectors not found: {args_cli.grouped_zero_action_vectors}"
+        )
+    vectors = np.load(args_cli.grouped_zero_action_vectors).astype(np.float32)
+    if len(vectors) != args_cli.population:
+        raise ValueError(
+            f"debug vector count {len(vectors)} != population {args_cli.population}"
+        )
+    output.mkdir(parents=True, exist_ok=True)
+    vectors_path = output / "vectors.npy"
+    np.save(vectors_path, vectors)
+    manifest, prepare_timings = prepare_assets(
+        vectors_path,
+        None,
+        output,
+        bank_manifest,
+        fixed_reference=args_cli.fixed_reference,
+    )
+    expanded = replicate_manifest(
+        manifest,
+        args_cli.morphology_replicas,
+        list(range(args_cli.population)),
+    )
+    expanded_path = output / "prepared/grouped_zero_action_manifest.json"
+    expanded_path.write_text(json.dumps(expanded, indent=2) + "\n")
+    cfg = copy.deepcopy(env_cfg)
+    configure_batch(cfg, expanded)
+    start = time.perf_counter()
+    env = gym.make(args_cli.task, cfg=cfg)
+    initialization_seconds = time.perf_counter() - start
+    raw_rows, rollout_seconds = evaluate_batch(env, expanded, 0)
+    env.close()
+
+    morphology_indices = np.asarray(expanded["morphology_indices"], dtype=np.int64)
+    rows: list[dict] = []
+    for morphology_index in range(args_cli.population):
+        ids = np.flatnonzero(morphology_indices == morphology_index)
+        replicas = [raw_rows[int(index)] for index in ids]
+        rewards = np.asarray(
+            [row["total_reward"] for row in replicas], dtype=np.float64
+        )
+        phases = np.asarray([row["phase"] for row in replicas], dtype=np.int64)
+        successes = np.asarray([row["success"] for row in replicas], dtype=bool)
+        rows.append(
+            {
+                "candidate_index": morphology_index,
+                "vector": vectors[morphology_index].tolist(),
+                "total_reward": float(rewards.mean()),
+                "reward_std": float(rewards.std()),
+                "phase": int(phases.max()),
+                "mean_phase": float(phases.mean()),
+                "success": bool(successes.any()),
+                "success_count": int(successes.sum()),
+                "replicas": int(len(ids)),
+            }
+        )
+    rows.sort(key=lambda row: row["total_reward"], reverse=True)
+    farthest = max(rows, key=lambda row: row["phase"])
+    summary = {
+        "schema_version": 1,
+        "algorithm": "grouped_superenv_zero_action_debug",
+        "ppo_enabled": False,
+        "sac_updates_performed": 0,
+        "retarget_performed": False,
+        "fixed_reference": str(args_cli.fixed_reference),
+        "source_vectors": str(args_cli.grouped_zero_action_vectors),
+        "population": args_cli.population,
+        "morphology_replicas": args_cli.morphology_replicas,
+        "global_envs": args_cli.population * args_cli.morphology_replicas,
+        "best": rows[0],
+        "farthest": farthest,
+        "successful_morphologies": sum(row["success"] for row in rows),
+        "successful_replicas": sum(row["success_count"] for row in rows),
+        "prepare_timings": prepare_timings,
+        "initialization_seconds": initialization_seconds,
+        "rollout_seconds": rollout_seconds,
+        "results": rows,
+    }
+    (output / "grouped_zero_action_results.json").write_text(
+        json.dumps(summary, indent=2) + "\n"
+    )
+    print(
+        "WUJI_GROUPED_ZERO_ACTION_COMPLETE "
+        f"best_reward={rows[0]['total_reward']:.9f} "
+        f"best_phase={rows[0]['phase']}/445 "
+        f"max_phase={farthest['phase']}/445 "
+        f"successful_morphologies={summary['successful_morphologies']} "
+        f"successful_replicas={summary['successful_replicas']}",
+        flush=True,
+    )
 
 
 def evaluate_shared_policy(
@@ -915,6 +1035,9 @@ def main(env_cfg, agent_cfg) -> None:
     output = args_cli.output_root
     output.mkdir(parents=True, exist_ok=True)
     bank_manifest = json.loads(bank_manifest_path.read_text())
+    if args_cli.grouped_zero_action_vectors is not None:
+        grouped_zero_action_debug(env_cfg, output, bank_manifest)
+        return
     if args_cli.shared_ppo_iterations:
         shared_ppo_outer_search(env_cfg, agent_cfg, output, bank_manifest)
         return
