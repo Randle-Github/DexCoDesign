@@ -936,6 +936,27 @@ def main(env_cfg, agent_cfg) -> None:
         }
     kinematics = WujiBatchKinematics(joint_names, torch.device("cuda"))
     seed_q = torch.from_numpy(seed_arrays["qpos"]).cuda()
+    fixed_reference = args_cli.fixed_reference
+    if fixed_reference is not None:
+        if not fixed_reference.is_file():
+            raise FileNotFoundError(
+                f"fixed WUJI reference not found: {fixed_reference}"
+            )
+        (output / "fixed_reference_contract.json").write_text(
+            json.dumps(
+                {
+                    "reference": str(fixed_reference),
+                    "retarget_per_generation": False,
+                    "shared_ppo_iterations": 0,
+                    "zero_residual_physics_evaluation": True,
+                    "only_experimental_difference": (
+                        "reuse_first_retarget_for_all_morphologies"
+                    ),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
     state_path = output / "hybrid_sac_state.pt"
     replay_path = output / "hybrid_sac_replay.npz"
     history = []
@@ -1010,16 +1031,29 @@ def main(env_cfg, agent_cfg) -> None:
             run(command)
         timings = {"sac_update_and_sample_seconds": time.perf_counter() - sac_start}
         retarget_path = generation_root / "gpu_retarget_all.npz"
-        timings["retarget"] = retarget(
-            vectors_path,
-            retarget_path,
-            kinematics,
-            seed_q,
-            seed_arrays,
-            args_cli.retarget_iterations,
-        )
+        if fixed_reference is None:
+            timings["retarget"] = retarget(
+                vectors_path,
+                retarget_path,
+                kinematics,
+                seed_q,
+                seed_arrays,
+                args_cli.retarget_iterations,
+            )
+        else:
+            timings["retarget"] = {
+                "seconds": 0.0,
+                "candidates": args_cli.population,
+                "solver_seconds": 0.0,
+                "skipped": True,
+                "fixed_reference": str(fixed_reference),
+            }
         manifest, prepare_timings = prepare_assets(
-            vectors_path, retarget_path, generation_root, bank_manifest
+            vectors_path,
+            None if fixed_reference is not None else retarget_path,
+            generation_root,
+            bank_manifest,
+            fixed_reference=fixed_reference,
         )
         timings.update(prepare_timings)
         rows = []
@@ -1092,10 +1126,19 @@ def main(env_cfg, agent_cfg) -> None:
             "schema_version": 1,
             "backend": "persistent_isaaclab_physx_gpu",
             "algorithm": (
-                "skrl_sac_with_continuous_palm_action"
+                (
+                    "skrl_sac_fixed_first_reference_no_ppo"
+                    if fixed_reference is not None
+                    else "skrl_sac_with_continuous_palm_action"
+                )
                 if skrl_optimizer is not None
                 else "episode_level_hybrid_sac"
             ),
+            "retarget_performed": fixed_reference is None,
+            "fixed_reference": (
+                str(fixed_reference) if fixed_reference is not None else None
+            ),
+            "shared_ppo_iterations": 0,
             "all_candidates_physically_evaluated": True,
             "proxy_used": False,
             "top_k_prefilter_used": False,
