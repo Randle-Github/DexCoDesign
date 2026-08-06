@@ -91,6 +91,14 @@ parser.add_argument(
     ),
 )
 parser.add_argument(
+    "--force-source-morphology",
+    action="store_true",
+    help=(
+        "PPO isolation control: replace every proposed morphology by the exact "
+        "unchanged source vector and disable morphology optimizer updates"
+    ),
+)
+parser.add_argument(
     "--ppo-checkpoint",
     type=Path,
     help="optional initial shared PPO checkpoint; subsequent generations resume automatically",
@@ -154,7 +162,7 @@ from gpu_wuji_retarget import (  # noqa: E402
     joint_names_from_seed,
     quat_xyzw_matrix,
 )
-from wuji_morphology_space import resolve_design_vectors  # noqa: E402
+from wuji_morphology_space import SOURCE_VECTOR, resolve_design_vectors  # noqa: E402
 from wuji_parametric_usd import (  # noqa: E402
     attach_manifest,
     build_hand_super_environment,
@@ -840,6 +848,22 @@ def shared_ppo_outer_search(
             generation_root.mkdir(parents=True, exist_ok=True)
             assert optimizer is not None
             proposal = optimizer.propose(generation)
+            if args_cli.force_source_morphology:
+                source_vectors = np.repeat(
+                    SOURCE_VECTOR[None, :], args_cli.population, axis=0
+                ).astype(np.float32)
+                proposal = ProposalBatch(
+                    vectors=source_vectors,
+                    semantic_vectors=resolve_design_vectors(source_vectors).astype(
+                        np.float32
+                    ),
+                    observations=proposal.observations,
+                    actions=proposal.actions,
+                    palm_indices=np.zeros(args_cli.population, dtype=np.int64),
+                    sample_sources=tuple(
+                        "forced_source_identity" for _ in range(args_cli.population)
+                    ),
+                )
             np.save(vectors_path, proposal.vectors)
             vectors_path.with_suffix(".json").write_text(
                 json.dumps(
@@ -934,7 +958,14 @@ def shared_ppo_outer_search(
                 [row_by_index[index]["total_reward"] for index in range(args_cli.population)],
                 dtype=np.float32,
             )
-            optimizer_status = optimizer.observe(generation, proposal, rewards)
+            optimizer_status = (
+                {
+                    "optimizer_update_skipped": True,
+                    "reason": "forced_source_morphology_ppo_isolation",
+                }
+                if args_cli.force_source_morphology
+                else optimizer.observe(generation, proposal, rewards)
+            )
             for row in all_rows:
                 index = row["candidate_index"]
                 row["sample_source"] = proposal.sample_sources[index]
@@ -962,6 +993,7 @@ def shared_ppo_outer_search(
             summary = {
                 "schema_version": 1,
                 "algorithm": "fixed_reference_shared_ppo_outer_skrl_sac",
+                "force_source_morphology": args_cli.force_source_morphology,
                 "retarget_performed": False,
                 "fixed_reference": str(fixed_reference),
                 "population": args_cli.population,
