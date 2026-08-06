@@ -14,11 +14,13 @@ set -euo pipefail
 
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
 SEARCH_ROOT="${SEARCH_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/hybrid_sac_expanded_exact_4096x20_seed20260806_retry1}"
+GENERATION="${GENERATION:-0}"
+GENERATION_DIR="$(printf 'generation_%03d' "${GENERATION}")"
 CANDIDATE_INDEX="${CANDIDATE_INDEX:-3527}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/success_candidate_003527}"
 PREPARED="${OUTPUT_ROOT}/prepared"
 MANIFEST="${PREPARED}/physx_batch_manifest.json"
-SEARCH_MANIFEST="${SEARCH_ROOT}/generation_000/prepared/physx_batch_manifest.json"
+SEARCH_MANIFEST="${SEARCH_ROOT}/${GENERATION_DIR}/prepared/physx_batch_manifest.json"
 CAPTURE_MANIFEST="${OUTPUT_ROOT}/capture_replicas_manifest.json"
 CAPTURE="${OUTPUT_ROOT}/successful_rollout.npz"
 CAPTURE_REPLICAS="${CAPTURE_REPLICAS:-1024}"
@@ -32,7 +34,7 @@ export OMP_NUM_THREADS=1
 
 if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
   python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
-    "${SEARCH_ROOT}/generation_000/gpu_retarget_all.npz" \
+    "${SEARCH_ROOT}/${GENERATION_DIR}/gpu_retarget_all.npz" \
     --output-root "${PREPARED}" \
     --offset "${CANDIDATE_INDEX}" \
     --limit 1 \
