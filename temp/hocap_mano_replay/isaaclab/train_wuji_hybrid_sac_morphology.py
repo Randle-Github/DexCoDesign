@@ -66,6 +66,15 @@ parser.add_argument(
     help="independent PPO environments per morphology on the global DDP job",
 )
 parser.add_argument(
+    "--ppo-rollout-multiplier",
+    type=int,
+    default=1,
+    help=(
+        "temporal sample multiplier per physical morphology environment; "
+        "PPO collects base_rollouts * multiplier steps before each update"
+    ),
+)
+parser.add_argument(
     "--fixed-reference",
     type=Path,
     help=(
@@ -97,6 +106,8 @@ if args_cli.shared_ppo_iterations < 0:
     parser.error("--shared-ppo-iterations must be non-negative")
 if args_cli.morphology_replicas < 1:
     parser.error("--morphology-replicas must be positive")
+if args_cli.ppo_rollout_multiplier < 1:
+    parser.error("--ppo-rollout-multiplier must be positive")
 if args_cli.fixed_reference is not None:
     args_cli.fixed_reference = args_cli.fixed_reference.expanduser().resolve()
 if args_cli.ppo_checkpoint is not None:
@@ -534,7 +545,9 @@ def train_and_evaluate_shared_ppo(
     cfg.seed = args_cli.seed + rank
     ppo_cfg = copy.deepcopy(agent_cfg)
     ppo_cfg["seed"] = args_cli.seed
-    rollouts = int(ppo_cfg["agent"]["rollouts"])
+    base_rollouts = int(ppo_cfg["agent"]["rollouts"])
+    rollouts = base_rollouts * args_cli.ppo_rollout_multiplier
+    ppo_cfg["agent"]["rollouts"] = rollouts
     ppo_cfg["trainer"]["timesteps"] = (
         args_cli.shared_ppo_iterations * rollouts
     )
@@ -569,6 +582,8 @@ def train_and_evaluate_shared_ppo(
     return rows, {
         "local_envs": len(manifest["vectors"]),
         "ppo_iterations": args_cli.shared_ppo_iterations,
+        "base_rollout_steps": base_rollouts,
+        "ppo_rollout_multiplier": args_cli.ppo_rollout_multiplier,
         "rollout_steps": rollouts,
         "initialization_seconds": initialization_seconds,
         "training_seconds": training_seconds,
@@ -617,6 +632,15 @@ def shared_ppo_outer_search(
                     "morphology_replicas": args_cli.morphology_replicas,
                     "global_envs": (
                         args_cli.population * args_cli.morphology_replicas
+                    ),
+                    "physical_replicas_per_morphology": (
+                        args_cli.morphology_replicas
+                    ),
+                    "ppo_rollout_multiplier": args_cli.ppo_rollout_multiplier,
+                    "effective_env_equivalent": (
+                        args_cli.population
+                        * args_cli.morphology_replicas
+                        * args_cli.ppo_rollout_multiplier
                     ),
                     "world_size": world_size,
                     "envs_per_rank": (
@@ -786,6 +810,12 @@ def shared_ppo_outer_search(
                 "fixed_reference": str(fixed_reference),
                 "population": args_cli.population,
                 "morphology_replicas": args_cli.morphology_replicas,
+                "ppo_rollout_multiplier": args_cli.ppo_rollout_multiplier,
+                "effective_env_equivalent": (
+                    args_cli.population
+                    * args_cli.morphology_replicas
+                    * args_cli.ppo_rollout_multiplier
+                ),
                 "global_envs": args_cli.population * args_cli.morphology_replicas,
                 "world_size": world_size,
                 "ppo_iterations": args_cli.shared_ppo_iterations,
