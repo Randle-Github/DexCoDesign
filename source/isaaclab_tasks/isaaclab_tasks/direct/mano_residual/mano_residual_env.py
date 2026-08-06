@@ -21,7 +21,6 @@ import gymnasium as gym
 import numpy as np
 import torch
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
-from isaacsim.core.cloner import GridCloner
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -351,6 +350,12 @@ class ManoResidualEvalEnvCfg(ManoResidualEnvCfg):
 class ManoResidualEnv(DirectRLEnv):
     cfg: ManoResidualEnvCfg
 
+    @property
+    def num_envs(self) -> int:
+        if getattr(self, "_grouped_physics_replicas", False):
+            return len(_batch_reference_paths)
+        return self.scene.num_envs
+
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
         reference_paths = (
             _batch_reference_paths
@@ -646,13 +651,13 @@ class ManoResidualEnv(DirectRLEnv):
         unique = int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
         replica_index, morphology_index = divmod(index, unique)
         return (
-            f"/World/morphology_batch/replica_{replica_index:03d}"
+            f"/World/envs/env_{replica_index}/SuperEnvironment"
             f"/morph_{morphology_index:06d}"
         )
 
     def _environment_regex(self) -> str:
         if self._grouped_physics_replicas:
-            return "/World/morphology_batch/replica_.*/morph_.*"
+            return "/World/envs/env_.*/SuperEnvironment/morph_.*"
         return "/World/envs/env_.*"
 
     def _setup_scene(self) -> None:
@@ -770,7 +775,7 @@ class ManoResidualEnv(DirectRLEnv):
         # InteractiveScene already creates all independent environment Xforms
         # before _setup_scene when replicate_physics=False. Re-cloning here
         # would overwrite the deterministic MultiUsdFileCfg assignments.
-        if self.cfg.scene.replicate_physics:
+        if self.cfg.scene.replicate_physics and not grouped_replicas:
             self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
         self.scene.rigid_objects["object"] = self.object
@@ -813,12 +818,11 @@ class ManoResidualEnv(DirectRLEnv):
         local_origins = np.asarray(
             manifest["hand_super_environment_origins"][:unique], dtype=np.float32
         )
-        source_replica = "/World/morphology_batch/replica_000"
-        sim_utils.create_prim("/World/morphology_batch", "Xform")
+        source_replica = "/World/envs/env_0/SuperEnvironment"
         super_cfg = sim_utils.UsdFileCfg(usd_path=str(Path(super_usd).resolve()))
         super_cfg.func(source_replica, super_cfg)
         source_parent_expression = (
-            "/World/morphology_batch/replica_000/morph_.*"
+            "/World/envs/env_0/SuperEnvironment/morph_.*"
         )
         object_spawn = copy.deepcopy(self.cfg.object_cfg.spawn)
         object_spawn.func(
@@ -851,26 +855,13 @@ class ManoResidualEnv(DirectRLEnv):
                 f"grouped morphology shape {unique}x{replicas} != {self.num_envs}"
             )
         local_origins = self._morphology_local_origins
-        local_extent = local_origins.max(axis=0) - local_origins.min(axis=0)
-        block_spacing = float(max(local_extent[:2]) + self.cfg.scene.env_spacing * 2.0)
-        cloner = GridCloner(spacing=block_spacing, stage=self.scene.stage)
-        prim_paths = [
-            f"/World/morphology_batch/replica_{replica:03d}"
-            for replica in range(replicas)
-        ]
-        block_origins = np.asarray(
-            cloner.clone(
-                source_prim_path=prim_paths[0],
-                prim_paths=prim_paths,
-                replicate_physics=True,
-                base_env_path="/World/morphology_batch",
-                root_path="/World/morphology_batch/replica",
-                copy_from_source=False,
-                enable_env_ids=False,
-                clone_in_fabric=False,
-            ),
-            dtype=np.float32,
-        )
+        self.scene.clone_environments(copy_from_source=False)
+        block_origins = self.scene.env_origins.detach().cpu().numpy()
+        if len(block_origins) != replicas:
+            raise RuntimeError(
+                f"official scene clone returned {len(block_origins)} blocks, "
+                f"expected {replicas}"
+            )
         flattened_origins = np.concatenate(
             [local_origins + block_origin for block_origin in block_origins], axis=0
         )

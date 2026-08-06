@@ -308,10 +308,25 @@ def configure_batch(cfg, manifest: dict) -> None:
     env_module.REFERENCE_PATH = reference_paths[0]
     cfg.hand_cfg.spawn.usd_path = [str(path) for path in usd_paths]
     if manifest.get("grouped_physics_replication", False):
-        cfg.hand_cfg.prim_path = "/World/morphology_batch/replica_.*/morph_.*/Hand"
-        cfg.object_cfg.prim_path = "/World/morphology_batch/replica_.*/morph_.*/Object"
-    cfg.scene.num_envs = len(usd_paths)
-    cfg.scene.replicate_physics = False
+        cfg.hand_cfg.prim_path = (
+            "/World/envs/env_.*/SuperEnvironment/morph_.*/Hand"
+        )
+        cfg.object_cfg.prim_path = (
+            "/World/envs/env_.*/SuperEnvironment/morph_.*/Object"
+        )
+        cfg.scene.num_envs = int(manifest["morphology_replicas"])
+        origins = np.asarray(
+            manifest["hand_super_environment_origins"][
+                : int(manifest["unique_morphology_count"])
+            ],
+            dtype=np.float32,
+        )
+        extent = origins.max(axis=0) - origins.min(axis=0)
+        cfg.scene.env_spacing = float(max(extent[:2]) + 1.3)
+        cfg.scene.replicate_physics = True
+    else:
+        cfg.scene.num_envs = len(usd_paths)
+        cfg.scene.replicate_physics = False
     cfg.scene.clone_in_fabric = False
     cfg.randomize_start_phase = False
     cfg.episode_length_s = 15.0
