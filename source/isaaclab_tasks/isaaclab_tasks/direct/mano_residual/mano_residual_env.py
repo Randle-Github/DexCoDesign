@@ -686,12 +686,16 @@ class ManoResidualEnv(DirectRLEnv):
                 )
         if grouped_replicas:
             self._clone_grouped_morphology_environments()
+            print("[MORPHOLOGY_GROUPED_STAGE] clone_complete", flush=True)
             hand_cfg = copy.deepcopy(self.cfg.hand_cfg)
             hand_cfg.spawn = None
             object_cfg = copy.deepcopy(self.cfg.object_cfg)
             object_cfg.spawn = None
+            print("[MORPHOLOGY_GROUPED_STAGE] constructing_articulation", flush=True)
             self.hand = Articulation(hand_cfg)
+            print("[MORPHOLOGY_GROUPED_STAGE] articulation_constructed", flush=True)
             self.object = RigidObject(object_cfg)
+            print("[MORPHOLOGY_GROUPED_STAGE] rigid_object_constructed", flush=True)
         else:
             self.object = RigidObject(self.cfg.object_cfg)
         # ContactSensor filtering is one-to-many: its prim_path must resolve to
@@ -709,6 +713,8 @@ class ManoResidualEnv(DirectRLEnv):
                 ],
             )
         )
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] thumb_sensor_constructed", flush=True)
         self._other_finger_contact_sensor = ContactSensor(
             ContactSensorCfg(
                 prim_path=f"{env_regex}/Object",
@@ -720,6 +726,8 @@ class ManoResidualEnv(DirectRLEnv):
                 ],
             )
         )
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] other_sensor_constructed", flush=True)
         self._all_hand_contact_sensor = ContactSensor(
             ContactSensorCfg(
                 prim_path=f"{env_regex}/Object",
@@ -731,6 +739,8 @@ class ManoResidualEnv(DirectRLEnv):
                 ],
             )
         )
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] all_sensor_constructed", flush=True)
         self._validate_collision_coverage(
             hand_root_path=f"{self._environment_root(0)}/Hand",
             object_root_path=f"{self._environment_root(0)}/Object",
