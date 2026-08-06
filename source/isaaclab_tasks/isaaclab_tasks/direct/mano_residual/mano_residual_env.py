@@ -662,6 +662,15 @@ class ManoResidualEnv(DirectRLEnv):
             self._apply_morphology_batch_overlays(
                 count=int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
             )
+            replicas = int(MORPHOLOGY_BATCH_MANIFEST["morphology_replicas"])
+            for morphology_index in range(
+                int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+            ):
+                source_root = self._environment_root(morphology_index * replicas)
+                self._validate_collision_coverage(
+                    hand_root_path=f"{source_root}/Hand",
+                    object_root_path=f"{source_root}/Object",
+                )
             self._spawn_support_ground()
             for index in range(
                 int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
@@ -741,10 +750,11 @@ class ManoResidualEnv(DirectRLEnv):
         )
         if grouped_replicas:
             print("[MORPHOLOGY_GROUPED_STAGE] all_sensor_constructed", flush=True)
-        self._validate_collision_coverage(
-            hand_root_path=f"{self._environment_root(0)}/Hand",
-            object_root_path=f"{self._environment_root(0)}/Object",
-        )
+        if not grouped_replicas:
+            self._validate_collision_coverage(
+                hand_root_path=f"{self._environment_root(0)}/Hand",
+                object_root_path=f"{self._environment_root(0)}/Object",
+            )
         if not grouped_replicas:
             self._spawn_support_ground()
             hand_roots = (
