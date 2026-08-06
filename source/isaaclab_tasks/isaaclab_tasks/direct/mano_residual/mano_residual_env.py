@@ -360,6 +360,11 @@ class ManoResidualEnv(DirectRLEnv):
         references = [np.load(path) for path in reference_paths]
         reference = references[0]
         self._morphology_batch = MORPHOLOGY_BATCH_MANIFEST is not None
+        self._grouped_physics_replicas = bool(
+            self._morphology_batch
+            and MORPHOLOGY_BATCH_MANIFEST is not None
+            and MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
+        )
         self._reference_joint_names = reference["joint_names"].tolist()
         self._action_joint_names = (
             reference["action_joint_names"].tolist()
@@ -634,12 +639,24 @@ class ManoResidualEnv(DirectRLEnv):
             ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         return tensor[ids, phases]
 
-    def _setup_scene(self) -> None:
-        grouped_replicas = bool(
-            self._morphology_batch
-            and MORPHOLOGY_BATCH_MANIFEST is not None
-            and MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
+    def _environment_root(self, index: int) -> str:
+        if not self._grouped_physics_replicas:
+            return f"/World/envs/env_{index}"
+        assert MORPHOLOGY_BATCH_MANIFEST is not None
+        replicas = int(MORPHOLOGY_BATCH_MANIFEST["morphology_replicas"])
+        morphology_index, replica_index = divmod(index, replicas)
+        return (
+            f"/World/morphology_groups/morph_{morphology_index:06d}"
+            f"/env_{replica_index:03d}"
         )
+
+    def _environment_regex(self) -> str:
+        if self._grouped_physics_replicas:
+            return "/World/morphology_groups/morph_.*/env_.*"
+        return "/World/envs/env_.*"
+
+    def _setup_scene(self) -> None:
+        grouped_replicas = self._grouped_physics_replicas
         if grouped_replicas:
             self._spawn_grouped_morphology_sources()
             self._apply_morphology_batch_overlays(
@@ -650,7 +667,7 @@ class ManoResidualEnv(DirectRLEnv):
                 int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
             ):
                 self._filter_hand_support_collisions(
-                    hand_root_path=f"/World/envs/env_{index}/Hand",
+                    hand_root_path=f"{self._environment_root(index * int(MORPHOLOGY_BATCH_MANIFEST['morphology_replicas']))}/Hand",
                     support_root_path="/World/ground",
                 )
         else:
@@ -680,42 +697,43 @@ class ManoResidualEnv(DirectRLEnv):
         # ContactSensor filtering is one-to-many: its prim_path must resolve to
         # one reporting rigid body per environment.  Use the object as that
         # body and filter its contacts against the two hand-link groups.
+        env_regex = self._environment_regex()
         self._thumb_contact_sensor = ContactSensor(
             ContactSensorCfg(
-                prim_path="/World/envs/env_.*/Object",
+                prim_path=f"{env_regex}/Object",
                 update_period=0.0,
                 history_length=0,
                 filter_prim_paths_expr=[
-                    f"/World/envs/env_.*/Hand/{link_name}"
+                    f"{env_regex}/Hand/{link_name}"
                     for link_name in THUMB_CONTACT_LINK_NAMES
                 ],
             )
         )
         self._other_finger_contact_sensor = ContactSensor(
             ContactSensorCfg(
-                prim_path="/World/envs/env_.*/Object",
+                prim_path=f"{env_regex}/Object",
                 update_period=0.0,
                 history_length=0,
                 filter_prim_paths_expr=[
-                    f"/World/envs/env_.*/Hand/{link_name}"
+                    f"{env_regex}/Hand/{link_name}"
                     for link_name in OTHER_FINGER_CONTACT_LINK_NAMES
                 ],
             )
         )
         self._all_hand_contact_sensor = ContactSensor(
             ContactSensorCfg(
-                prim_path="/World/envs/env_.*/Object",
+                prim_path=f"{env_regex}/Object",
                 update_period=0.0,
                 history_length=0,
                 filter_prim_paths_expr=[
-                    f"/World/envs/env_.*/Hand/{link_name}"
+                    f"{env_regex}/Hand/{link_name}"
                     for link_name in ALL_HAND_CONTACT_LINK_NAMES
                 ],
             )
         )
         self._validate_collision_coverage(
-            hand_root_path="/World/envs/env_0/Hand",
-            object_root_path="/World/envs/env_0/Object",
+            hand_root_path=f"{self._environment_root(0)}/Hand",
+            object_root_path=f"{self._environment_root(0)}/Object",
         )
         if not grouped_replicas:
             self._spawn_support_ground()
@@ -761,11 +779,26 @@ class ManoResidualEnv(DirectRLEnv):
         manifest = MORPHOLOGY_BATCH_MANIFEST
         assert manifest is not None
         unique = int(manifest["unique_morphology_count"])
+        replicas = int(manifest["morphology_replicas"])
+        origins = self.scene.env_origins.detach().cpu().numpy()
+        for morphology_index in range(unique):
+            group_path = (
+                f"/World/morphology_groups/morph_{morphology_index:06d}"
+            )
+            source_path = f"{group_path}/env_000"
+            sim_utils.create_prim(group_path, "Xform")
+            sim_utils.create_prim(
+                source_path,
+                "Xform",
+                translation=tuple(origins[morphology_index * replicas]),
+            )
         source_parent_expression = (
-            "/World/envs/env_(" + "|".join(str(index) for index in range(unique)) + ")"
+            "/World/morphology_groups/morph_.*/env_000"
         )
         hand_spawn = copy.deepcopy(self.cfg.hand_cfg.spawn)
-        hand_spawn.usd_path = [str(path) for path in _batch_usd_paths[:unique]]
+        hand_spawn.usd_path = [
+            str(_batch_usd_paths[index * replicas]) for index in range(unique)
+        ]
         hand_spawn.func(
             f"{source_parent_expression}/Hand",
             hand_spawn,
@@ -805,20 +838,24 @@ class ManoResidualEnv(DirectRLEnv):
         cloner = Cloner(stage=self.scene.stage)
         origins = self.scene.env_origins.detach().cpu().numpy()
         for morphology_index in range(unique):
-            env_indices = [
-                replica * unique + morphology_index
+            begin = morphology_index * replicas
+            env_indices = list(range(begin, begin + replicas))
+            group_path = (
+                f"/World/morphology_groups/morph_{morphology_index:06d}"
+            )
+            prim_paths = [
+                f"{group_path}/env_{replica:03d}"
                 for replica in range(replicas)
             ]
-            prim_paths = [f"/World/envs/env_{index}" for index in env_indices]
             cloner.clone(
                 source_prim_path=prim_paths[0],
                 prim_paths=prim_paths,
                 positions=origins[env_indices],
                 replicate_physics=True,
-                base_env_path="/World/envs",
-                root_path="/World/envs/env",
+                base_env_path=group_path,
+                root_path=f"{group_path}/env",
                 copy_from_source=False,
-                enable_env_ids=True,
+                enable_env_ids=False,
                 clone_in_fabric=False,
             )
         print(
@@ -857,8 +894,14 @@ class ManoResidualEnv(DirectRLEnv):
         stage = self.scene.stage
         resolved_links: list[list[str]] = []
         resolved_joints: list[list[str]] = []
-        for index in range(count):
-            hand_root = f"/World/envs/env_{index}/Hand"
+        replicas = int(manifest.get("morphology_replicas", 1))
+        source_indices = (
+            [index * replicas for index in range(count)]
+            if self._grouped_physics_replicas
+            else list(range(count))
+        )
+        for logical_index, manifest_index in enumerate(source_indices):
+            hand_root = f"{self._environment_root(manifest_index)}/Hand"
             hand_prim = stage.GetPrimAtPath(hand_root)
             if not hand_prim.IsValid():
                 raise ValueError(f"missing spawned morphology hand at {hand_root}")
@@ -890,31 +933,32 @@ class ManoResidualEnv(DirectRLEnv):
                 if len(matches) != 1:
                     raise ValueError(
                         f"cannot uniquely resolve morphology {kind} {raw_name} "
-                        f"at env {index}: {matches}"
+                        f"at env {manifest_index}: {matches}"
                     )
                 return matches[0]
 
             resolved_links.append(
                 [
                     resolve(name, link_children, "link")
-                    for name in manifest["parametric_link_names"][index]
+                    for name in manifest["parametric_link_names"][manifest_index]
                 ]
             )
             resolved_joints.append(
                 [
                     resolve(name, joint_children, "joint")
-                    for name in manifest["parametric_joint_names"][index]
+                    for name in manifest["parametric_joint_names"][manifest_index]
                 ]
             )
         with Sdf.ChangeBlock():
-            for index in range(count):
-                hand_root = f"/World/envs/env_{index}/Hand"
-                links = resolved_links[index]
-                transforms = manifest["parametric_relative_transforms"][index]
-                translations = manifest["parametric_link_translations"][index]
+            for logical_index, manifest_index in enumerate(source_indices):
+                hand_root = f"{self._environment_root(manifest_index)}/Hand"
+                links = resolved_links[logical_index]
+                transforms = manifest["parametric_relative_transforms"][manifest_index]
+                translations = manifest["parametric_link_translations"][manifest_index]
                 if not (len(links) == len(transforms) == len(translations)):
                     raise ValueError(
-                        f"runtime morphology link overlay mismatch at env {index}"
+                        "runtime morphology link overlay mismatch at env "
+                        f"{manifest_index}"
                     )
                 for link_name, transform, translation in zip(
                     links, transforms, translations, strict=True
@@ -937,8 +981,8 @@ class ManoResidualEnv(DirectRLEnv):
                         xform.AddTransformOp(opSuffix="morphology").Set(
                             matrix_value
                         )
-                joint_names = resolved_joints[index]
-                positions = manifest["parametric_joint_local_positions"][index]
+                joint_names = resolved_joints[logical_index]
+                positions = manifest["parametric_joint_local_positions"][manifest_index]
                 if len(joint_names) != len(positions):
                     raise ValueError(
                         f"runtime morphology joint overlay mismatch at env {index}"

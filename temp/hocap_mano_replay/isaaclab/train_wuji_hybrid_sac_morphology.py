@@ -294,6 +294,9 @@ def configure_batch(cfg, manifest: dict) -> None:
     env_module._batch_reference_paths = reference_paths
     env_module.REFERENCE_PATH = reference_paths[0]
     cfg.hand_cfg.spawn.usd_path = [str(path) for path in usd_paths]
+    if manifest.get("grouped_physics_replication", False):
+        cfg.hand_cfg.prim_path = "/World/morphology_groups/morph_.*/env_.*/Hand"
+        cfg.object_cfg.prim_path = "/World/morphology_groups/morph_.*/env_.*/Object"
     cfg.scene.num_envs = len(usd_paths)
     cfg.scene.replicate_physics = False
     cfg.scene.clone_in_fabric = False
@@ -389,29 +392,28 @@ def replicate_manifest(
     if morphology_count != len(global_morphology_indices):
         raise ValueError("global morphology index count does not match manifest")
     result: dict = {}
-    # Replica-major ordering keeps the first ``morphology_count`` environments
-    # as one complete set of unique source morphologies.  The environment can
-    # author/parse those sources once, then clone each source into the later
-    # replica blocks with Isaac Sim's PhysX replication API.
+    # Morphology-major ordering matches the grouped USD namespace:
+    # morphology_i/env_000..env_N.  Each group has one authored source and the
+    # remaining environments are official PhysX replicas of that source.
     for key, value in manifest.items():
         if isinstance(value, list) and len(value) == morphology_count:
-            result[key] = [item for _ in range(replicas) for item in value]
+            result[key] = [item for item in value for _ in range(replicas)]
         else:
             result[key] = value
     result["candidate_ids"] = [
         f"wuji_physx_{global_index:06d}_replica_{replica:03d}"
-        for replica in range(replicas)
         for global_index in global_morphology_indices
+        for replica in range(replicas)
     ]
     result["morphology_indices"] = [
         global_index
-        for _ in range(replicas)
         for global_index in global_morphology_indices
+        for _ in range(replicas)
     ]
     result["replica_indices"] = [
         replica
-        for replica in range(replicas)
         for _ in global_morphology_indices
+        for replica in range(replicas)
     ]
     result["morphology_replicas"] = replicas
     result["unique_morphology_count"] = morphology_count
