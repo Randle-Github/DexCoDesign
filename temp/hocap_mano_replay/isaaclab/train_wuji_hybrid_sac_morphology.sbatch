@@ -32,6 +32,8 @@ GPU_COUNT="${GPU_COUNT:-1}"
 FIXED_REFERENCE="${FIXED_REFERENCE:-}"
 GROUPED_ZERO_ACTION_VECTORS="${GROUPED_ZERO_ACTION_VECTORS:-}"
 FORCE_SOURCE_MORPHOLOGY="${FORCE_SOURCE_MORPHOLOGY:-0}"
+MORPHOLOGY_CONTEXT="${MORPHOLOGY_CONTEXT:-0}"
+FIXED_PPO_VECTORS="${FIXED_PPO_VECTORS:-}"
 PPO_CHECKPOINT="${PPO_CHECKPOINT:-}"
 TARGET_REWARD="${TARGET_REWARD:-inf}"
 KIT_ARGS="${KIT_ARGS:---/log/level=error}"
@@ -57,6 +59,12 @@ if [[ -n "${GROUPED_ZERO_ACTION_VECTORS}" ]]; then
 fi
 if [[ "${FORCE_SOURCE_MORPHOLOGY}" == "1" ]]; then
   EXTRA_ARGS+=(--force-source-morphology)
+fi
+if [[ "${MORPHOLOGY_CONTEXT}" == "1" ]]; then
+  EXTRA_ARGS+=(--morphology-context)
+fi
+if [[ -n "${FIXED_PPO_VECTORS}" ]]; then
+  EXTRA_ARGS+=(--fixed-ppo-vectors "${FIXED_PPO_VECTORS}")
 fi
 if [[ -n "${PPO_CHECKPOINT}" ]]; then
   EXTRA_ARGS+=(--ppo-checkpoint "${PPO_CHECKPOINT}")

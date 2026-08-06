@@ -99,6 +99,16 @@ parser.add_argument(
     ),
 )
 parser.add_argument(
+    "--morphology-context",
+    action="store_true",
+    help="append the normalized morphology design vector to every PPO observation",
+)
+parser.add_argument(
+    "--fixed-ppo-vectors",
+    type=Path,
+    help="fixed heterogeneous vector population for a PPO-only isolation run",
+)
+parser.add_argument(
     "--ppo-checkpoint",
     type=Path,
     help="optional initial shared PPO checkpoint; subsequent generations resume automatically",
@@ -130,6 +140,8 @@ if args_cli.grouped_zero_action_vectors is not None:
     args_cli.grouped_zero_action_vectors = (
         args_cli.grouped_zero_action_vectors.expanduser().resolve()
     )
+if args_cli.fixed_ppo_vectors is not None:
+    args_cli.fixed_ppo_vectors = args_cli.fixed_ppo_vectors.expanduser().resolve()
 if args_cli.ppo_checkpoint is not None:
     args_cli.ppo_checkpoint = args_cli.ppo_checkpoint.expanduser().resolve()
 bank_manifest_path = (
@@ -162,7 +174,13 @@ from gpu_wuji_retarget import (  # noqa: E402
     joint_names_from_seed,
     quat_xyzw_matrix,
 )
-from wuji_morphology_space import SOURCE_VECTOR, resolve_design_vectors  # noqa: E402
+from wuji_morphology_space import (  # noqa: E402
+    LOWER_BOUNDS,
+    SOURCE_VECTOR,
+    UPPER_BOUNDS,
+    VECTOR_NAMES,
+    resolve_design_vectors,
+)
 from wuji_parametric_usd import (  # noqa: E402
     attach_manifest,
     build_hand_super_environment,
@@ -357,6 +375,17 @@ def configure_batch(cfg, manifest: dict) -> None:
     cfg.scene.clone_in_fabric = False
     cfg.randomize_start_phase = False
     cfg.episode_length_s = 15.0
+    context = manifest.get("policy_morphology_context")
+    cfg.morphology_context_dim = 0 if context is None else len(context[0])
+    cfg.observation_space = env_module.OBSERVATION_DIM + cfg.morphology_context_dim
+
+
+def normalized_morphology_context(vectors: np.ndarray) -> np.ndarray:
+    """Preserve ordered design semantics while scaling every value to [-1, 1]."""
+
+    values = np.asarray(vectors, dtype=np.float32)
+    span = (UPPER_BOUNDS - LOWER_BOUNDS).astype(np.float32)
+    return (2.0 * (values - LOWER_BOUNDS) / span - 1.0).astype(np.float32)
 
 
 def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict], float]:
@@ -783,6 +812,19 @@ def shared_ppo_outer_search(
         raise FileNotFoundError(
             f"initial shared PPO checkpoint not found: {args_cli.ppo_checkpoint}"
         )
+    if args_cli.fixed_ppo_vectors is not None:
+        if not args_cli.fixed_ppo_vectors.is_file():
+            raise FileNotFoundError(
+                f"fixed PPO vectors not found: {args_cli.fixed_ppo_vectors}"
+            )
+        fixed_ppo_vectors = np.load(args_cli.fixed_ppo_vectors).astype(np.float32)
+        if fixed_ppo_vectors.shape != (args_cli.population, len(VECTOR_NAMES)):
+            raise ValueError(
+                f"fixed PPO vectors have shape {fixed_ppo_vectors.shape}, expected "
+                f"({args_cli.population}, {len(VECTOR_NAMES)})"
+            )
+    else:
+        fixed_ppo_vectors = None
 
     if rank == 0:
         output.mkdir(parents=True, exist_ok=True)
@@ -848,7 +890,20 @@ def shared_ppo_outer_search(
             generation_root.mkdir(parents=True, exist_ok=True)
             assert optimizer is not None
             proposal = optimizer.propose(generation)
-            if args_cli.force_source_morphology:
+            if fixed_ppo_vectors is not None:
+                proposal = ProposalBatch(
+                    vectors=fixed_ppo_vectors.copy(),
+                    semantic_vectors=resolve_design_vectors(fixed_ppo_vectors).astype(
+                        np.float32
+                    ),
+                    observations=proposal.observations,
+                    actions=proposal.actions,
+                    palm_indices=np.rint(fixed_ppo_vectors[:, 0]).astype(np.int64),
+                    sample_sources=tuple(
+                        "fixed_ppo_population" for _ in range(args_cli.population)
+                    ),
+                )
+            elif args_cli.force_source_morphology:
                 source_vectors = np.repeat(
                     SOURCE_VECTOR[None, :], args_cli.population, axis=0
                 ).astype(np.float32)
@@ -901,6 +956,12 @@ def shared_ppo_outer_search(
             args_cli.morphology_replicas,
             global_indices,
         )
+        if args_cli.morphology_context:
+            expanded_manifest["policy_morphology_context"] = (
+                normalized_morphology_context(
+                    np.asarray(expanded_manifest["vectors"], dtype=np.float32)
+                ).tolist()
+            )
         expanded_manifest_path = rank_root / "prepared/ppo_batch_manifest.json"
         expanded_manifest_path.write_text(
             json.dumps(expanded_manifest, indent=2) + "\n"
@@ -963,7 +1024,7 @@ def shared_ppo_outer_search(
                     "optimizer_update_skipped": True,
                     "reason": "forced_source_morphology_ppo_isolation",
                 }
-                if args_cli.force_source_morphology
+                if args_cli.force_source_morphology or fixed_ppo_vectors is not None
                 else optimizer.observe(generation, proposal, rewards)
             )
             for row in all_rows:
@@ -994,6 +1055,11 @@ def shared_ppo_outer_search(
                 "schema_version": 1,
                 "algorithm": "fixed_reference_shared_ppo_outer_skrl_sac",
                 "force_source_morphology": args_cli.force_source_morphology,
+                "morphology_context": args_cli.morphology_context,
+                "morphology_context_dim": len(VECTOR_NAMES) if args_cli.morphology_context else 0,
+                "fixed_ppo_vectors": (
+                    None if args_cli.fixed_ppo_vectors is None else str(args_cli.fixed_ppo_vectors)
+                ),
                 "retarget_performed": False,
                 "fixed_reference": str(fixed_reference),
                 "population": args_cli.population,

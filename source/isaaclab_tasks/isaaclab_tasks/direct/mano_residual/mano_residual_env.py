@@ -167,6 +167,9 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # pose (7), goal thumb/index tip poses (14), goal q (N), goal object
     # pose (7): 2N + 34 values.
     observation_space = OBSERVATION_DIM
+    # Opt-in morphology conditioning. The morphology search driver sets this
+    # to the design-vector width and appends the matching normalized context.
+    morphology_context_dim = 0
     state_space = 0
 
     sim: SimulationCfg = SimulationCfg(
@@ -370,6 +373,16 @@ class ManoResidualEnv(DirectRLEnv):
             and MORPHOLOGY_BATCH_MANIFEST is not None
             and MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
         )
+        context = (
+            MORPHOLOGY_BATCH_MANIFEST.get("policy_morphology_context")
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else None
+        )
+        self._morphology_context_cpu = (
+            None
+            if context is None
+            else torch.as_tensor(context, dtype=torch.float32)
+        )
         self._reference_joint_names = reference["joint_names"].tolist()
         self._action_joint_names = (
             reference["action_joint_names"].tolist()
@@ -477,6 +490,18 @@ class ManoResidualEnv(DirectRLEnv):
             self.device
         )
         self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
+        self.morphology_context = (
+            None
+            if self._morphology_context_cpu is None
+            else self._morphology_context_cpu.to(self.device)
+        )
+        if self.morphology_context is not None:
+            expected = (self.num_envs, self.cfg.morphology_context_dim)
+            if tuple(self.morphology_context.shape) != expected:
+                raise RuntimeError(
+                    f"morphology context has shape {tuple(self.morphology_context.shape)}, "
+                    f"expected {expected}"
+                )
 
         limits = self.hand.root_physx_view.get_dof_limits().to(self.device)
         self.joint_lower_limits = limits[..., 0]
@@ -1212,6 +1237,8 @@ class ManoResidualEnv(DirectRLEnv):
             ),
             dim=-1,
         )
+        if self.morphology_context is not None:
+            observation = torch.cat((observation, self.morphology_context), dim=-1)
         return {"policy": observation}
 
     def _compute_object_errors(self) -> None:
