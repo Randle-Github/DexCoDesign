@@ -21,7 +21,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
-from isaacsim.core.cloner import Cloner
+from isaacsim.core.cloner import GridCloner
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -870,32 +870,26 @@ class ManoResidualEnv(DirectRLEnv):
             raise ValueError(
                 f"grouped morphology shape {unique}x{replicas} != {self.num_envs}"
             )
-        cloner = Cloner(stage=self.scene.stage)
         local_origins = self._morphology_local_origins
         local_extent = local_origins.max(axis=0) - local_origins.min(axis=0)
         block_spacing = float(max(local_extent[:2]) + self.cfg.scene.env_spacing * 2.0)
-        replica_per_row = int(math.ceil(math.sqrt(replicas)))
-        block_origins = np.zeros((replicas, 3), dtype=np.float32)
-        for replica_index in range(replicas):
-            row, column = divmod(replica_index, replica_per_row)
-            block_origins[replica_index, :2] = (
-                column * block_spacing,
-                row * block_spacing,
-            )
+        cloner = GridCloner(spacing=block_spacing, stage=self.scene.stage)
         prim_paths = [
             f"/World/morphology_batch/replica_{replica:03d}"
             for replica in range(replicas)
         ]
-        cloner.clone(
-            source_prim_path=prim_paths[0],
-            prim_paths=prim_paths,
-            positions=block_origins,
-            replicate_physics=True,
-            base_env_path="/World/morphology_batch",
-            root_path="/World/morphology_batch/replica",
-            copy_from_source=False,
-            enable_env_ids=False,
-            clone_in_fabric=False,
+        block_origins = np.asarray(
+            cloner.clone(
+                source_prim_path=prim_paths[0],
+                prim_paths=prim_paths,
+                replicate_physics=True,
+                base_env_path="/World/morphology_batch",
+                root_path="/World/morphology_batch/replica",
+                copy_from_source=False,
+                enable_env_ids=False,
+                clone_in_fabric=False,
+            ),
+            dtype=np.float32,
         )
         flattened_origins = np.concatenate(
             [local_origins + block_origin for block_origin in block_origins], axis=0
