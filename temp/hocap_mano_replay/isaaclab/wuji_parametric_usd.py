@@ -126,7 +126,9 @@ def build_hand_super_environment(
         morph = UsdGeom.Xform.Define(
             stage, f"/SuperEnvironment/morph_{index:06d}"
         )
-        morph.AddTranslateOp().Set(Gf.Vec3d(*local_origins[index]))
+        morph.AddTranslateOp().Set(
+            Gf.Vec3d(*(float(value) for value in local_origins[index]))
+        )
         hand = stage.DefinePrim(
             f"/SuperEnvironment/morph_{index:06d}/Hand", "Xform"
         )
