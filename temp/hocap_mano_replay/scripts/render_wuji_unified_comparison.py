@@ -26,7 +26,7 @@ def main() -> None:
         hand_q = trajectory["hand_q"].astype(np.float64)
         object_pose = trajectory["object_pose_wxyz"].astype(np.float64)
         metadata = json.loads(str(trajectory["metadata_json"]))
-        joint_names = [name.removeprefix("finger__") for name in metadata["joint_names"][6:]]
+        all_joint_names = [name.removeprefix("finger__") for name in metadata["joint_names"]]
         source_format = False
     else:
         diagnostics = np.load(args.source_diagnostics)
@@ -50,7 +50,12 @@ def main() -> None:
         wrist_quaternion = trajectory["wrist_quaternion_xyzw"].astype(np.float64)
         frame_count = len(qpos)
     else:
-        qpos_ids = np.asarray([model.joint(name).qposadr[0] for name in joint_names])
+        root_is_articulated = all(
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name) >= 0
+            for name in all_joint_names[:6]
+        )
+        driven_joint_names = all_joint_names if root_is_articulated else all_joint_names[6:]
+        qpos_ids = np.asarray([model.joint(name).qposadr[0] for name in driven_joint_names])
         frame_count = len(hand_q)
 
     # Force identical colors across source, morphology, and policy scenes.
@@ -90,11 +95,14 @@ def main() -> None:
             data.mocap_quat[wrapper_mocap] = np.roll(wrist_quaternion[frame], 1)
         else:
             q = hand_q[frame]
-            data.qpos[qpos_ids] = q[6:]
-            data.mocap_pos[wrapper_mocap] = q[:3]
-            data.mocap_quat[wrapper_mocap] = np.roll(
-                Rotation.from_euler("XYZ", q[3:6]).as_quat(), 1
-            )
+            if root_is_articulated:
+                data.qpos[qpos_ids] = q
+            else:
+                data.qpos[qpos_ids] = q[6:]
+                data.mocap_pos[wrapper_mocap] = q[:3]
+                data.mocap_quat[wrapper_mocap] = np.roll(
+                    Rotation.from_euler("XYZ", q[3:6]).as_quat(), 1
+                )
         pose = object_pose[frame]
         if object_mocap >= 0:
             data.mocap_pos[object_mocap] = pose[:3]
