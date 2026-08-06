@@ -10,6 +10,7 @@ pinch-contact term.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -20,6 +21,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+from isaacsim.core.cloner import Cloner
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -633,8 +635,27 @@ class ManoResidualEnv(DirectRLEnv):
         return tensor[ids, phases]
 
     def _setup_scene(self) -> None:
-        self.hand = Articulation(self.cfg.hand_cfg)
-        self._apply_morphology_batch_overlays()
+        grouped_replicas = bool(
+            self._morphology_batch
+            and MORPHOLOGY_BATCH_MANIFEST is not None
+            and MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
+        )
+        if grouped_replicas:
+            self._spawn_grouped_morphology_sources()
+            self._apply_morphology_batch_overlays(
+                count=int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+            )
+            self._spawn_support_ground()
+            for index in range(
+                int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+            ):
+                self._filter_hand_support_collisions(
+                    hand_root_path=f"/World/envs/env_{index}/Hand",
+                    support_root_path="/World/ground",
+                )
+        else:
+            self.hand = Articulation(self.cfg.hand_cfg)
+            self._apply_morphology_batch_overlays()
         visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
         if HAND_ID == "mano" and visual_manifest_path.is_file():
             visual_manifest = json.loads(visual_manifest_path.read_text(encoding="utf-8"))
@@ -646,7 +667,16 @@ class ManoResidualEnv(DirectRLEnv):
                     f"/World/envs/env_0/Hand/{link_name}/visual_overlay",
                     visual_cfg,
                 )
-        self.object = RigidObject(self.cfg.object_cfg)
+        if grouped_replicas:
+            self._clone_grouped_morphology_environments()
+            hand_cfg = copy.deepcopy(self.cfg.hand_cfg)
+            hand_cfg.spawn = None
+            object_cfg = copy.deepcopy(self.cfg.object_cfg)
+            object_cfg.spawn = None
+            self.hand = Articulation(hand_cfg)
+            self.object = RigidObject(object_cfg)
+        else:
+            self.object = RigidObject(self.cfg.object_cfg)
         # ContactSensor filtering is one-to-many: its prim_path must resolve to
         # one reporting rigid body per environment.  Use the object as that
         # body and filter its contacts against the two hand-link groups.
@@ -687,27 +717,18 @@ class ManoResidualEnv(DirectRLEnv):
             hand_root_path="/World/envs/env_0/Hand",
             object_root_path="/World/envs/env_0/Object",
         )
-        spawn_ground_plane(
-            prim_path="/World/ground",
-            cfg=GroundPlaneCfg(
-                color=(0.25, 0.27, 0.30),
-                physics_material=sim_utils.RigidBodyMaterialCfg(
-                    static_friction=1.0,
-                    dynamic_friction=1.0,
-                    restitution=0.0,
-                ),
-            ),
-        )
-        hand_roots = (
-            [f"/World/envs/env_{index}/Hand" for index in range(self.num_envs)]
-            if self._morphology_batch
-            else ["/World/envs/env_0/Hand"]
-        )
-        for hand_root in hand_roots:
-            self._filter_hand_support_collisions(
-                hand_root_path=hand_root,
-                support_root_path="/World/ground",
+        if not grouped_replicas:
+            self._spawn_support_ground()
+            hand_roots = (
+                [f"/World/envs/env_{index}/Hand" for index in range(self.num_envs)]
+                if self._morphology_batch
+                else ["/World/envs/env_0/Hand"]
             )
+            for hand_root in hand_roots:
+                self._filter_hand_support_collisions(
+                    hand_root_path=hand_root,
+                    support_root_path="/World/ground",
+                )
         # InteractiveScene already creates all independent environment Xforms
         # before _setup_scene when replicate_physics=False. Re-cloning here
         # would overwrite the deterministic MultiUsdFileCfg assignments.
@@ -721,7 +742,92 @@ class ManoResidualEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=1800.0, color=(0.85, 0.85, 0.85))
         light_cfg.func("/World/Light", light_cfg)
 
-    def _apply_morphology_batch_overlays(self) -> None:
+    def _spawn_support_ground(self) -> None:
+        spawn_ground_plane(
+            prim_path="/World/ground",
+            cfg=GroundPlaneCfg(
+                color=(0.25, 0.27, 0.30),
+                physics_material=sim_utils.RigidBodyMaterialCfg(
+                    static_friction=1.0,
+                    dynamic_friction=1.0,
+                    restitution=0.0,
+                ),
+            ),
+        )
+
+    def _spawn_grouped_morphology_sources(self) -> None:
+        """Spawn only one physical source environment per unique morphology."""
+
+        manifest = MORPHOLOGY_BATCH_MANIFEST
+        assert manifest is not None
+        unique = int(manifest["unique_morphology_count"])
+        source_parent_expression = (
+            "/World/envs/env_(" + "|".join(str(index) for index in range(unique)) + ")"
+        )
+        hand_spawn = copy.deepcopy(self.cfg.hand_cfg.spawn)
+        hand_spawn.usd_path = [str(path) for path in _batch_usd_paths[:unique]]
+        hand_spawn.func(
+            f"{source_parent_expression}/Hand",
+            hand_spawn,
+            replicate_physics=False,
+            clone_in_fabric=False,
+        )
+        object_spawn = copy.deepcopy(self.cfg.object_cfg.spawn)
+        object_spawn.func(
+            f"{source_parent_expression}/Object",
+            object_spawn,
+            replicate_physics=False,
+            clone_in_fabric=False,
+        )
+        print(
+            "[MORPHOLOGY_GROUPED_SOURCES] "
+            f"unique={unique} total_envs={self.num_envs}",
+            flush=True,
+        )
+
+    def _clone_grouped_morphology_environments(self) -> None:
+        """Clone each heterogeneous source into its homogeneous replica group.
+
+        USD geometry and continuous overlays are authored only for the first
+        unique-morphology block.  Isaac Sim then registers one PhysX
+        replication group per source, avoiding independent parsing of every
+        PPO replica.
+        """
+
+        manifest = MORPHOLOGY_BATCH_MANIFEST
+        assert manifest is not None
+        unique = int(manifest["unique_morphology_count"])
+        replicas = int(manifest["morphology_replicas"])
+        if unique * replicas != self.num_envs:
+            raise ValueError(
+                f"grouped morphology shape {unique}x{replicas} != {self.num_envs}"
+            )
+        cloner = Cloner(stage=self.scene.stage)
+        origins = self.scene.env_origins.detach().cpu().numpy()
+        for morphology_index in range(unique):
+            env_indices = [
+                replica * unique + morphology_index
+                for replica in range(replicas)
+            ]
+            prim_paths = [f"/World/envs/env_{index}" for index in env_indices]
+            cloner.clone(
+                source_prim_path=prim_paths[0],
+                prim_paths=prim_paths,
+                positions=origins[env_indices],
+                replicate_physics=True,
+                base_env_path="/World/envs",
+                root_path="/World/envs/env",
+                copy_from_source=False,
+                enable_env_ids=True,
+                clone_in_fabric=False,
+            )
+        print(
+            "[MORPHOLOGY_GROUPED_PHYSX_CLONES] "
+            f"sources={unique} replicas={replicas} total={self.num_envs}",
+            flush=True,
+        )
+
+    def _apply_morphology_batch_overlays(self, count: int | None = None) -> None:
         """Author per-env continuous morphology before PhysX parses the stage.
 
         The discrete palm mesh comes from one of the canonical prototype USDs.
@@ -737,7 +843,7 @@ class ManoResidualEnv(DirectRLEnv):
             and manifest.get("runtime_parametric_overlays", False)
         ):
             return
-        count = len(manifest["hand_usd_paths"])
+        count = len(manifest["hand_usd_paths"]) if count is None else count
         required = (
             "parametric_link_names",
             "parametric_relative_transforms",
@@ -746,7 +852,7 @@ class ManoResidualEnv(DirectRLEnv):
             "parametric_joint_local_positions",
         )
         for key in required:
-            if len(manifest[key]) != count:
+            if len(manifest[key]) < count:
                 raise ValueError(f"runtime morphology overlay count mismatch for {key}")
         stage = self.scene.stage
         resolved_links: list[list[str]] = []
