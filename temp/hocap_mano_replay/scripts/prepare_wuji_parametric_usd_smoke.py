@@ -70,6 +70,11 @@ def main() -> int:
     parser.add_argument("--direct-candidate-assets", type=Path)
     parser.add_argument("--prototype-bank-manifest", type=Path)
     parser.add_argument("--prototype-bank-compiled", type=Path)
+    parser.add_argument(
+        "--materialize-candidate-assets",
+        action="store_true",
+        help="copy prototype USDs and author exact overlays into candidate-local assets",
+    )
     args = parser.parse_args()
 
     root = args.output_root.resolve()
@@ -187,7 +192,7 @@ def main() -> int:
         urdfs.append("")
         candidate_usd = candidate_root / "asset" / "hand.usd"
         if not args.direct_template and args.direct_candidate_assets is None:
-            if bank_rows is not None:
+            if bank_rows is not None and not args.materialize_candidate_assets:
                 # Spawn the canonical prototype directly. The environment
                 # authors candidate-local continuous morphology overrides on
                 # each env prim before simulation starts. Repeated paths can
@@ -302,7 +307,9 @@ def main() -> int:
         "parametric_joint_names": joint_names,
         "parametric_joint_local_positions": joint_local_positions,
         "all_candidates_require_physical_rollout": True,
-        "runtime_parametric_overlays": bank_rows is not None,
+        "runtime_parametric_overlays": (
+            bank_rows is not None and not args.materialize_candidate_assets
+        ),
         "fixed_reference": (
             str(fixed_reference) if fixed_reference is not None else None
         ),

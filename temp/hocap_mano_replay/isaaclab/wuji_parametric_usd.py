@@ -105,3 +105,31 @@ def attach_manifest(manifest: dict) -> float:
         )
     return time.perf_counter() - start
 
+
+def build_hand_super_environment(
+    manifest: dict,
+    output: Path,
+    spacing: float,
+) -> tuple[Path, np.ndarray]:
+    """Compose exact candidate hand USDs into one static replication source."""
+
+    count = len(manifest["hand_usd_paths"])
+    per_row = int(np.ceil(np.sqrt(count)))
+    local_origins = np.zeros((count, 3), dtype=np.float32)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    stage = Usd.Stage.CreateNew(str(output))
+    root = UsdGeom.Xform.Define(stage, "/SuperEnvironment").GetPrim()
+    stage.SetDefaultPrim(root)
+    for index, usd_value in enumerate(manifest["hand_usd_paths"]):
+        row, column = divmod(index, per_row)
+        local_origins[index, :2] = (column * spacing, row * spacing)
+        morph = UsdGeom.Xform.Define(
+            stage, f"/SuperEnvironment/morph_{index:06d}"
+        )
+        morph.AddTranslateOp().Set(Gf.Vec3d(*local_origins[index]))
+        hand = stage.DefinePrim(
+            f"/SuperEnvironment/morph_{index:06d}/Hand", "Xform"
+        )
+        hand.GetReferences().AddReference(str(Path(usd_value).resolve()))
+    stage.GetRootLayer().Save()
+    return output.resolve(), local_origins

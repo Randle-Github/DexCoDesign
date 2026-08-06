@@ -143,7 +143,10 @@ from gpu_wuji_retarget import (  # noqa: E402
     quat_xyzw_matrix,
 )
 from wuji_morphology_space import resolve_design_vectors  # noqa: E402
-from wuji_parametric_usd import attach_manifest  # noqa: E402
+from wuji_parametric_usd import (  # noqa: E402
+    attach_manifest,
+    build_hand_super_environment,
+)
 from skrl_sac_wuji_morphology import (  # noqa: E402
     ProposalBatch,
     SkrlConditionalMorphologySAC,
@@ -267,6 +270,8 @@ def prepare_assets(
         prepare_command.extend(("--fixed-reference", str(fixed_reference)))
     elif retarget_path is None:
         raise ValueError("retarget_path is required without fixed_reference")
+    if args_cli.shared_ppo_iterations and args_cli.morphology_replicas > 1:
+        prepare_command.append("--materialize-candidate-assets")
     run(prepare_command)
     timings["asset_overlay_prepare_seconds"] = time.perf_counter() - start
     manifest_path = prepared / "physx_batch_manifest.json"
@@ -280,6 +285,14 @@ def prepare_assets(
     timings["usd_attach_total_seconds"] = time.perf_counter() - start
     manifest["parametric_template_usd"] = None
     manifest["parametric_template_usd_paths"] = None
+    if args_cli.shared_ppo_iterations and args_cli.morphology_replicas > 1:
+        super_usd, local_origins = build_hand_super_environment(
+            manifest,
+            prepared / "super_environment" / "hands.usd",
+            spacing=0.65,
+        )
+        manifest["hand_super_environment_usd"] = str(super_usd)
+        manifest["hand_super_environment_origins"] = local_origins.tolist()
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest, timings
 

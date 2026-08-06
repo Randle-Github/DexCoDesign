@@ -807,38 +807,18 @@ class ManoResidualEnv(DirectRLEnv):
         manifest = MORPHOLOGY_BATCH_MANIFEST
         assert manifest is not None
         unique = int(manifest["unique_morphology_count"])
-        replicas = int(manifest["morphology_replicas"])
-        spacing = float(self.cfg.scene.env_spacing)
-        per_row = int(math.ceil(math.sqrt(unique)))
-        local_origins = np.zeros((unique, 3), dtype=np.float32)
-        for morphology_index in range(unique):
-            row, column = divmod(morphology_index, per_row)
-            local_origins[morphology_index, :2] = (
-                column * spacing,
-                row * spacing,
-            )
+        super_usd = manifest.get("hand_super_environment_usd")
+        if not super_usd:
+            raise ValueError("grouped replication requires a static hand super-environment USD")
+        local_origins = np.asarray(
+            manifest["hand_super_environment_origins"][:unique], dtype=np.float32
+        )
         source_replica = "/World/morphology_batch/replica_000"
         sim_utils.create_prim("/World/morphology_batch", "Xform")
-        sim_utils.create_prim(source_replica, "Xform")
-        for morphology_index in range(unique):
-            source_path = (
-                f"{source_replica}/morph_{morphology_index:06d}"
-            )
-            sim_utils.create_prim(
-                source_path,
-                "Xform",
-                translation=tuple(local_origins[morphology_index]),
-            )
+        super_cfg = sim_utils.UsdFileCfg(usd_path=str(Path(super_usd).resolve()))
+        super_cfg.func(source_replica, super_cfg)
         source_parent_expression = (
             "/World/morphology_batch/replica_000/morph_.*"
-        )
-        hand_spawn = copy.deepcopy(self.cfg.hand_cfg.spawn)
-        hand_spawn.usd_path = [str(path) for path in _batch_usd_paths[:unique]]
-        hand_spawn.func(
-            f"{source_parent_expression}/Hand",
-            hand_spawn,
-            replicate_physics=False,
-            clone_in_fabric=False,
         )
         object_spawn = copy.deepcopy(self.cfg.object_cfg.spawn)
         object_spawn.func(
