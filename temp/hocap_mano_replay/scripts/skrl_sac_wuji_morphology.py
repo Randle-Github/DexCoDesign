@@ -100,6 +100,9 @@ class SkrlConditionalMorphologySAC:
         gradient_steps: int,
         batch_size: int,
         uniform_fraction: float,
+        elite_mutation_fraction: float,
+        elite_replay_fraction: float,
+        elite_mutation_sigma: float,
         reward_scale: float,
         seed: int,
         output_root: Path,
@@ -107,14 +110,25 @@ class SkrlConditionalMorphologySAC:
     ) -> None:
         if not 0.0 <= uniform_fraction <= 1.0:
             raise ValueError("uniform_fraction must be in [0, 1]")
+        if not 0.0 <= elite_mutation_fraction <= 1.0:
+            raise ValueError("elite_mutation_fraction must be in [0, 1]")
+        if not 0.0 <= elite_replay_fraction <= 1.0:
+            raise ValueError("elite_replay_fraction must be in [0, 1]")
+        if uniform_fraction + elite_mutation_fraction + elite_replay_fraction >= 1.0:
+            raise ValueError("proposal mixture fractions must sum to less than 1")
         self.population = int(population)
         self.generations = int(generations)
         self.uniform_fraction = float(uniform_fraction)
+        self.elite_mutation_fraction = float(elite_mutation_fraction)
+        self.elite_replay_fraction = float(elite_replay_fraction)
+        self.elite_mutation_sigma = float(elite_mutation_sigma)
         self.reward_scale = float(reward_scale)
         self.seed = int(seed)
         self.output_root = Path(output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.device = torch.device(device)
+        self.archive_actions = np.empty((0, ACTION_DIM), dtype=np.float32)
+        self.archive_rewards = np.empty(0, dtype=np.float32)
         self.observation_space = gym.spaces.Box(
             low=-1.0,
             high=1.0,
@@ -236,14 +250,44 @@ class SkrlConditionalMorphologySAC:
         sources = np.full(self.population, "skrl_policy", dtype=object)
         random_count = int(round(self.population * self.uniform_fraction))
         rng = np.random.default_rng(self.seed + 100_000 + generation)
+        available = np.arange(1, self.population)
+        rng.shuffle(available)
+        cursor = 0
         if random_count:
-            selected = rng.choice(self.population, size=random_count, replace=False)
+            selected = available[cursor : cursor + random_count]
+            cursor += random_count
             actions[selected] = torch.from_numpy(
                 rng.uniform(-1.0, 1.0, (random_count, ACTION_DIM)).astype(
                     np.float32
                 )
             ).to(self.device)
             sources[selected] = "uniform"
+
+        if len(self.archive_actions):
+            mutation_count = int(
+                round(self.population * self.elite_mutation_fraction)
+            )
+            replay_count = int(round(self.population * self.elite_replay_fraction))
+            mutation_indices = available[cursor : cursor + mutation_count]
+            cursor += mutation_count
+            replay_indices = available[cursor : cursor + replay_count]
+            elite_count = min(16, len(self.archive_actions))
+            parent_indices = rng.integers(0, elite_count, size=len(mutation_indices))
+            mutated = self.archive_actions[parent_indices] + rng.normal(
+                0.0,
+                self.elite_mutation_sigma,
+                size=(len(mutation_indices), ACTION_DIM),
+            ).astype(np.float32)
+            actions[mutation_indices] = torch.from_numpy(
+                np.clip(mutated, -1.0, 1.0)
+            ).to(self.device)
+            sources[mutation_indices] = "elite_mutation"
+            if len(replay_indices):
+                replay_choices = np.arange(len(replay_indices)) % elite_count
+                actions[replay_indices] = torch.from_numpy(
+                    self.archive_actions[replay_choices]
+                ).to(self.device)
+                sources[replay_indices] = "elite_replay"
 
         # Preserve an exact source-hand baseline in every generation.
         observations[0].fill_(1.0)
@@ -297,6 +341,30 @@ class SkrlConditionalMorphologySAC:
         self.agent.post_interaction(
             timestep=generation, timesteps=self.generations
         )
+        candidate_actions = proposal.actions.detach().cpu().numpy().astype(np.float32)
+        candidate_rewards = np.asarray(rewards, dtype=np.float32)
+        all_actions = np.concatenate((self.archive_actions, candidate_actions), axis=0)
+        all_rewards = np.concatenate((self.archive_rewards, candidate_rewards), axis=0)
+        order = np.argsort(all_rewards)[::-1]
+        # Keep a small, deduplicated high-value archive. Exact replay estimates
+        # robustness; local mutation supplies dense critic data near good modes.
+        kept: list[int] = []
+        seen: set[bytes] = set()
+        for index in order:
+            key = np.round(all_actions[index], 5).tobytes()
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(int(index))
+            if len(kept) == 64:
+                break
+        self.archive_actions = all_actions[kept]
+        self.archive_rewards = all_rewards[kept]
+        np.savez_compressed(
+            self.output_root / "elite_archive.npz",
+            actions=self.archive_actions,
+            rewards=self.archive_rewards,
+        )
         checkpoint = self.output_root / "skrl_sac_agent.pt"
         self.agent.save(str(checkpoint))
         status = {
@@ -307,6 +375,10 @@ class SkrlConditionalMorphologySAC:
             "gradient_steps": int(self.agent.cfg.gradient_steps),
             "batch_size": int(self.agent.cfg.batch_size),
             "uniform_fraction": self.uniform_fraction,
+            "elite_mutation_fraction": self.elite_mutation_fraction,
+            "elite_replay_fraction": self.elite_replay_fraction,
+            "elite_mutation_sigma": self.elite_mutation_sigma,
+            "elite_archive_size": len(self.archive_actions),
             "reward_scale": self.reward_scale,
             "palm_representation": "continuous_action_quantized_at_physx_boundary",
             "terminal_one_step_transitions": True,

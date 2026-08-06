@@ -38,6 +38,9 @@ parser.add_argument(
 parser.add_argument("--sac-updates", type=int, default=400)
 parser.add_argument("--sac-batch-size", type=int, default=1024)
 parser.add_argument("--uniform-fraction", type=float, default=0.15)
+parser.add_argument("--elite-mutation-fraction", type=float, default=0.30)
+parser.add_argument("--elite-replay-fraction", type=float, default=0.05)
+parser.add_argument("--elite-mutation-sigma", type=float, default=0.12)
 parser.add_argument("--reward-scale", type=float, default=0.01)
 parser.add_argument(
     "--optimizer-backend",
@@ -345,6 +348,9 @@ def main(env_cfg, _agent_cfg) -> None:
             gradient_steps=args_cli.sac_updates,
             batch_size=args_cli.sac_batch_size,
             uniform_fraction=args_cli.uniform_fraction,
+            elite_mutation_fraction=args_cli.elite_mutation_fraction,
+            elite_replay_fraction=args_cli.elite_replay_fraction,
+            elite_mutation_sigma=args_cli.elite_mutation_sigma,
             reward_scale=args_cli.reward_scale,
             seed=args_cli.seed,
             output_root=output,
