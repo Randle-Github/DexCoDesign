@@ -8,45 +8,28 @@ an experimental baseline through `--optimizer-backend custom`.
 
 ## Search space
 
-The WUJI reshape vector has one discrete and thirteen continuous variables:
+The WUJI semantic reshape vector has fourteen continuous variables:
 
-- `palm_expansion_index`: one of 32 precompiled, physically valid palm
-  prototypes spanning expansion `[0.00, 0.70]`.
+- `palm_expansion`: an ordered scalar spanning `[0.00, 0.70]`.
 - palm scale X/Z and palm yaw.
 - independent length and radius scales for the five fingers.
 
-The palm index is intentionally not represented as a continuous SAC action and
-rounded afterward. Rounding would map many actions to the same physical hand,
-which makes the actor gradient ambiguous near prototype boundaries. A custom
-Gumbel-softmax or hybrid categorical SAC would reintroduce an unmaintained RL
-core.
-
-Instead, every generation uses exact stratified enumeration:
-
-1. The 32 palm prototypes are scheduled uniformly and shuffled.
-2. The palm index is encoded as a one-hot observation/context for SKRL SAC.
-3. SKRL SAC outputs only the thirteen continuous morphology variables,
-   conditioned on that palm context.
-4. With the default population of 4,096, every palm prototype receives exactly
-   128 candidates per generation.
-5. Candidate zero is always the exact unmodified source hand, so pure replay is
-   measured in every generation.
-
-This is the selected production treatment for the discrete palm variable. It
-guarantees coverage, avoids aliased actions, keeps the SAC actor/critics inside
-the mature SKRL implementation, and allows the final selection to compare all
-32 real palm collision geometries. If future graph grammars contain too many
-discrete choices for exact stratification, retain a nonzero quota for every
-choice and allocate only the remaining candidates with a bandit scheduler; do
-not round continuous SAC actions into categorical structures.
+SKRL SAC outputs all fourteen ordered continuous values. Only the PhysX
+execution boundary maps palm expansion to the nearest of 32 precompiled
+collision prototypes. Replay retains the requested continuous expansion, the
+realized prototype index, and the measured physical reward. Thus the critic can
+learn a smooth ordered value landscape without treating neighboring expansion
+values as unrelated one-hot categories. Candidate zero remains the exact
+unmodified source hand. Finalists can be recompiled with their exact continuous
+palm expansion rather than the search-time collision approximation.
 
 ## Per-generation pipeline
 
 `train_wuji_hybrid_sac_morphology.py` owns one Isaac application and one Slurm
 allocation for the complete search:
 
-1. `SkrlConditionalMorphologySAC.propose` samples continuous actions for the
-   balanced palm contexts and reserves 15% uniform exploration.
+1. `SkrlConditionalMorphologySAC.propose` samples the complete continuous
+   morphology action and reserves 15% uniform exploration.
 2. GPU batched IK retargets the full 446-frame Human/MANO command trajectory to
    all candidates, warm-started from the source-hand trajectory.
 3. Graph IR and lightweight runtime overlays are generated for every candidate.

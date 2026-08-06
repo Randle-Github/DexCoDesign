@@ -362,7 +362,9 @@ def main(env_cfg, _agent_cfg) -> None:
             proposal_status = {
                 "backend": "skrl-2.1-sac",
                 "generation": generation,
-                "palm_scheduler": "balanced",
+                "palm_representation": (
+                    "continuous_action_quantized_at_physx_boundary"
+                ),
                 "sample_source_counts": {
                     source: proposal.sample_sources.count(source)
                     for source in sorted(set(proposal.sample_sources))
@@ -458,6 +460,10 @@ def main(env_cfg, _agent_cfg) -> None:
                 index = row["candidate_index"]
                 row["sample_source"] = proposal.sample_sources[index]
                 row["palm_prototype_index"] = int(proposal.palm_indices[index])
+                row["requested_palm_expansion"] = float(
+                    proposal.semantic_vectors[index, 0]
+                )
+                row["semantic_vector"] = proposal.semantic_vectors[index].tolist()
             source_metrics = {}
             for source in sorted(set(proposal.sample_sources)):
                 source_rows = [row for row in rows if row["sample_source"] == source]
@@ -479,7 +485,7 @@ def main(env_cfg, _agent_cfg) -> None:
             "schema_version": 1,
             "backend": "persistent_isaaclab_physx_gpu",
             "algorithm": (
-                "skrl_sac_with_balanced_palm_context"
+                "skrl_sac_with_continuous_palm_action"
                 if skrl_optimizer is not None
                 else "episode_level_hybrid_sac"
             ),
