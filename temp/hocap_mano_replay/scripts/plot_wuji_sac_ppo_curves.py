@@ -219,6 +219,78 @@ def main() -> None:
     fig.savefig(args.output_dir / "sac_reward_curve.png", dpi=180)
     plt.close(fig)
 
+    # Coarse sample-efficiency comparison. One PPO iteration contains 16
+    # control steps in every one of 4096 environments. Each morphology
+    # generation executes one 446-frame reference rollout in 4096 environments.
+    parallel_envs = 4096
+    ppo_steps_per_iteration = 16 * parallel_envs
+    sac_steps_per_generation = 446 * parallel_envs
+    sac_sim_steps = np.concatenate(
+        ([0.0], (generation + 1).astype(np.float64) * sac_steps_per_generation)
+    )
+    sac_best_so_far = np.concatenate(
+        (
+            [args.baseline_reward],
+            np.maximum.accumulate([row["best"] for row in sac_rows]),
+        )
+    )
+    ppo_sim_steps = best_x * ppo_steps_per_iteration
+    sac_limit = float(sac_sim_steps[-1])
+    plot_limit = 4.0 * sac_limit
+    visible = ppo_sim_steps <= plot_limit
+    visible_ppo_steps = ppo_sim_steps[visible]
+    visible_ppo_reward = best_y[visible]
+    if visible_ppo_steps[-1] < plot_limit:
+        visible_ppo_steps = np.append(visible_ppo_steps, plot_limit)
+        visible_ppo_reward = np.append(visible_ppo_reward, visible_ppo_reward[-1])
+    combined_rows = [
+        {"algorithm": "SAC morphology", "sim_steps": int(x), "best_reward": float(y)}
+        for x, y in zip(sac_sim_steps, sac_best_so_far)
+    ] + [
+        {"algorithm": "PPO control", "sim_steps": int(x), "best_reward": float(y)}
+        for x, y in zip(visible_ppo_steps, visible_ppo_reward)
+    ]
+    write_csv(
+        args.output_dir / "sac_ppo_sim_steps.csv",
+        ["algorithm", "sim_steps", "best_reward"],
+        combined_rows,
+    )
+    fig, axis = plt.subplots(figsize=(10.5, 5.8), constrained_layout=True)
+    axis.step(
+        visible_ppo_steps,
+        visible_ppo_reward,
+        where="post",
+        linewidth=2.5,
+        color="#2676bd",
+        label="PPO control · best-so-far",
+    )
+    axis.step(
+        sac_sim_steps,
+        sac_best_so_far,
+        where="post",
+        linewidth=2.5,
+        marker="o",
+        color="#16865c",
+        label="SAC morphology · best-so-far",
+    )
+    axis.axhline(
+        args.baseline_reward,
+        color="#7c8188",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Pure replay = {args.baseline_reward:.2f}",
+    )
+    axis.set(
+        xlabel="Cumulative simulator transitions",
+        ylabel="Best accumulated total reward",
+        xlim=(0, plot_limit),
+    )
+    axis.ticklabel_format(axis="x", style="sci", scilimits=(6, 6))
+    axis.grid(alpha=0.2)
+    axis.legend(frameon=False, loc="lower right")
+    fig.savefig(args.output_dir / "sac_ppo_sim_steps.png", dpi=180)
+    plt.close(fig)
+
     summary = {
         "pure_replay_baseline": args.baseline_reward,
         "ppo_final_training_mean": float(reward_mean[-1]),
@@ -227,6 +299,10 @@ def main() -> None:
         "sac_completed_generations": len(sac_rows),
         "sac_latest": sac_rows[-1],
         "sac_best": max(sac_rows, key=lambda row: row["best"]),
+        "sac_sim_step_limit": int(sac_limit),
+        "combined_plot_sim_step_limit": int(plot_limit),
+        "ppo_best_at_plot_limit": float(visible_ppo_reward[-1]),
+        "sac_best_at_sac_limit": float(sac_best_so_far[-1]),
     }
     (args.output_dir / "curve_summary.json").write_text(
         json.dumps(summary, indent=2) + "\n"

@@ -64,7 +64,7 @@ def validate_design_vectors(vectors: np.ndarray) -> np.ndarray:
 
 
 def resolve_design_vectors(vectors: np.ndarray) -> np.ndarray:
-    """Return physical vectors, replacing the palm index by expansion [0, 0.35]."""
+    """Return physical vectors, replacing the palm index by expansion [0, 0.70]."""
     result = validate_design_vectors(vectors).copy()
     result[..., 0] = palm_expansion_from_index(result[..., 0])
     return result
