@@ -15,6 +15,66 @@ from scipy.spatial.transform import Rotation
 from export_compiled_hand_urdf import _inverse_source_linear
 
 
+_TOPOLOGY_REFERENCE_KEYS = (
+    "joint_names",
+    "action_joint_names",
+    "action_to_control_matrix",
+    "fingertip_link_names",
+    "fingertip_offsets",
+    "thumb_contact_link_names",
+    "other_finger_contact_link_names",
+    "contact_link_names",
+    "palm_body_name",
+    "middle_tip_body_name",
+)
+
+
+def save_fixed_reference_for_template(
+    source_path: Path,
+    template_path: Path,
+    output: Path,
+) -> None:
+    """Keep task trajectories while adopting the morphology asset topology.
+
+    All morphology candidates share the prototype-bank articulation topology.
+    A retargeted all-hands reference instead names joints and links through its
+    wrapper (for example ``finger__l_*`` and ``hand__l_*``).  The two arrays
+    have the same ordered control semantics, so only topology metadata must be
+    replaced; task-specific commands and world-space targets remain untouched.
+    """
+    with np.load(source_path) as source:
+        values = {key: source[key] for key in source.files}
+    with np.load(template_path) as template:
+        missing = [key for key in _TOPOLOGY_REFERENCE_KEYS if key not in template]
+        if missing:
+            raise ValueError(f"template reference lacks topology fields: {missing}")
+        for key in _TOPOLOGY_REFERENCE_KEYS:
+            values[key] = template[key]
+
+    hand_q = np.asarray(values["hand_q"])
+    hand_ctrl = np.asarray(values["hand_ctrl"])
+    joint_names = np.asarray(values["joint_names"])
+    action_joint_names = np.asarray(values["action_joint_names"])
+    action_to_control = np.asarray(values["action_to_control_matrix"])
+    if hand_q.shape != hand_ctrl.shape or hand_q.ndim != 2:
+        raise ValueError(
+            f"fixed reference hand_q/hand_ctrl mismatch: {hand_q.shape}, "
+            f"{hand_ctrl.shape}"
+        )
+    if hand_q.shape[1] != len(joint_names):
+        raise ValueError(
+            f"fixed reference has {hand_q.shape[1]} controls but template has "
+            f"{len(joint_names)} joints"
+        )
+    if action_to_control.shape != (len(joint_names), len(action_joint_names)):
+        raise ValueError(
+            "template action_to_control_matrix is incompatible with its "
+            "joint/action metadata"
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(output, **values)
+
+
 def save_reference(
     template_path: Path,
     output: Path,
@@ -89,6 +149,12 @@ def main() -> int:
     if fixed_reference is not None:
         if not fixed_reference.is_file():
             parser.error(f"fixed reference does not exist: {fixed_reference}")
+        compatible_fixed_reference = root / "fixed_reference.npz"
+        save_fixed_reference_for_template(
+            fixed_reference,
+            args.template_reference.expanduser().resolve(),
+            compatible_fixed_reference,
+        )
         vector_values = np.load(args.retarget_batch)
         count = min(args.limit, len(vector_values))
         vectors = vector_values[:count].astype(np.float64)
@@ -175,7 +241,7 @@ def main() -> int:
             }
         }
         if fixed_reference is not None:
-            reference = fixed_reference
+            reference = compatible_fixed_reference
         else:
             reference = candidate_root / "reference.npz"
             assert qpos is not None
@@ -311,7 +377,9 @@ def main() -> int:
             bank_rows is not None and not args.materialize_candidate_assets
         ),
         "fixed_reference": (
-            str(fixed_reference) if fixed_reference is not None else None
+            str(compatible_fixed_reference)
+            if fixed_reference is not None
+            else None
         ),
         "retarget_performed": fixed_reference is None,
         "proxy_used": False,
