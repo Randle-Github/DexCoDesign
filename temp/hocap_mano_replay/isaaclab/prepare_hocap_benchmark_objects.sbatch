@@ -22,6 +22,8 @@ source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
 conda activate codesign
 cd "${REPO_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
+RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
+export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${OUTPUT_ROOT}"
 ./isaaclab.sh -p scripts/tools/convert_mesh.py \
   "temp/hocap_mano_replay/data/tasks/models/${OBJECT_ID}/cleaned_mesh_2000.obj" \
