@@ -12,7 +12,7 @@
 
 set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorientation g02_horizontal_reorientation)
+TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorientation g02_horizontal_reorientation g18_container_lift g18_variant_lift g01_large_reorientation)
 INDEX="${SLURM_ARRAY_TASK_ID:?missing array index}"
 TASK_ID="${TASK_IDS[INDEX]}"
 HAND_ID_OVERRIDE="${HAND_ID_OVERRIDE:-mano}"

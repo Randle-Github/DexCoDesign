@@ -33,6 +33,13 @@ def main() -> None:
     for task in manifest["tasks"]:
         task_id = str(task["task_id"])
         task_root = ROOT / "data/tasks" / task_id
+        if (
+            (task_root / "isaaclab_reference.npz").is_file()
+            and (task_root / "hand_joints_3d_left.npy").is_file()
+            and (task_root / f"object_pose_{task['object_id']}.npy").is_file()
+        ):
+            print(f"reuse complete task: {task_root}", flush=True)
+            continue
         # The first extraction provides calibration needed to transform labels.
         run(
             SCRIPTS / "prepare_hocap_task_subset.py",

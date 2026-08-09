@@ -56,6 +56,39 @@
       "camera": "037522251142",
       "window_start": "auto",
       "role": "new_candidate"
+    },
+    {
+      "task_id": "g18_container_lift",
+      "sequence": "subject_7/20231023_162803",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G18_1",
+      "object_slot": 0,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "fallback_candidate"
+    },
+    {
+      "task_id": "g18_variant_lift",
+      "sequence": "subject_1/20231025_165502",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G18_4",
+      "object_slot": 3,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "fallback_candidate"
+    },
+    {
+      "task_id": "g01_large_reorientation",
+      "sequence": "subject_7/20231022_190534",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G01_3",
+      "object_slot": 2,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "fallback_candidate"
     }
   ]
 }
