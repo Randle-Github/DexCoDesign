@@ -12,7 +12,7 @@
 
 set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorientation g02_horizontal_reorientation g18_container_lift g18_variant_lift g01_large_reorientation)
+TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorientation g02_horizontal_reorientation g18_container_lift g18_variant_lift g01_large_reorientation g01_early_reorientation)
 TASK_ID="${TASK_IDS[${SLURM_ARRAY_TASK_ID:?missing array index}]}"
 CAPTURE="${REPO_ROOT}/temp/hocap_mano_replay/data/tasks/${TASK_ID}/isaaclab_reference.npz"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/hocap_multitask/prepared/${TASK_ID}"

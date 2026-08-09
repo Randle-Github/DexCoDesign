@@ -89,6 +89,17 @@
       "camera": "037522251142",
       "window_start": "auto",
       "role": "fallback_candidate"
+    },
+    {
+      "task_id": "g01_early_reorientation",
+      "sequence": "subject_7/20231022_190534",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G01_3",
+      "object_slot": 2,
+      "camera": "037522251142",
+      "window_start": 843,
+      "role": "fallback_nonoverlap_candidate"
     }
   ]
 }

@@ -12,8 +12,8 @@
 
 set -euo pipefail
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorientation g02_horizontal_reorientation g18_container_lift g18_variant_lift g01_large_reorientation)
-OBJECT_IDS=(G04_1 G15_2 G06_3 G19_3 G02_1 G18_1 G18_4 G01_3)
+TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorientation g02_horizontal_reorientation g18_container_lift g18_variant_lift g01_large_reorientation g01_early_reorientation)
+OBJECT_IDS=(G04_1 G15_2 G06_3 G19_3 G02_1 G18_1 G18_4 G01_3 G01_3)
 INDEX="${SLURM_ARRAY_TASK_ID:?missing array index}"
 TASK_ID="${TASK_IDS[INDEX]}"
 OBJECT_ID="${OBJECT_IDS[INDEX]}"
