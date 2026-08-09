@@ -29,6 +29,6 @@ mkdir -p "${OUTPUT_ROOT}"
   "temp/hocap_mano_replay/data/tasks/models/${OBJECT_ID}/cleaned_mesh_2000.obj" \
   "${OUTPUT_ROOT}/object.usd" \
   --collision-approximation convexDecomposition --mass 0.015 --headless
-test -s "${OUTPUT_ROOT}/configuration/object_physics.usd"
+test -s "${OUTPUT_ROOT}/object.usd"
 touch "${OUTPUT_ROOT}/.ready"
 printf 'HOCAP_OBJECT_READY task=%s object=%s usd=%s\n' "${TASK_ID}" "${OBJECT_ID}" "${OUTPUT_ROOT}/object.usd"
