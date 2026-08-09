@@ -47,6 +47,13 @@ MANO_REFERENCE_PATH = (
     / "20231022_192832"
     / "isaaclab_reference.npz"
 )
+REFERENCE_PATH_OVERRIDE = os.environ.get("DEXCODESIGN_REFERENCE_PATH")
+OBJECT_USD_PATH = Path(
+    os.environ.get(
+        "DEXCODESIGN_OBJECT_USD_PATH",
+        str(ASSET_ROOT / "g04_1.usd"),
+    )
+).expanduser().resolve()
 ALL_HAND_ROOT = REPO_ROOT / "artifacts" / "isaaclab_all_hands_residual"
 MORPHOLOGY_BATCH_MANIFEST_PATH = os.environ.get(
     "DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"
@@ -75,7 +82,11 @@ else:
     _batch_reference_paths = []
     HAND_ID = os.environ.get("DEXCODESIGN_HAND_ID", "mano")
 if HAND_ID == "mano":
-    REFERENCE_PATH = MANO_REFERENCE_PATH
+    REFERENCE_PATH = (
+        Path(REFERENCE_PATH_OVERRIDE).expanduser().resolve()
+        if REFERENCE_PATH_OVERRIDE
+        else MANO_REFERENCE_PATH
+    )
     HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
     ROOT_POSITION_JOINT_NAMES = ("left_pos_x", "left_pos_y", "left_pos_z")
     ROOT_ROTATION_JOINT_NAMES = ("left_rot_x", "left_rot_y", "left_rot_z")
@@ -111,7 +122,11 @@ else:
         REFERENCE_PATH = _batch_reference_paths[0]
         HAND_USD_PATH = _batch_usd_paths[0]
     else:
-        REFERENCE_PATH = ALL_HAND_ROOT / "prepared" / HAND_ID / "reference.npz"
+        REFERENCE_PATH = (
+            Path(REFERENCE_PATH_OVERRIDE).expanduser().resolve()
+            if REFERENCE_PATH_OVERRIDE
+            else ALL_HAND_ROOT / "prepared" / HAND_ID / "reference.npz"
+        )
         HAND_USD_PATH = ALL_HAND_ROOT / "assets" / HAND_ID / "hand.usd"
     if not REFERENCE_PATH.is_file():
         raise FileNotFoundError(
@@ -257,7 +272,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     object_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/Object",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=str(ASSET_ROOT / "g04_1.usd"),
+            usd_path=str(OBJECT_USD_PATH),
             activate_contact_sensors=True,
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.92, 0.38, 0.08),

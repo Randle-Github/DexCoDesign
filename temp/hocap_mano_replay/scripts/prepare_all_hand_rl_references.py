@@ -546,8 +546,9 @@ def prepare_hand(
     display_name: str,
     capture: np.lib.npyio.NpzFile,
     output_root: Path,
+    retarget_root: Path,
 ) -> dict[str, object]:
-    trajectory_path = RETARGET_ROOT / hand_id / "retargeted_trajectory.npz"
+    trajectory_path = retarget_root / hand_id / "retargeted_trajectory.npz"
     if not trajectory_path.exists():
         raise FileNotFoundError(trajectory_path)
     trajectory = np.load(trajectory_path)
@@ -751,6 +752,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--capture", type=Path, default=DEFAULT_CAPTURE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--retarget-dir", type=Path, default=RETARGET_ROOT)
     parser.add_argument("--hands", nargs="*", default=None)
     args = parser.parse_args()
 
@@ -767,6 +769,7 @@ def main() -> None:
             registry["hands"][hand_id]["display_name"],
             capture,
             args.output_dir,
+            args.retarget_dir,
         )
         manifests[hand_id] = manifest
         print(

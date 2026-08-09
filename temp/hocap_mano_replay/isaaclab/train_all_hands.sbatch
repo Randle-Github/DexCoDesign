@@ -28,11 +28,17 @@ HAND_IDS=(
   inspire_rh56dfx
   mano
 )
-HAND_ID="${HAND_ID_OVERRIDE:-${HAND_IDS[${SLURM_ARRAY_TASK_ID}]}}"
+if [[ -n "${HAND_ID_OVERRIDE:-}" ]]; then
+  HAND_ID="${HAND_ID_OVERRIDE}"
+else
+  HAND_ID="${HAND_IDS[${SLURM_ARRAY_TASK_ID:?missing array index}]}"
+fi
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/isaaclab_all_hands_residual}"
+ALL_HAND_ASSET_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
 RESULT_SET="${RESULT_SET:-results}"
 RESULT_DIR="${OUTPUT_ROOT}/${RESULT_SET}/${HAND_ID}"
+TASK_ID="${TASK_ID:-default_task}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-300}"
 TOTAL_ITERATIONS_BUDGET="${TOTAL_ITERATIONS_BUDGET:-${MAX_ITERATIONS}}"
 RESUME_FROM_RESULT="${RESUME_FROM_RESULT:-0}"
@@ -40,7 +46,7 @@ RUN_SEED="${RUN_SEED:-42}"
 NUM_ENVS_PER_HAND="${NUM_ENVS_PER_HAND:-4096}"
 ALLOW_UNSAFE_HIGH_ENVS="${ALLOW_UNSAFE_HIGH_ENVS:-0}"
 STOP_ON_SUCCESS="${STOP_ON_SUCCESS:-1}"
-RUN_LABEL="${HAND_ID}_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
+RUN_LABEL="${TASK_ID}_${HAND_ID}_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
 SUCCESS_TRAJECTORY="${RESULT_DIR}/successful_rollout.npz"
 BEST_TRAJECTORY="${RESULT_DIR}/farthest_rollout.npz"
 
@@ -70,14 +76,15 @@ export HAND_BEST_ROLLOUT_PATH="${BEST_TRAJECTORY}"
 RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${RESULT_DIR}" "${OUTPUT_ROOT}/slurm"
-printf '{"hand_id":"%s","num_envs":%s,"max_iterations":%s,"total_iterations_budget":%s,"seed":%s,"gpu_concurrency":%s,"slurm_job_id":"%s","slurm_array_task_id":"%s"}\n' \
-  "${HAND_ID}" "${NUM_ENVS_PER_HAND}" "${MAX_ITERATIONS}" \
+printf '{"task_id":"%s","hand_id":"%s","reference_path":"%s","object_usd_path":"%s","num_envs":%s,"max_iterations":%s,"total_iterations_budget":%s,"seed":%s,"gpu_concurrency":%s,"slurm_job_id":"%s","slurm_array_task_id":"%s"}\n' \
+  "${TASK_ID}" "${HAND_ID}" "${DEXCODESIGN_REFERENCE_PATH:-}" \
+  "${DEXCODESIGN_OBJECT_USD_PATH:-}" "${NUM_ENVS_PER_HAND}" "${MAX_ITERATIONS}" \
   "${TOTAL_ITERATIONS_BUDGET}" "${RUN_SEED}" "${GPU_CONCURRENCY:-1}" \
   "${SLURM_JOB_ID:-}" \
-  "${SLURM_ARRAY_TASK_ID}" > "${RESULT_DIR}/training_config.json"
+  "${SLURM_ARRAY_TASK_ID:-0}" > "${RESULT_DIR}/training_config.json"
 
-if [[ ! -f "${OUTPUT_ROOT}/assets/.all_hands_original_human_v2" ]]; then
-  printf 'All-hand assets are not ready: %s\n' "${OUTPUT_ROOT}/assets" >&2
+if [[ ! -f "${ALL_HAND_ASSET_ROOT}/assets/.all_hands_original_human_v2" ]]; then
+  printf 'All-hand assets are not ready: %s\n' "${ALL_HAND_ASSET_ROOT}/assets" >&2
   exit 1
 fi
 if [[ ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/.object_convex_decomposition_v1" ]]; then
@@ -101,7 +108,7 @@ if [[ "${RESUME_FROM_RESULT}" == "1" ]]; then
     exit 1
   fi
   TRAIN_ARGS+=(--checkpoint "${INITIAL_CHECKPOINT}")
-  RUN_LABEL="${HAND_ID}_continued_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
+  RUN_LABEL="${TASK_ID}_${HAND_ID}_continued_max${TOTAL_ITERATIONS_BUDGET}_seed${RUN_SEED}"
   printf 'HAND_RESUME hand_id=%s checkpoint=%s additional_iterations=%s total_budget=%s\n' \
     "${HAND_ID}" "${INITIAL_CHECKPOINT}" "${MAX_ITERATIONS}" \
     "${TOTAL_ITERATIONS_BUDGET}"

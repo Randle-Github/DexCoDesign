@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "target_frames": 446,
+  "tasks": [
+    {
+      "task_id": "g04_pick_place",
+      "sequence": "subject_7/20231022_192832",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G04_1",
+      "object_slot": 0,
+      "camera": "037522251142",
+      "window_start": 0,
+      "role": "existing_baseline"
+    },
+    {
+      "task_id": "g15_vertical_local",
+      "sequence": "subject_1/20231025_165807",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G15_2",
+      "object_slot": 1,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "new_candidate"
+    },
+    {
+      "task_id": "g06_rotation_heavy",
+      "sequence": "subject_2/20231022_201942",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G06_3",
+      "object_slot": 0,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "new_candidate"
+    },
+    {
+      "task_id": "g19_mixed_reorientation",
+      "sequence": "subject_1/20231025_171117",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G19_3",
+      "object_slot": 0,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "new_candidate"
+    },
+    {
+      "task_id": "g02_horizontal_reorientation",
+      "sequence": "subject_7/20231022_193809",
+      "hand_side": "left",
+      "hand_slot": 1,
+      "object_id": "G02_1",
+      "object_slot": 0,
+      "camera": "037522251142",
+      "window_start": "auto",
+      "role": "new_candidate"
+    }
+  ]
+}

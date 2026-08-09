@@ -205,6 +205,7 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--hands", nargs="*", default=None)
     parser.add_argument(
         "--solve-only",
         action="store_true",
@@ -230,6 +231,9 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
     hand_ids = [hand_id for hand_id in registry["hands"] if hand_id != "mano"]
+    if args.hands:
+        requested = set(args.hands)
+        hand_ids = [hand_id for hand_id in hand_ids if hand_id in requested]
     report = {
         "source_reference": str(args.capture),
         "source_metadata": source_metadata,

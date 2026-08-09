@@ -20,17 +20,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay_mujoco import (  # noqa: E402
     HAND_URDF,
     MANO_TIP_LINKS,
-    SEQUENCE_ROOT,
     URDF_CANONICAL_ROTATION,
     mano_fingertip_offsets,
 )
 from retarget_all_hands import (  # noqa: E402
     CACHE_ROOT,
     FINGERS,
-    HAND_JOINTS_WORLD,
     build_hand,
     reference_trajectory,
     solve_frame,
+)
+
+
+DEFAULT_SEQUENCE_ROOT = (
+    EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
 )
 
 
@@ -99,11 +102,17 @@ def reference_fingertip_poses(
 
 
 def build_reference(
+    sequence_root: Path = DEFAULT_SEQUENCE_ROOT,
+    object_pose_path: Path | None = None,
     iterations: int = 32,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
-    mano_pose = np.load(SEQUENCE_ROOT / "mano_pose_left.npy")
-    hand_joints_world = np.load(HAND_JOINTS_WORLD)
-    object_pose = np.load(SEQUENCE_ROOT / "object_pose_G04_1.npy")
+    mano_pose = np.load(sequence_root / "mano_pose_left.npy")
+    hand_joints_world = np.load(sequence_root / "hand_joints_3d_left.npy")
+    if object_pose_path is None:
+        metadata_path = sequence_root / "subset.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        object_pose_path = sequence_root / f"object_pose_{metadata['object_id']}.npy"
+    object_pose = np.load(object_pose_path)
     wrist_pos, wrist_quat, ref_positions, ref_rotations = reference_trajectory(
         mano_pose, hand_joints_world
     )
@@ -217,23 +226,32 @@ def build_reference(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--sequence-root", type=Path, default=DEFAULT_SEQUENCE_ROOT
+    )
+    parser.add_argument("--object-pose", type=Path, default=None)
+    parser.add_argument(
         "--output",
         type=Path,
-        default=SEQUENCE_ROOT / "isaaclab_reference.npz",
+        default=None,
     )
     parser.add_argument("--iterations", type=int, default=32)
     args = parser.parse_args()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    reference, diagnostics = build_reference(iterations=args.iterations)
-    np.savez_compressed(args.output, **reference)
-    diagnostics_path = args.output.with_suffix(".retargeting.json")
+    output = args.output or args.sequence_root / "isaaclab_reference.npz"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    reference, diagnostics = build_reference(
+        sequence_root=args.sequence_root,
+        object_pose_path=args.object_pose,
+        iterations=args.iterations,
+    )
+    np.savez_compressed(output, **reference)
+    diagnostics_path = output.with_suffix(".retargeting.json")
     diagnostics_path.write_text(
         json.dumps(diagnostics, indent=2) + "\n",
         encoding="utf-8",
     )
     print(
         f"Saved {len(reference['hand_q'])} frames, "
-        f"{reference['hand_q'].shape[1]} joints to {args.output}"
+        f"{reference['hand_q'].shape[1]} joints to {output}"
     )
     print(diagnostics_path)
 
