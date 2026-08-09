@@ -16,6 +16,13 @@ TASK_IDS=(g04_pick_place g15_vertical_local g06_rotation_heavy g19_mixed_reorien
 INDEX="${SLURM_ARRAY_TASK_ID:?missing array index}"
 TASK_ID="${TASK_IDS[INDEX]}"
 HAND_ID_OVERRIDE="${HAND_ID_OVERRIDE:-mano}"
+if [[ "${REQUIRE_MANO_SUCCESS:-0}" == "1" && "${HAND_ID_OVERRIDE}" != "mano" ]]; then
+  MANO_STATUS="${REPO_ROOT}/artifacts/hocap_multitask/ppo/${TASK_ID}/mano/training_status.json"
+  python -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["success"] else 3)' "${MANO_STATUS}" || {
+    printf 'HOCAP_SKIPPED_MANO_FAILED task=%s hand=%s status=%s\n' "${TASK_ID}" "${HAND_ID_OVERRIDE}" "${MANO_STATUS}"
+    exit 0
+  }
+fi
 export TASK_ID HAND_ID_OVERRIDE
 export OUTPUT_ROOT="${REPO_ROOT}/artifacts/hocap_multitask/ppo"
 export RESULT_SET="${TASK_ID}"
