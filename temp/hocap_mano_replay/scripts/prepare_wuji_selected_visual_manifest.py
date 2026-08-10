@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
+
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_ROOT.parents[2]
@@ -52,7 +54,7 @@ def main() -> int:
         raise IndexError(f"index {args.index} outside [0, {count})")
 
     hand_id = str(manifest["candidate_ids"][args.index])
-    vector = manifest["vectors"][args.index]
+    vector = np.asarray(manifest["vectors"][args.index], dtype=np.float64)
     graph = vector_to_graph(vector, hand_id)
     graphs_path = root / "graphs.json"
     graphs_path.write_text(
@@ -101,7 +103,7 @@ def main() -> int:
     output = {
         "schema_version": 1,
         "candidate_ids": [hand_id],
-        "vectors": [vector],
+        "vectors": [vector.tolist()],
         "hand_urdf_paths": [str(urdf)],
         "hand_usd_paths": [str(usd)],
         "reference_paths": [str(fixed_reference)],
