@@ -58,8 +58,12 @@ def main() -> int:
     if not 0 <= args.index < count:
         raise IndexError(f"index {args.index} outside [0, {count})")
 
-    hand_id = str(manifest["candidate_ids"][args.index])
+    source_hand_id = str(manifest["candidate_ids"][args.index])
+    # Downstream one-candidate parametric preparation numbers its sole row 0.
+    # Use the same canonical id so the compiled graph lookup is unambiguous.
+    hand_id = "wuji_physx_000000"
     vector = np.asarray(manifest["vectors"][args.index], dtype=np.float64)
+    np.save(root / "vectors.npy", vector[None])
     graph = vector_to_graph(vector, hand_id)
     graphs_path = root / "graphs.json"
     graphs_path.write_text(
@@ -123,6 +127,7 @@ def main() -> int:
         "complete_visual_geometry": not args.physics_only,
         "physics_only": args.physics_only,
         "selected_search_index": args.index,
+        "selected_search_candidate_id": source_hand_id,
     }
     output_path = root / "physx_batch_manifest.json"
     output_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")

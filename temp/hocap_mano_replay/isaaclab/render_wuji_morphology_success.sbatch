@@ -22,6 +22,7 @@ PREPARED="${OUTPUT_ROOT}/prepared"
 MANIFEST="${PREPARED}/physx_batch_manifest.json"
 PHYSICS_PREPARED="${OUTPUT_ROOT}/prepared_physics"
 PHYSICS_MANIFEST="${PHYSICS_PREPARED}/physx_batch_manifest.json"
+BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_32_expanded_0p70}"
 SEARCH_MANIFEST="${SEARCH_ROOT}/${GENERATION_DIR}/prepared/physx_batch_manifest.json"
 CAPTURE_MANIFEST="${OUTPUT_ROOT}/capture_replicas_manifest.json"
 CAPTURE="${OUTPUT_ROOT}/successful_rollout.npz"
@@ -52,21 +53,23 @@ if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
       "${SEARCH_MANIFEST}" \
       --index "${CANDIDATE_INDEX}" \
       --output-root "${PREPARED}"
-    python temp/hocap_mano_replay/scripts/prepare_wuji_selected_visual_manifest.py \
-      "${SEARCH_MANIFEST}" \
-      --index "${CANDIDATE_INDEX}" \
+    python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_usd_smoke.py \
+      "${PREPARED}/vectors.npy" \
+      "${PREPARED}/compiled/compiled_hands.json" \
+      --fixed-reference "${SEARCH_ROOT}/${GENERATION_DIR}/prepared/fixed_reference.npz" \
+      --template-usd "${BANK_ROOT}/prepared/candidates/wuji_physx_000000/asset/hand.usd" \
+      --template-reference "${BANK_ROOT}/prepared/candidates/wuji_physx_000000/prepared/wuji_physx_000000/reference.npz" \
+      --prototype-bank-manifest "${BANK_ROOT}/prepared/physx_batch_manifest.json" \
+      --prototype-bank-compiled "${BANK_ROOT}/prepared/compiled/compiled_hands.json" \
       --output-root "${PHYSICS_PREPARED}" \
-      --physics-only
+      --limit 1 \
+      --materialize-candidate-assets
   fi
 
   ./isaaclab.sh -p \
     temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
     "${MANIFEST}" --headless
-  if [[ -s "${PHYSICS_MANIFEST}" ]]; then
-    ./isaaclab.sh -p \
-      temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
-      "${PHYSICS_MANIFEST}" --headless
-  else
+  if [[ ! -s "${PHYSICS_MANIFEST}" ]]; then
     PHYSICS_MANIFEST="${MANIFEST}"
   fi
 
