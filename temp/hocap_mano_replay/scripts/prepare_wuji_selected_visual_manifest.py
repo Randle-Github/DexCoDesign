@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -106,22 +107,81 @@ def main() -> int:
         export_command,
         root / "export.log",
     )
-    urdf = runtime / hand_id / "left" / "hand.urdf"
+    raw_urdf = runtime / hand_id / "left" / "hand.urdf"
     usd = root / "asset" / "hand.usd"
     fixed_reference = Path(
         manifest.get("fixed_reference")
         or manifest["reference_paths"][args.index]
     ).expanduser().resolve()
+    # Repackage the already-fixed command trajectory into the generated-hand
+    # wrapper format (6-DoF virtual wrist + contact/body metadata).  This is a
+    # representation conversion only: no IK or retarget optimization runs.
+    with np.load(fixed_reference) as reference:
+        reference_joint_names = reference["joint_names"].astype(str).tolist()
+        reference_hand_q = reference["hand_q"].astype(np.float32)
+    finger_columns = {
+        name.removeprefix("finger__"): index
+        for index, name in enumerate(reference_joint_names)
+        if name.startswith("finger__")
+    }
+    import xml.etree.ElementTree as ET
+
+    raw_joint_names = [
+        str(joint.get("name"))
+        for joint in ET.parse(raw_urdf).getroot().findall("joint")
+        if joint.get("type") != "fixed"
+    ]
+    missing_joints = sorted(set(raw_joint_names) - set(finger_columns))
+    if missing_joints:
+        raise ValueError(
+            f"fixed reference lacks generated finger joints: {missing_joints}"
+        )
+    root_columns = [reference_joint_names.index(name) for name in (
+        "root_pos_x", "root_pos_y", "root_pos_z",
+        "root_rot_x", "root_rot_y", "root_rot_z",
+    )]
+    qpos = np.stack(
+        [reference_hand_q[:, finger_columns[name]] for name in raw_joint_names],
+        axis=1,
+    )
+    wrist_position = reference_hand_q[:, root_columns[:3]]
+    wrist_quaternion = Rotation.from_euler(
+        "XYZ", reference_hand_q[:, root_columns[3:]]
+    ).as_quat().astype(np.float32)
+    trajectory = root / "fixed_command_trajectory.npz"
+    np.savez_compressed(
+        trajectory,
+        qpos=qpos,
+        wrist_position=wrist_position,
+        wrist_quaternion_xyzw=wrist_quaternion,
+        qpos_ids=np.arange(len(raw_joint_names), dtype=np.int64),
+    )
+    wrapped_root = root / "wrapped"
+    run(
+        [
+            sys.executable,
+            str(SCRIPT_ROOT / "prepare_generated_hand_rl_reference.py"),
+            str(runtime),
+            str(trajectory),
+            "--output-dir",
+            str(wrapped_root),
+            "--capture",
+            str(fixed_reference),
+        ],
+        root / "wrap.log",
+    )
+    urdf = wrapped_root / hand_id / "hand_rl.urdf"
+    wrapped_reference = wrapped_root / hand_id / "reference.npz"
     output = {
         "schema_version": 1,
         "candidate_ids": [hand_id],
         "vectors": [vector.tolist()],
         "hand_urdf_paths": [str(urdf)],
         "hand_usd_paths": [str(usd)],
-        "reference_paths": [str(fixed_reference)],
+        "reference_paths": [str(wrapped_reference)],
         "all_candidates_require_physical_rollout": True,
         "runtime_parametric_overlays": False,
-        "fixed_reference": str(fixed_reference),
+        "fixed_reference": str(wrapped_reference),
         "retarget_performed": False,
         "proxy_used": False,
         "complete_visual_geometry": not args.physics_only,
