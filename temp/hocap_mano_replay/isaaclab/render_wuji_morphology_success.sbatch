@@ -33,13 +33,24 @@ export OMNI_KIT_ACCEPT_EULA=YES
 export OMP_NUM_THREADS=1
 
 if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
-  python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
-    "${SEARCH_ROOT}/${GENERATION_DIR}/gpu_retarget_all.npz" \
-    --output-root "${PREPARED}" \
-    --offset "${CANDIDATE_INDEX}" \
-    --limit 1 \
-    --workers 1 \
-    --include-visuals
+  RETARGET_BATCH="${SEARCH_ROOT}/${GENERATION_DIR}/gpu_retarget_all.npz"
+  if [[ -s "${RETARGET_BATCH}" ]]; then
+    python temp/hocap_mano_replay/scripts/prepare_wuji_morphology_physx_batch.py \
+      "${RETARGET_BATCH}" \
+      --output-root "${PREPARED}" \
+      --offset "${CANDIDATE_INDEX}" \
+      --limit 1 \
+      --workers 1 \
+      --include-visuals
+  else
+    # Persistent-scene searches intentionally store a fixed retarget once and
+    # only materialize collision overlays per candidate. Reconstruct the one
+    # selected visual mesh from its vector without running retarget again.
+    python temp/hocap_mano_replay/scripts/prepare_wuji_selected_visual_manifest.py \
+      "${SEARCH_MANIFEST}" \
+      --index "${CANDIDATE_INDEX}" \
+      --output-root "${PREPARED}"
+  fi
 
   ./isaaclab.sh -p \
     temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
