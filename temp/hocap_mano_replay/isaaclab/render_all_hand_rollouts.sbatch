@@ -30,7 +30,7 @@ HAND_IDS=(
 )
 HAND_ID="${HAND_ID_OVERRIDE:-${HAND_IDS[${SLURM_ARRAY_TASK_ID}]}}"
 REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
-OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/isaaclab_all_hands_residual}"
 RESULT_SET="${RESULT_SET:-results}"
 RESULT_DIR="${OUTPUT_ROOT}/${RESULT_SET}/${HAND_ID}"
 STATUS="${RESULT_DIR}/training_status.json"
