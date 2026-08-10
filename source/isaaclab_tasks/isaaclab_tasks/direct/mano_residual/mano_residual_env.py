@@ -1410,7 +1410,17 @@ class ManoResidualEnv(DirectRLEnv):
             self._capture_object_pose[env_ids, self.phase_buf] = object_pose
             successful = end_of_reference & ~invalid & ~object_lost
             if successful.any():
-                success_env_id = int(successful.nonzero(as_tuple=False)[0, 0].item())
+                successful_ids = successful.nonzero(as_tuple=False).flatten()
+                if os.environ.get("HAND_CAPTURE_BEST_SUCCESS", "0") == "1":
+                    success_returns = (
+                        self._capture_pose_reward[successful_ids].sum(dim=1)
+                        + self._capture_contact_reward[successful_ids].sum(dim=1)
+                    )
+                    success_env_id = int(
+                        successful_ids[torch.argmax(success_returns)].item()
+                    )
+                else:
+                    success_env_id = int(successful_ids[0].item())
                 self._save_success_trajectory(success_env_id)
             finished = invalid | object_lost | end_of_reference
             if finished.any():
