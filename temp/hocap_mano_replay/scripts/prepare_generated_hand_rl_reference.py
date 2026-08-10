@@ -54,6 +54,7 @@ def main() -> int:
         metadata["display_name"],
         capture,
         output_dir,
+        retarget_root,
     )
     registry_path = output_dir / "generated_registry.json"
     registry_path.write_text(
