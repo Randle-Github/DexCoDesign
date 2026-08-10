@@ -35,6 +35,16 @@ mkdir -p "${OUTPUT_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
 export OMP_NUM_THREADS=1
 
+if [[ "${RENDER_ONLY:-0}" == "1" && "${PREPARE_RENDER_ONLY:-0}" == "1" ]]; then
+  python temp/hocap_mano_replay/scripts/prepare_wuji_selected_visual_manifest.py \
+    "${SEARCH_MANIFEST}" \
+    --index "${CANDIDATE_INDEX}" \
+    --output-root "${PREPARED}"
+  ./isaaclab.sh -p \
+    temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
+    "${MANIFEST}" --headless
+fi
+
 if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
   RETARGET_BATCH="${SEARCH_ROOT}/${GENERATION_DIR}/gpu_retarget_all.npz"
   if [[ -s "${RETARGET_BATCH}" ]]; then
