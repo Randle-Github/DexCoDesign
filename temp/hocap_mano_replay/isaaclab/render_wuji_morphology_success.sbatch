@@ -57,12 +57,13 @@ if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
     "${MANIFEST}" --headless
 
   python temp/hocap_mano_replay/scripts/repeat_wuji_morphology_manifest.py \
-    "${SEARCH_MANIFEST}" "${CAPTURE_MANIFEST}" \
-    --index "${CANDIDATE_INDEX}" \
+    "${MANIFEST}" "${CAPTURE_MANIFEST}" \
+    --index 0 \
     --repeats "${CAPTURE_REPLICAS}"
 
-  # Capture with the exact physics-only prototype and runtime overlays used by
-  # generation 0. Replicas expose GPU PhysX contact nondeterminism.
+  # Capture the selected candidate's fully materialized mesh.  It is generated
+  # from the exact saved vector and avoids mutating/reusing a shared prototype
+  # USD across replicas. Replicas expose GPU PhysX contact nondeterminism.
   export DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST="${CAPTURE_MANIFEST}"
   export HAND_SUCCESS_TRAJECTORY_PATH="${CAPTURE}"
   export HAND_BEST_ROLLOUT_PATH="${OUTPUT_ROOT}/farthest_rollout.npz"
