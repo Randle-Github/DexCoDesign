@@ -43,6 +43,11 @@ def main() -> int:
     parser.add_argument("search_manifest", type=Path)
     parser.add_argument("--index", type=int, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--physics-only",
+        action="store_true",
+        help="export collision-only URDF/USD for the physical capture scene",
+    )
     args = parser.parse_args()
 
     source = args.search_manifest.expanduser().resolve()
@@ -78,8 +83,7 @@ def main() -> int:
     )
 
     runtime = root / "runtime"
-    run(
-        [
+    export_command = [
             sys.executable,
             str(SCRIPT_ROOT / "export_compiled_hand_urdf.py"),
             str(compiled_root / "compiled_hands.json"),
@@ -91,7 +95,11 @@ def main() -> int:
             hand_id,
             "--display-name",
             hand_id,
-        ],
+        ]
+    if args.physics_only:
+        export_command.append("--physics-only")
+    run(
+        export_command,
         root / "export.log",
     )
     urdf = runtime / hand_id / "left" / "hand.urdf"
@@ -112,7 +120,8 @@ def main() -> int:
         "fixed_reference": str(fixed_reference),
         "retarget_performed": False,
         "proxy_used": False,
-        "complete_visual_geometry": True,
+        "complete_visual_geometry": not args.physics_only,
+        "physics_only": args.physics_only,
         "selected_search_index": args.index,
     }
     output_path = root / "physx_batch_manifest.json"

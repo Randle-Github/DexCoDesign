@@ -20,6 +20,8 @@ CANDIDATE_INDEX="${CANDIDATE_INDEX:-3527}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/success_candidate_003527}"
 PREPARED="${OUTPUT_ROOT}/prepared"
 MANIFEST="${PREPARED}/physx_batch_manifest.json"
+PHYSICS_PREPARED="${OUTPUT_ROOT}/prepared_physics"
+PHYSICS_MANIFEST="${PHYSICS_PREPARED}/physx_batch_manifest.json"
 SEARCH_MANIFEST="${SEARCH_ROOT}/${GENERATION_DIR}/prepared/physx_batch_manifest.json"
 CAPTURE_MANIFEST="${OUTPUT_ROOT}/capture_replicas_manifest.json"
 CAPTURE="${OUTPUT_ROOT}/successful_rollout.npz"
@@ -50,14 +52,26 @@ if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
       "${SEARCH_MANIFEST}" \
       --index "${CANDIDATE_INDEX}" \
       --output-root "${PREPARED}"
+    python temp/hocap_mano_replay/scripts/prepare_wuji_selected_visual_manifest.py \
+      "${SEARCH_MANIFEST}" \
+      --index "${CANDIDATE_INDEX}" \
+      --output-root "${PHYSICS_PREPARED}" \
+      --physics-only
   fi
 
   ./isaaclab.sh -p \
     temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
     "${MANIFEST}" --headless
+  if [[ -s "${PHYSICS_MANIFEST}" ]]; then
+    ./isaaclab.sh -p \
+      temp/hocap_mano_replay/isaaclab/convert_wuji_morphology_physx_batch.py \
+      "${PHYSICS_MANIFEST}" --headless
+  else
+    PHYSICS_MANIFEST="${MANIFEST}"
+  fi
 
   python temp/hocap_mano_replay/scripts/repeat_wuji_morphology_manifest.py \
-    "${MANIFEST}" "${CAPTURE_MANIFEST}" \
+    "${PHYSICS_MANIFEST}" "${CAPTURE_MANIFEST}" \
     --index 0 \
     --repeats "${CAPTURE_REPLICAS}"
 
