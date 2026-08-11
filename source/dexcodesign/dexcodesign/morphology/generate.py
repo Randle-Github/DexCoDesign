@@ -611,11 +611,99 @@ def extra_slot(base_slots: dict[str, dict], palm_linear: np.ndarray) -> dict:
     return target
 
 
+def main_finger_path(source_hand: dict, bundle: dict) -> list[int]:
+    """Return the source root-to-fingertip chain, excluding linkage branches.
+
+    Complete mechanism bundles may contain auxiliary linkage bodies.  The
+    longest root-to-leaf path is the physical digit chain; auxiliary branches
+    remain in the mechanism but never become independent phalanx parameters.
+    """
+    ids = {int(source_id) for source_id in bundle["source_part_ids"]}
+    root = int(bundle["root_part_id"])
+    children: dict[int, list[int]] = defaultdict(list)
+    for source_id in ids:
+        parent = source_hand["parts"][source_id]["parent"]
+        if parent in ids:
+            children[int(parent)].append(source_id)
+
+    paths: list[list[int]] = []
+
+    def visit(source_id: int, path: list[int]) -> None:
+        next_ids = sorted(children[source_id])
+        if not next_ids:
+            paths.append(path)
+            return
+        for child_id in next_ids:
+            visit(child_id, [*path, child_id])
+
+    visit(root, [root])
+    if not paths:
+        raise ValueError(f"{bundle['bundle_id']}: no root-to-leaf path")
+
+    def path_score(path: list[int]) -> tuple[int, float]:
+        return (
+            len(path),
+            sum(float(source_hand["parts"][source_id]["edge_length"]) for source_id in path),
+        )
+
+    return max(paths, key=path_score)
+
+
+def _perpendicular_axis(axis: np.ndarray, preferred: np.ndarray) -> np.ndarray:
+    width = preferred - float(np.dot(preferred, axis)) * axis
+    if np.linalg.norm(width) < 1.0e-8:
+        fallback = np.asarray([1.0, 0.0, 0.0])
+        if abs(float(np.dot(fallback, axis))) > 0.90:
+            fallback = np.asarray([0.0, 1.0, 0.0])
+        width = fallback - float(np.dot(fallback, axis)) * axis
+    return width / np.linalg.norm(width)
+
+
+def _map_connector_point(point: np.ndarray, specification: dict) -> np.ndarray:
+    """Apply the same rigid-cap longitudinal map used by the mesh compiler."""
+    axis = np.asarray(specification["longitudinal_axis"], dtype=float)
+    source_length = float(specification["source_length_canonical"])
+    target_length = float(specification["target_length_canonical"])
+    proximal = float(specification["proximal_cap_fraction"]) * source_length
+    distal = (1.0 - float(specification["distal_cap_fraction"])) * source_length
+    target_middle = target_length - proximal - (source_length - distal)
+    if target_middle <= 0.0:
+        raise ValueError("target segment would invert its rigid connector caps")
+    coordinate = float(np.dot(point, axis))
+    if coordinate <= proximal:
+        mapped = coordinate
+    elif coordinate < distal:
+        mapped = proximal + (coordinate - proximal) * target_middle / (distal - proximal)
+    else:
+        mapped = coordinate + target_length - source_length
+    return point + (mapped - coordinate) * axis
+
+
+def _terminal_segment_profile(source_node: dict, source_axis: np.ndarray) -> tuple[np.ndarray, float]:
+    """Infer a terminal link's outward axis and joint-to-tip source length."""
+    axis = source_axis / np.linalg.norm(source_axis)
+    centroid = np.asarray(source_node["mesh"]["centroid_offset"], dtype=float)
+    if float(np.dot(centroid, axis)) < 0.0:
+        axis = -axis
+    bounds = np.asarray(source_node["mesh"]["bounds"], dtype=float)
+    corners = np.asarray([
+        [x, y, z]
+        for x in bounds[:, 0]
+        for y in bounds[:, 1]
+        for z in bounds[:, 2]
+    ])
+    source_length = float(np.max(corners @ axis))
+    if source_length <= 1.0e-6:
+        raise ValueError(f"part {source_node['id']} has no positive terminal extent")
+    return axis, source_length
+
+
 def instantiate_finger(
     output: list[dict], slot_id: int, output_role: str, target_slot: dict,
     bundle: dict, source_hand: dict, candidates: dict[str, dict],
     length_scale: float, radius_scale: float,
     lock_proximal_hardware: bool = False,
+    segment_parameters: dict[int, dict] | None = None,
 ) -> dict:
     ids = bundle["source_part_ids"]
     block_set = set(ids)
@@ -640,6 +728,52 @@ def instantiate_finger(
         + (length_scale - radius_scale) * np.outer(reference_axis, reference_axis)
     )
     reference_linear = reference_deform @ reference_rotation
+    segment_deformations: dict[int, dict] = {}
+    if segment_parameters is not None:
+        path = main_finger_path(source_hand, bundle)
+        editable_path = path[1:] if lock_proximal_hardware else path
+        if set(segment_parameters) != set(editable_path):
+            raise ValueError(
+                f"{output_role}: segment parameters must cover main path "
+                f"{editable_path}, got {sorted(segment_parameters)}"
+            )
+        for path_index, source_id in enumerate(path):
+            if source_id not in segment_parameters:
+                continue
+            source_node = source_hand["parts"][source_id]
+            terminal = path_index == len(path) - 1
+            if terminal:
+                incoming = np.asarray(source_node["relative_pos"], dtype=float)
+                source_axis, source_length = _terminal_segment_profile(
+                    source_node, incoming
+                )
+            else:
+                child_id = path[path_index + 1]
+                child_offset = np.asarray(
+                    source_hand["parts"][child_id]["relative_pos"], dtype=float
+                )
+                source_length = float(np.linalg.norm(child_offset))
+                if source_length <= 1.0e-8:
+                    raise ValueError(f"{output_role}: coincident main-chain joints")
+                source_axis = child_offset / source_length
+            target_longitudinal = rotation @ source_axis
+            target_joint_axis = rotation @ np.asarray(
+                source_node["joint_axis"], dtype=float
+            )
+            width_axis = _perpendicular_axis(target_longitudinal, target_joint_axis)
+            parameters = segment_parameters[source_id]
+            segment_deformations[source_id] = {
+                "longitudinal_axis": target_longitudinal.tolist(),
+                "width_axis": width_axis.tolist(),
+                "source_length_canonical": source_length,
+                "target_length_canonical": source_length * float(parameters["length_scale"]),
+                "width_scale": float(parameters["width_scale"]),
+                "thickness_scale": 1.0,
+                "proximal_cap_fraction": 0.12,
+                "distal_cap_fraction": 0.0 if terminal else 0.12,
+                "distal_connector_fixed": not terminal,
+                "deform_middle_span_only": True,
+            }
     id_map: dict[int, int] = {}
     root_new_id = None
     for rank, source_id in enumerate(ids):
@@ -648,10 +782,14 @@ def instantiate_finger(
         internal = parent_source in block_set
         new_id = len(output)
         id_map[source_id] = new_id
-        node_linear = rotation if lock_proximal_hardware and rank == 0 else linear
+        if segment_parameters is None:
+            node_linear = rotation if lock_proximal_hardware and rank == 0 else linear
+        else:
+            node_linear = rotation
         node_reference_linear = (
             reference_rotation
-            if lock_proximal_hardware and rank == 0
+            if segment_parameters is not None
+            or (lock_proximal_hardware and rank == 0)
             else reference_linear
         )
         if not internal:
@@ -659,12 +797,24 @@ def instantiate_finger(
             parent = 0
             root_new_id = new_id
         else:
-            relative = linear @ np.asarray(source_node["relative_pos"], dtype=float)
+            source_relative = rotation @ np.asarray(
+                source_node["relative_pos"], dtype=float
+            )
+            if segment_parameters is not None and int(parent_source) in segment_deformations:
+                relative = _map_connector_point(
+                    source_relative, segment_deformations[int(parent_source)]
+                )
+            else:
+                relative = (
+                    linear @ np.asarray(source_node["relative_pos"], dtype=float)
+                    if segment_parameters is None
+                    else source_relative
+                )
             parent = id_map[int(parent_source)]
         candidate_id = f"{bundle['source_hand_id']}:part:{source_id}"
         candidate = candidates[candidate_id]
         axis = rotation @ np.asarray(source_node["joint_axis"], dtype=float)
-        output.append({
+        node_record = {
             "id": new_id,
             "parent": parent,
             "role": output_role,
@@ -683,12 +833,24 @@ def instantiate_finger(
             "compatible_candidate_ids": candidate["compatible_candidate_ids"],
             "mesh_linear": node_linear.tolist(),
             "reference_mesh_linear": node_reference_linear.tolist(),
-            "length_scale": 1.0 if lock_proximal_hardware and rank == 0 else length_scale,
-            "radius_scale": 1.0 if lock_proximal_hardware and rank == 0 else radius_scale,
+            "length_scale": (
+                float(segment_parameters[source_id]["length_scale"])
+                if segment_parameters is not None and source_id in segment_parameters
+                else (1.0 if lock_proximal_hardware and rank == 0 else length_scale)
+            ),
+            "radius_scale": (
+                float(segment_parameters[source_id]["width_scale"])
+                if segment_parameters is not None and source_id in segment_parameters
+                else (1.0 if lock_proximal_hardware and rank == 0 else radius_scale)
+            ),
             "source_rank": rank,
             "protected_proximal_hardware": bool(lock_proximal_hardware and rank == 0),
             "morphology_part": "finger_root_rigid_body" if rank == 0 else "finger_link_rigid_body",
-        })
+        }
+        if source_id in segment_deformations:
+            node_record["connector_cap_deformation"] = segment_deformations[source_id]
+            node_record["main_chain_segment"] = True
+        output.append(node_record)
     return {
         "slot_id": slot_id,
         "role": output_role,
@@ -707,6 +869,7 @@ def instantiate_finger(
         "reference_attachment_rotation": realized_reference_frame.tolist(),
         "connector_transform_applied": True,
         "proximal_hardware_locked": lock_proximal_hardware,
+        "main_finger_path": main_finger_path(source_hand, bundle),
     }
 
 
@@ -1015,21 +1178,76 @@ def main() -> int:
         })
         slots = []
         realized_finger_parameters = {}
+        width_spec = finger_spec.get("width_scales", {})
+        if not isinstance(width_spec, dict):
+            raise ValueError("fingers.width_scales must be an object")
         for slot_id, role in enumerate(base_roles):
             bundle = selected[role]
             role_spec = finger_spec.get(role, {})
             if not isinstance(role_spec, dict):
                 raise ValueError(f"finger specification for {role} must be an object")
+            requested_segments = role_spec.get("length_scales_by_source_part")
+            segment_parameters = None
+            if requested_segments is not None:
+                if not isinstance(requested_segments, dict):
+                    raise ValueError(
+                        f"{role}.length_scales_by_source_part must be an object"
+                    )
+                path = main_finger_path(
+                    sources[bundle["source_hand_id"]], bundle
+                )
+                editable_path = (
+                    path[1:]
+                    if seed_id in PROTECTED_TRANSMISSION_SOURCES
+                    else path
+                )
+                requested = {
+                    int(source_id): float(value)
+                    for source_id, value in requested_segments.items()
+                }
+                if set(requested) != set(editable_path):
+                    raise ValueError(
+                        f"{role} length parameters must cover main-chain parts "
+                        f"{editable_path}, got {sorted(requested)}"
+                    )
+                if any(not 0.55 <= value <= 1.60 for value in requested.values()):
+                    raise ValueError(
+                        f"{role} segment length scales must lie in [0.55, 1.60]"
+                    )
+                normal = role != "thumb"
+                body_width = float(width_spec.get(
+                    "normal_body" if normal else "thumb_body", 1.0
+                ))
+                distal_width = float(width_spec.get(
+                    "normal_distal" if normal else "thumb_distal", 1.0
+                ))
+                if not 0.60 <= body_width <= 1.45 or not 0.60 <= distal_width <= 1.45:
+                    raise ValueError("segment width scales must lie in [0.60, 1.45]")
+                segment_parameters = {
+                    source_id: {
+                        "length_scale": requested[source_id],
+                        "width_scale": (
+                            distal_width if source_id == editable_path[-1] else body_width
+                        ),
+                    }
+                    for source_id in editable_path
+                }
             length_scale = float(
                 role_spec.get(
                     "length_scale",
-                    finger_spec.get("default_length_scale", rng.uniform(0.87, 1.17)),
+                    finger_spec.get(
+                        "default_length_scale",
+                        1.0 if segment_parameters is not None else rng.uniform(0.87, 1.17),
+                    ),
                 )
             )
             radius_scale = float(
                 role_spec.get(
                     "radius_scale",
-                    finger_spec.get("default_radius_scale", rng.uniform(0.88, 1.14)),
+                    finger_spec.get(
+                        "default_radius_scale",
+                        1.0 if segment_parameters is not None else rng.uniform(0.88, 1.14),
+                    ),
                 )
             )
             if not 0.55 <= length_scale <= 1.60:
@@ -1043,12 +1261,14 @@ def main() -> int:
             realized_finger_parameters[role] = {
                 "length_scale": length_scale,
                 "radius_scale": radius_scale,
+                "segment_parameters": segment_parameters,
             }
             slots.append(instantiate_finger(
                 parts, slot_id, role, target_slots[role], bundle,
                 sources[bundle["source_hand_id"]], candidates,
                 length_scale, radius_scale,
                 lock_proximal_hardware=seed_id in PROTECTED_TRANSMISSION_SOURCES,
+                segment_parameters=segment_parameters,
             ))
 
         if len(slots) > MAX_FINGERS:

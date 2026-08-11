@@ -368,6 +368,10 @@ def main() -> int:
             mesh = load_source(source_mesh["file"]).copy()
             linear = np.asarray(node["mesh_linear"], dtype=float)
             mesh.vertices = np.asarray(mesh.vertices, dtype=float) @ linear.T
+            if "connector_cap_deformation" in node:
+                mesh = apply_midas_axis_deformation(
+                    mesh, node["connector_cap_deformation"]
+                )
             if "midas_axis_deformation" in node:
                 mesh = apply_midas_axis_deformation(
                     mesh, node["midas_axis_deformation"]
