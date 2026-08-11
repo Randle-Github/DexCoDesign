@@ -109,11 +109,10 @@ def main() -> int:
             if local_index == 0:
                 layout = "source_fixed"
             else:
-                layout = "symmetric"
+                layout = "anthropomorphic"
             palm = {
                 "layout_mode": layout,
                 "prototype_bank_id": f"{source_id}:palm32",
-                "simulation_radial_layout": layout == "symmetric",
                 **decoded["palm"],
             }
             designs.append({

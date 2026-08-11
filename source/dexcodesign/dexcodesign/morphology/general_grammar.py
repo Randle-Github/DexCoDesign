@@ -13,7 +13,7 @@ import numpy as np
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 NORMAL_FINGERS = ("index", "middle", "ring", "pinky")
 PALM_PROTOTYPES = 32
-PALM_EXPANSION_MAX = 0.70
+PALM_EXPANSION_MAX = 0.35
 
 
 def build_schema(
