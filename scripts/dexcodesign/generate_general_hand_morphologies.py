@@ -23,9 +23,9 @@ from dexcodesign.morphology.general_grammar import (  # noqa: E402
     build_schema,
     decode_vector,
     latin_hypercube_vectors,
-    phalanx_stages,
 )
 from dexcodesign.morphology.generate import (  # noqa: E402
+    BOUNDED_PALM_LAYOUT_SOURCES,
     PROTECTED_TRANSMISSION_SOURCES,
 )
 
@@ -84,15 +84,15 @@ def main() -> int:
         if count == 0:
             continue
         protected = source_id in PROTECTED_TRANSMISSION_SOURCES
-        stages = {
-            role: phalanx_stages(
-                len(bundles[f"{source_id}:{role}"]["source_part_ids"]),
-                protected_root=protected,
-            )
+        part_ids_by_finger = {
+            role: tuple(bundles[f"{source_id}:{role}"]["source_part_ids"])
             for role in roles
         }
         schema = build_schema(
-            source_id, stages, palm_affine_editable=not protected
+            source_id,
+            part_ids_by_finger,
+            palm_affine_editable=not protected,
+            protected_finger_root=protected,
         )
         schemas[source_id] = schema
         vectors = latin_hypercube_vectors(
@@ -102,20 +102,26 @@ def main() -> int:
             decoded = decode_vector(vector, schema)
             if local_index == 0:
                 layout_mode = "source_fixed"
-            else:
-                # All 32 ordered expansion levels are valid on the bounded
-                # anthropomorphic path. House/symmetric banks are compiled
-                # separately because some low-expansion source palms violate
-                # their unchanged motor-footprint clearance constraint.
+            elif source_id in BOUNDED_PALM_LAYOUT_SOURCES:
                 layout_mode = "anthropomorphic"
+            else:
+                layout_mode = ("anthropomorphic", "symmetric", "asymmetric")[
+                    (source_index + local_index - 1) % 3
+                ]
+            palm = {
+                "layout_mode": layout_mode,
+                "prototype_bank_id": f"{source_id}:palm32",
+                **decoded["palm"],
+            }
+            # House layouts retain their established automatic clearance
+            # resolver. The ordered expansion prototype is the continuous
+            # anthropomorphic backend and must not bypass that resolver.
+            if layout_mode in {"symmetric", "asymmetric"}:
+                palm.pop("expansion", None)
             design_records.append({
                 "hand_id": f"general_v2_{serial:03d}_{source_id}",
                 "source_hand": source_id,
-                "palm": {
-                    "layout_mode": layout_mode,
-                    "prototype_bank_id": f"{source_id}:palm32",
-                    **decoded["palm"],
-                },
+                "palm": palm,
                 "fingers": {**decoded["fingers"], "width_scales": decoded["width_scales"]},
                 "general_morphology_vector": vector.tolist(),
                 "general_morphology_vector_names": schema["vector_names"],

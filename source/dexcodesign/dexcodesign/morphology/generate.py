@@ -614,7 +614,7 @@ def extra_slot(base_slots: dict[str, dict], palm_linear: np.ndarray) -> dict:
 def instantiate_finger(
     output: list[dict], slot_id: int, output_role: str, target_slot: dict,
     bundle: dict, source_hand: dict, candidates: dict[str, dict],
-    length_scales: list[float], body_radius_scale: float,
+    length_scales_by_source_part: dict[int, float], body_radius_scale: float,
     distal_radius_scale: float,
     lock_proximal_hardware: bool = False,
 ) -> dict:
@@ -632,34 +632,35 @@ def instantiate_finger(
         donor_slot["frame"][:, 2], reference_frame[:, 2]
     )
     realized_reference_frame = reference_rotation @ donor_slot["frame"]
-    if len(length_scales) != 3:
-        raise ValueError(f"{output_role}: expected proximal/middle/distal length scales")
-
-    # A source chain may contain extra coincident motor-axis bodies before its
-    # physical phalanges.  Only the last three rigid bodies are the universal
-    # proximal/middle/distal slots.  Shorter source chains use proximal+distal
-    # (two bodies) or distal only (one body); absent slots are masked.
     editable_ids = list(ids)
     if lock_proximal_hardware and editable_ids:
         editable_ids = editable_ids[1:]
-    if len(editable_ids) >= 3:
-        stage_ids = editable_ids[-3:]
-        stage_numbers = (0, 1, 2)
-    elif len(editable_ids) == 2:
-        stage_ids = editable_ids
-        stage_numbers = (0, 2)
-    elif len(editable_ids) == 1:
-        stage_ids = editable_ids
-        stage_numbers = (2,)
-    else:
-        stage_ids = []
-        stage_numbers = ()
-    stage_by_source = dict(zip(stage_ids, stage_numbers, strict=True))
-    children_by_source: dict[int, list[int]] = defaultdict(list)
+    requested_ids = set(length_scales_by_source_part)
+    if requested_ids != set(editable_ids):
+        raise ValueError(
+            f"{output_role}: length parameters do not match source rigid parts; "
+            f"missing={sorted(set(editable_ids) - requested_ids)} "
+            f"extra={sorted(requested_ids - set(editable_ids))}"
+        )
+    distal_id = editable_ids[-1] if editable_ids else None
+    target_axis = realized_frame[:, 2]
+    reference_axis = realized_reference_frame[:, 2]
+    linear_by_source: dict[int, np.ndarray] = {}
+    reference_linear_by_source: dict[int, np.ndarray] = {}
     for source_id in ids:
-        parent = int(source_hand["parts"][source_id]["parent"])
-        if parent in block_set:
-            children_by_source[parent].append(source_id)
+        length_scale = float(length_scales_by_source_part.get(source_id, 1.0))
+        radius_scale = (
+            1.0 if source_id not in editable_ids
+            else float(distal_radius_scale if source_id == distal_id else body_radius_scale)
+        )
+        deform = radius_scale * np.eye(3) + (
+            length_scale - radius_scale
+        ) * np.outer(target_axis, target_axis)
+        reference_deform = radius_scale * np.eye(3) + (
+            length_scale - radius_scale
+        ) * np.outer(reference_axis, reference_axis)
+        linear_by_source[source_id] = deform @ rotation
+        reference_linear_by_source[source_id] = reference_deform @ reference_rotation
     id_map: dict[int, int] = {}
     root_new_id = None
     for rank, source_id in enumerate(ids):
@@ -668,24 +669,20 @@ def instantiate_finger(
         internal = parent_source in block_set
         new_id = len(output)
         id_map[source_id] = new_id
-        stage = stage_by_source.get(source_id)
-        node_length_scale = 1.0 if stage is None else float(length_scales[stage])
+        node_length_scale = float(length_scales_by_source_part.get(source_id, 1.0))
         node_radius_scale = (
-            1.0
-            if stage is None
-            else float(distal_radius_scale if stage == 2 else body_radius_scale)
+            1.0 if source_id not in editable_ids
+            else float(distal_radius_scale if source_id == distal_id else body_radius_scale)
         )
-        node_linear = rotation
-        node_reference_linear = reference_rotation
+        node_linear = linear_by_source[source_id]
+        node_reference_linear = reference_linear_by_source[source_id]
         if not internal:
             relative = target_slot["anchor"]
             parent = 0
             root_new_id = new_id
         else:
-            parent_stage = stage_by_source.get(int(parent_source))
-            parent_scale = 1.0 if parent_stage is None else float(length_scales[parent_stage])
-            relative = rotation @ (
-                parent_scale * np.asarray(source_node["relative_pos"], dtype=float)
+            relative = linear_by_source[int(parent_source)] @ np.asarray(
+                source_node["relative_pos"], dtype=float
             )
             parent = id_map[int(parent_source)]
         candidate_id = f"{bundle['source_hand_id']}:part:{source_id}"
@@ -701,6 +698,7 @@ def instantiate_finger(
             "joint_range": source_node["joint_range"],
             "joint_name": f"slot_{slot_id}_{source_node['joint_name']}",
             "relative_pos": relative.tolist(),
+            "source_relative_pos": source_node["relative_pos"],
             "source_hand_id": bundle["source_hand_id"],
             "source_part_id": source_id,
             "source_mesh": source_node.get("mesh"),
@@ -713,57 +711,17 @@ def instantiate_finger(
             "reference_mesh_linear": node_reference_linear.tolist(),
             "length_scale": node_length_scale,
             "radius_scale": node_radius_scale,
-            "phalanx_stage": (
-                None if stage is None else ("proximal", "middle", "distal")[stage]
+            "length_parameter_source_part_id": (
+                source_id if source_id in editable_ids else None
             ),
             "source_rank": rank,
             "protected_proximal_hardware": bool(lock_proximal_hardware and rank == 0),
             "morphology_part": "finger_root_rigid_body" if rank == 0 else "finger_link_rigid_body",
-            "joint_to_joint_segment": stage is not None,
+            "joint_to_joint_segment": source_id in editable_ids,
             "segment_mesh_merged": bool(
-                stage is not None and source_node.get("mesh") is not None
+                source_id in editable_ids and source_node.get("mesh") is not None
             ),
         }
-        if stage is not None:
-            source_direction = None
-            child_ids = children_by_source.get(source_id, [])
-            if child_ids:
-                child_offset = np.asarray(
-                    source_hand["parts"][child_ids[0]]["relative_pos"], dtype=float
-                )
-                if np.linalg.norm(child_offset) > 1.0e-8:
-                    source_direction = child_offset
-            if source_direction is None:
-                own_offset = np.asarray(source_node["relative_pos"], dtype=float)
-                if np.linalg.norm(own_offset) > 1.0e-8:
-                    source_direction = own_offset
-            if source_direction is None:
-                source_direction = donor_slot["frame"][:, 2]
-            target_direction = rotation @ (
-                source_direction / np.linalg.norm(source_direction)
-            )
-            reference_length = None
-            if child_ids:
-                candidate_length = float(np.linalg.norm(np.asarray(
-                    source_hand["parts"][child_ids[0]]["relative_pos"], dtype=float
-                )))
-                if candidate_length > 1.0e-8:
-                    reference_length = candidate_length
-            node_record["general_axis_deformation"] = {
-                "longitudinal_axis": target_direction.tolist(),
-                "length_scale": node_length_scale,
-                "radius_scale": node_radius_scale,
-                "reference_length": reference_length,
-                "proximal_cap_fraction": 0.12,
-                "distal_cap_fraction": 0.12,
-                "distal_connector_fixed": bool(child_ids),
-            }
-            if child_ids:
-                node_record["general_axis_deformation"]["distal_joint_offset"] = (
-                    rotation @ np.asarray(
-                        source_hand["parts"][child_ids[0]]["relative_pos"], dtype=float
-                    )
-                ).tolist()
         output.append(node_record)
     return {
         "slot_id": slot_id,
@@ -783,7 +741,7 @@ def instantiate_finger(
         "reference_attachment_rotation": realized_reference_frame.tolist(),
         "connector_transform_applied": True,
         "proximal_hardware_locked": lock_proximal_hardware,
-        "phalanx_stage_mask": [source_id in stage_by_source for source_id in ids],
+        "editable_source_part_ids": editable_ids,
     }
 
 
@@ -957,7 +915,7 @@ def main() -> int:
         actions = [{
             "operation": "LOCK_SOURCE_TOPOLOGY_ORDER_AND_ATTACHMENTS",
             "allowed_geometry_edits": [
-                "per_finger_per_phalanx_length",
+                "per_finger_per_source_rigid_part_length",
                 "shared_normal_body_or_distal_radius",
                 "shared_thumb_body_or_distal_radius",
             ],
@@ -1132,24 +1090,42 @@ def main() -> int:
             legacy_length = role_spec.get(
                 "length_scale", finger_spec.get("default_length_scale")
             )
-            requested_lengths = role_spec.get("length_scales")
+            source_part_ids = list(bundle["source_part_ids"])
+            editable_part_ids = list(source_part_ids)
+            if seed_id in PROTECTED_TRANSMISSION_SOURCES and editable_part_ids:
+                editable_part_ids = editable_part_ids[1:]
+            requested_lengths = role_spec.get("length_scales_by_source_part")
             if requested_lengths is None:
                 if legacy_length is None:
-                    length_scales = [float(rng.uniform(0.87, 1.17)) for _ in range(3)]
+                    length_scales_by_source_part = {
+                        source_id: float(rng.uniform(0.87, 1.17))
+                        for source_id in editable_part_ids
+                    }
                 else:
-                    length_scales = [float(legacy_length)] * 3
+                    length_scales_by_source_part = {
+                        source_id: float(legacy_length)
+                        for source_id in editable_part_ids
+                    }
             elif isinstance(requested_lengths, dict):
-                length_scales = [
-                    float(requested_lengths[name])
-                    for name in ("proximal", "middle", "distal")
-                ]
+                length_scales_by_source_part = {
+                    int(source_id): float(value)
+                    for source_id, value in requested_lengths.items()
+                }
             else:
-                length_scales = [float(value) for value in requested_lengths]
-            if len(length_scales) != 3 or any(
-                not 0.55 <= value <= 1.60 for value in length_scales
+                values = [float(value) for value in requested_lengths]
+                if len(values) != len(editable_part_ids):
+                    raise ValueError(
+                        f"{role} needs {len(editable_part_ids)} source-part length scales"
+                    )
+                length_scales_by_source_part = dict(zip(
+                    editable_part_ids, values, strict=True
+                ))
+            if set(length_scales_by_source_part) != set(editable_part_ids) or any(
+                not 0.55 <= value <= 1.60
+                for value in length_scales_by_source_part.values()
             ):
                 raise ValueError(
-                    f"{role} proximal/middle/distal length scales must lie in [0.55, 1.60]"
+                    f"{role} source-part length scales must exactly cover the editable bundle"
                 )
             if role == "thumb":
                 body_radius_scale = thumb_body_radius
@@ -1158,10 +1134,9 @@ def main() -> int:
                 body_radius_scale = normal_body_radius
                 distal_radius_scale = normal_distal_radius
             realized_finger_parameters[role] = {
-                "length_scales": {
-                    name: value for name, value in zip(
-                        ("proximal", "middle", "distal"), length_scales, strict=True
-                    )
+                "length_scales_by_source_part": {
+                    str(source_id): value
+                    for source_id, value in length_scales_by_source_part.items()
                 },
                 "body_radius_scale": body_radius_scale,
                 "distal_radius_scale": distal_radius_scale,
@@ -1169,7 +1144,7 @@ def main() -> int:
             slots.append(instantiate_finger(
                 parts, slot_id, role, target_slots[role], bundle,
                 sources[bundle["source_hand_id"]], candidates,
-                length_scales, body_radius_scale, distal_radius_scale,
+                length_scales_by_source_part, body_radius_scale, distal_radius_scale,
                 lock_proximal_hardware=seed_id in PROTECTED_TRANSMISSION_SOURCES,
             ))
 
@@ -1333,11 +1308,14 @@ def main() -> int:
     for hand in hands:
         for child in hand["parts"][1:]:
             parent = hand["parts"][int(child["parent"])]
-            deformation = parent.get("general_axis_deformation")
-            if deformation is None or "distal_joint_offset" not in deformation:
+            if (
+                child.get("mechanism_bundle_id")
+                != parent.get("mechanism_bundle_id")
+                or "source_relative_pos" not in child
+            ):
                 continue
-            expected = float(deformation["length_scale"]) * np.asarray(
-                deformation["distal_joint_offset"], dtype=float
+            expected = np.asarray(parent["mesh_linear"], dtype=float) @ np.asarray(
+                child["source_relative_pos"], dtype=float
             )
             actual = np.asarray(child["relative_pos"], dtype=float)
             segment_endpoint_errors.append(float(np.linalg.norm(actual - expected)))

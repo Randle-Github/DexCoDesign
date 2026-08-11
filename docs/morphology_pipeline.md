@@ -84,11 +84,14 @@ different vector dimensions, and absent fingers or phalanges are not padded
 into the vector. MANO remains the immutable human reference and is not a robot
 morphology seed. Its current production search variables are:
 
-- independent proximal/middle/distal longitudinal scale for every physical
-  finger present in the source (`0.87–1.17` in preview generation; explicit
-  graph requests may use `0.55–1.60`);
+- one independent longitudinal scale for every actual source joint-owned
+  rigid finger part (normalized-vector prior `0.87–1.17`; explicit graph
+  limit `0.55–1.60`); absent parts are omitted rather than guessed or padded,
+  and the same established affine transform moves both the merged rigid-part
+  mesh and its child-joint attachment;
 - four shared radial controls: normal-finger body, normal-finger distal,
-  thumb body, and thumb distal (`0.60–1.45` explicit); a control is omitted
+  thumb body, and thumb distal (normalized-vector prior `0.88–1.14`, explicit
+  graph limit `0.60–1.45`); a control is omitted
   when the corresponding source geometry does not exist;
 - palm X/Z in-plane scale and a bounded in-plane yaw for sources without a
   protected transmission platform;
