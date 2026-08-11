@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from dexcodesign.morphology.general_grammar import build_schema, decode_vector
-from dexcodesign.morphology.generate import main_finger_path
+from dexcodesign.morphology.generate import editable_finger_segments, main_finger_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +25,8 @@ def test_midas_main_paths_exclude_linkage_branches() -> None:
     assert main_finger_path(hand, by_id["midas_hand:middle"]) == [3, 7, 13, 18]
     assert main_finger_path(hand, by_id["midas_hand:ring"]) == [4, 8, 15, 19]
     assert main_finger_path(hand, by_id["midas_hand:thumb"]) == [1, 5, 9, 16]
+    assert editable_finger_segments(hand, by_id["midas_hand:index"]) == [6, 11, 17]
+    assert editable_finger_segments(hand, by_id["midas_hand:thumb"]) == [5, 9, 16]
 
 
 def test_midas_general_schema_is_17d_and_zero_is_source() -> None:
@@ -45,3 +47,29 @@ def test_midas_general_schema_is_17d_and_zero_is_source() -> None:
         for finger in decoded["fingers"].values()
         for value in finger["length_scales_by_source_part"].values()
     )
+
+
+def test_general_extremes_restore_the_original_broad_search_range() -> None:
+    segment_ids = {
+        "thumb": (5, 9, 16),
+        "index": (6, 11, 17),
+        "middle": (7, 13, 18),
+        "ring": (8, 15, 19),
+    }
+    schema = build_schema("midas_hand", segment_ids, palm_affine_editable=False)
+    lower = decode_vector(np.asarray([0.0, *([-1.0] * 16)]), schema)
+    upper = decode_vector(np.ones(17), schema)
+    assert lower["palm"]["prototype_index"] == 0
+    assert upper["palm"]["prototype_index"] == 31
+    assert set(lower["width_scales"].values()) == {0.60}
+    assert set(upper["width_scales"].values()) == {1.45}
+    assert {
+        value
+        for finger in lower["fingers"].values()
+        for value in finger["length_scales_by_source_part"].values()
+    } == {0.55}
+    assert {
+        value
+        for finger in upper["fingers"].values()
+        for value in finger["length_scales_by_source_part"].values()
+    } == {1.60}

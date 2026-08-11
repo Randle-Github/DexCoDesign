@@ -100,10 +100,10 @@ def decode_vector(vector: np.ndarray | list[float], schema: dict) -> dict:
         },
         "fingers": {},
         "width_scales": {
-            "normal_body": _scale(raw.get("normal_body_width", 0.0), 0.88, 1.14),
-            "normal_distal": _scale(raw.get("normal_distal_width", 0.0), 0.88, 1.14),
-            "thumb_body": _scale(raw.get("thumb_body_width", 0.0), 0.88, 1.14),
-            "thumb_distal": _scale(raw.get("thumb_distal_width", 0.0), 0.88, 1.14),
+            "normal_body": _scale(raw.get("normal_body_width", 0.0), 0.60, 1.45),
+            "normal_distal": _scale(raw.get("normal_distal_width", 0.0), 0.60, 1.45),
+            "thumb_body": _scale(raw.get("thumb_body_width", 0.0), 0.60, 1.45),
+            "thumb_distal": _scale(raw.get("thumb_distal_width", 0.0), 0.60, 1.45),
         },
     }
     for finger in FINGERS:
@@ -112,7 +112,7 @@ def decode_vector(vector: np.ndarray | list[float], schema: dict) -> dict:
             result["fingers"][finger] = {
                 "length_scales_by_source_part": {
                     str(source_id): _scale(
-                        raw[f"{finger}_segment_{source_id}_length"], 0.87, 1.17
+                        raw[f"{finger}_segment_{source_id}_length"], 0.55, 1.60
                     )
                     for source_id in segment_ids
                 }

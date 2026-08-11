@@ -410,6 +410,10 @@ def apply_global_palm_layout(
         )
         return distance > mount_exclusion_slots
 
+    source_angles = np.mod(
+        np.arctan2(local[:, 1] - center_z, local[:, 0] - center_x),
+        2.0 * np.pi,
+    )
     if mode == "symmetric":
         starts = []
         for start in range(slot_count):
@@ -421,7 +425,23 @@ def apply_global_palm_layout(
                 starts.append((start, proposal))
         if not starts:
             raise ValueError("no symmetric House layout can preserve the root mount exclusion sector")
-        _, mount_slots = starts[int(rng.integers(len(starts)))]
+        if palm_expansion is None:
+            _, mount_slots = starts[int(rng.integers(len(starts)))]
+        else:
+            source_order_angles = np.sort(source_angles)
+
+            def radial_target_cost(item: tuple[int, list[int]]) -> tuple[float, int]:
+                start, proposal = item
+                proposal_angles = 2.0 * np.pi * np.sort(proposal) / slot_count
+                best = min(
+                    float(np.sum(np.angle(np.exp(1j * (
+                        np.roll(proposal_angles, -shift) - source_order_angles
+                    ))) ** 2))
+                    for shift in range(count)
+                )
+                return best, start
+
+            _, mount_slots = min(starts, key=radial_target_cost)
     else:
         mount_slots = []
         for _ in range(5000):
@@ -437,7 +457,6 @@ def apply_global_palm_layout(
         if len(mount_slots) != count:
             raise ValueError("could not sample House-style motor slots with minimum separation")
 
-    source_angles = np.mod(np.arctan2(local[:, 1] - center_z, local[:, 0] - center_x), 2.0 * np.pi)
     source_order_indices = np.argsort(source_angles)
     source_order_roles = [roles[int(index)] for index in source_order_indices]
     source_order_angles = source_angles[source_order_indices]
@@ -477,7 +496,11 @@ def apply_global_palm_layout(
     palm_radius = required_radius
     radii = rng.uniform(0.76 * palm_radius, 0.90 * palm_radius, size=count)
     if mode == "symmetric":
-        radii[:] = float(rng.uniform(0.82, 0.88)) * palm_radius
+        radii[:] = (
+            0.85 * palm_radius
+            if palm_expansion is not None
+            else float(rng.uniform(0.82, 0.88)) * palm_radius
+        )
 
     # House positions define the design direction, but manufacturing-oriented
     # samples should not jump all the way from a source palm to that target in
@@ -507,8 +530,8 @@ def apply_global_palm_layout(
 
     layout_blend = requested_blend
     blended_centers, actual_clearance = blended_clearance(layout_blend)
-    if actual_clearance < -1.0e-8 and palm_expansion is None:
-        for candidate_blend in np.linspace(requested_blend, 0.86, 35):
+    if actual_clearance < -1.0e-8:
+        for candidate_blend in np.linspace(requested_blend, 1.0, 65):
             candidate_centers, candidate_clearance = blended_clearance(float(candidate_blend))
             if candidate_clearance >= -1.0e-8:
                 layout_blend = float(candidate_blend)
@@ -517,11 +540,6 @@ def apply_global_palm_layout(
                 break
         else:
             raise ValueError("source/House blended layout cannot satisfy motor clearance")
-    elif actual_clearance < -1.0e-8:
-        raise ValueError(
-            f"palm_expansion={requested_blend:.6g} violates motor clearance "
-            f"by {-actual_clearance:.6g} canonical length units"
-        )
 
     edits = []
     for index, (role, angle, radius) in enumerate(zip(roles, angles, radii)):
@@ -649,6 +667,23 @@ def main_finger_path(source_hand: dict, bundle: dict) -> list[int]:
     return max(paths, key=path_score)
 
 
+def editable_finger_segments(source_hand: dict, bundle: dict) -> list[int]:
+    """Return actual phalanges, excluding motor roots and zero-span frames."""
+    path = main_finger_path(source_hand, bundle)
+    editable: list[int] = []
+    for path_index, source_id in enumerate(path[1:], start=1):
+        node = source_hand["parts"][source_id]
+        if "mesh" not in node:
+            continue
+        terminal = path_index == len(path) - 1
+        if not terminal:
+            child = source_hand["parts"][path[path_index + 1]]
+            if np.linalg.norm(np.asarray(child["relative_pos"], dtype=float)) <= 1.0e-8:
+                continue
+        editable.append(source_id)
+    return editable
+
+
 def _perpendicular_axis(axis: np.ndarray, preferred: np.ndarray) -> np.ndarray:
     width = preferred - float(np.dot(preferred, axis)) * axis
     if np.linalg.norm(width) < 1.0e-8:
@@ -731,7 +766,7 @@ def instantiate_finger(
     segment_deformations: dict[int, dict] = {}
     if segment_parameters is not None:
         path = main_finger_path(source_hand, bundle)
-        editable_path = path[1:] if lock_proximal_hardware else path
+        editable_path = editable_finger_segments(source_hand, bundle)
         if set(segment_parameters) != set(editable_path):
             raise ValueError(
                 f"{output_role}: segment parameters must cover main path "
@@ -1028,6 +1063,10 @@ def main() -> int:
         if (
             seed_id in BOUNDED_PALM_LAYOUT_SOURCES
             and requested_layout_mode not in {"source_fixed", "anthropomorphic"}
+            and not (
+                requested_layout_mode == "symmetric"
+                and bool(palm_spec.get("simulation_radial_layout", False))
+            )
         ):
             if graph_spec_path is not None:
                 raise ValueError(
@@ -1196,10 +1235,8 @@ def main() -> int:
                 path = main_finger_path(
                     sources[bundle["source_hand_id"]], bundle
                 )
-                editable_path = (
-                    path[1:]
-                    if seed_id in PROTECTED_TRANSMISSION_SOURCES
-                    else path
+                editable_path = editable_finger_segments(
+                    sources[bundle["source_hand_id"]], bundle
                 )
                 requested = {
                     int(source_id): float(value)

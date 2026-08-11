@@ -24,9 +24,8 @@ from dexcodesign.morphology.general_grammar import (  # noqa: E402
     latin_hypercube_vectors,
 )
 from dexcodesign.morphology.generate import (  # noqa: E402
-    BOUNDED_PALM_LAYOUT_SOURCES,
     PROTECTED_TRANSMISSION_SOURCES,
-    main_finger_path,
+    editable_finger_segments,
 )
 
 
@@ -93,8 +92,9 @@ def main() -> int:
         segment_ids = {}
         for role in roles:
             bundle = bundles[f"{source_id}:{role}"]
-            path = main_finger_path(source_hands[source_id], bundle)
-            segment_ids[role] = tuple(path[1:] if protected else path)
+            segment_ids[role] = tuple(editable_finger_segments(
+                source_hands[source_id], bundle
+            ))
         schema = build_schema(
             source_id,
             segment_ids,
@@ -108,19 +108,14 @@ def main() -> int:
             decoded = decode_vector(vector, schema)
             if local_index == 0:
                 layout = "source_fixed"
-            elif source_id in BOUNDED_PALM_LAYOUT_SOURCES:
-                layout = "anthropomorphic"
             else:
-                layout = ("anthropomorphic", "symmetric", "asymmetric")[
-                    (source_index + local_index - 1) % 3
-                ]
+                layout = "symmetric"
             palm = {
                 "layout_mode": layout,
                 "prototype_bank_id": f"{source_id}:palm32",
+                "simulation_radial_layout": layout == "symmetric",
                 **decoded["palm"],
             }
-            if layout in {"symmetric", "asymmetric"}:
-                palm.pop("expansion", None)
             designs.append({
                 "hand_id": f"general_v2_{serial:03d}_{source_id}",
                 "source_hand": source_id,
