@@ -79,20 +79,11 @@ search action.
 - Four-finger sources do not synthesize a fifth finger.
 - Base and palm-internal DoFs are copied unchanged.
 
-The general simulation grammar is source-local: different source hands have
-different vector dimensions, and absent fingers or phalanges are not padded
-into the vector. MANO remains the immutable human reference and is not a robot
-morphology seed. Its current production search variables are:
+The current production search variables are:
 
-- one independent longitudinal scale for every actual source joint-owned
-  rigid finger part (normalized-vector prior `0.87–1.17`; explicit graph
-  limit `0.55–1.60`); absent parts are omitted rather than guessed or padded,
-  and the same established affine transform moves both the merged rigid-part
-  mesh and its child-joint attachment;
-- four shared radial controls: normal-finger body, normal-finger distal,
-  thumb body, and thumb distal (normalized-vector prior `0.88–1.14`, explicit
-  graph limit `0.60–1.45`); a control is omitted
-  when the corresponding source geometry does not exist;
+- finger-link longitudinal scale (`0.87–1.17` in random generation; explicit
+  graph requests may use the validated `0.65–1.45` range);
+- finger-link radial scale (`0.88–1.14` random; `0.65–1.35` explicit);
 - palm X/Z in-plane scale and a bounded in-plane yaw for sources without a
   protected transmission platform;
 - palm layout mode and continuous `palm_expansion`;
@@ -122,12 +113,6 @@ fail instead of being silently changed.
 Palm thickness is fixed. The wrist/mount region is fixed. Protected
 under-palm hardware is fixed. Active and mimic classification, joint range,
 joint axis, and base/palm DoFs are preserved.
-
-For physics search, `palm_expansion` selects one of 32 ordered prototypes.
-Each source hand owns one prototype bank and all morphology candidates derived
-from that source reuse it. The network sees the ordered scalar and prototype
-index, never a one-hot vector. Exact visual meshes are generated only for
-inspection/final output and may be discarded immediately afterward.
 
 Only the invariants required for compilation are checked. The old exploratory
 `grammar_audit.json` and dozens of diagnostic fields have been removed.

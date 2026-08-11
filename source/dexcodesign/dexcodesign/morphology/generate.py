@@ -614,8 +614,7 @@ def extra_slot(base_slots: dict[str, dict], palm_linear: np.ndarray) -> dict:
 def instantiate_finger(
     output: list[dict], slot_id: int, output_role: str, target_slot: dict,
     bundle: dict, source_hand: dict, candidates: dict[str, dict],
-    length_scales_by_source_part: dict[int, float], body_radius_scale: float,
-    distal_radius_scale: float,
+    length_scale: float, radius_scale: float,
     lock_proximal_hardware: bool = False,
 ) -> dict:
     ids = bundle["source_part_ids"]
@@ -632,35 +631,15 @@ def instantiate_finger(
         donor_slot["frame"][:, 2], reference_frame[:, 2]
     )
     realized_reference_frame = reference_rotation @ donor_slot["frame"]
-    editable_ids = list(ids)
-    if lock_proximal_hardware and editable_ids:
-        editable_ids = editable_ids[1:]
-    requested_ids = set(length_scales_by_source_part)
-    if requested_ids != set(editable_ids):
-        raise ValueError(
-            f"{output_role}: length parameters do not match source rigid parts; "
-            f"missing={sorted(set(editable_ids) - requested_ids)} "
-            f"extra={sorted(requested_ids - set(editable_ids))}"
-        )
-    distal_id = editable_ids[-1] if editable_ids else None
     target_axis = realized_frame[:, 2]
+    deform = radius_scale * np.eye(3) + (length_scale - radius_scale) * np.outer(target_axis, target_axis)
+    linear = deform @ rotation
     reference_axis = realized_reference_frame[:, 2]
-    linear_by_source: dict[int, np.ndarray] = {}
-    reference_linear_by_source: dict[int, np.ndarray] = {}
-    for source_id in ids:
-        length_scale = float(length_scales_by_source_part.get(source_id, 1.0))
-        radius_scale = (
-            1.0 if source_id not in editable_ids
-            else float(distal_radius_scale if source_id == distal_id else body_radius_scale)
-        )
-        deform = radius_scale * np.eye(3) + (
-            length_scale - radius_scale
-        ) * np.outer(target_axis, target_axis)
-        reference_deform = radius_scale * np.eye(3) + (
-            length_scale - radius_scale
-        ) * np.outer(reference_axis, reference_axis)
-        linear_by_source[source_id] = deform @ rotation
-        reference_linear_by_source[source_id] = reference_deform @ reference_rotation
+    reference_deform = (
+        radius_scale * np.eye(3)
+        + (length_scale - radius_scale) * np.outer(reference_axis, reference_axis)
+    )
+    reference_linear = reference_deform @ reference_rotation
     id_map: dict[int, int] = {}
     root_new_id = None
     for rank, source_id in enumerate(ids):
@@ -669,26 +648,23 @@ def instantiate_finger(
         internal = parent_source in block_set
         new_id = len(output)
         id_map[source_id] = new_id
-        node_length_scale = float(length_scales_by_source_part.get(source_id, 1.0))
-        node_radius_scale = (
-            1.0 if source_id not in editable_ids
-            else float(distal_radius_scale if source_id == distal_id else body_radius_scale)
+        node_linear = rotation if lock_proximal_hardware and rank == 0 else linear
+        node_reference_linear = (
+            reference_rotation
+            if lock_proximal_hardware and rank == 0
+            else reference_linear
         )
-        node_linear = linear_by_source[source_id]
-        node_reference_linear = reference_linear_by_source[source_id]
         if not internal:
             relative = target_slot["anchor"]
             parent = 0
             root_new_id = new_id
         else:
-            relative = linear_by_source[int(parent_source)] @ np.asarray(
-                source_node["relative_pos"], dtype=float
-            )
+            relative = linear @ np.asarray(source_node["relative_pos"], dtype=float)
             parent = id_map[int(parent_source)]
         candidate_id = f"{bundle['source_hand_id']}:part:{source_id}"
         candidate = candidates[candidate_id]
         axis = rotation @ np.asarray(source_node["joint_axis"], dtype=float)
-        node_record = {
+        output.append({
             "id": new_id,
             "parent": parent,
             "role": output_role,
@@ -698,31 +674,21 @@ def instantiate_finger(
             "joint_range": source_node["joint_range"],
             "joint_name": f"slot_{slot_id}_{source_node['joint_name']}",
             "relative_pos": relative.tolist(),
-            "source_relative_pos": source_node["relative_pos"],
             "source_hand_id": bundle["source_hand_id"],
             "source_part_id": source_id,
             "source_mesh": source_node.get("mesh"),
-            "source_member_links": source_node.get("member_links", []),
             "candidate_id": candidate_id,
             "mechanism_bundle_id": bundle["bundle_id"],
             "motor_binding": candidate["motor_binding"],
             "compatible_candidate_ids": candidate["compatible_candidate_ids"],
             "mesh_linear": node_linear.tolist(),
             "reference_mesh_linear": node_reference_linear.tolist(),
-            "length_scale": node_length_scale,
-            "radius_scale": node_radius_scale,
-            "length_parameter_source_part_id": (
-                source_id if source_id in editable_ids else None
-            ),
+            "length_scale": 1.0 if lock_proximal_hardware and rank == 0 else length_scale,
+            "radius_scale": 1.0 if lock_proximal_hardware and rank == 0 else radius_scale,
             "source_rank": rank,
             "protected_proximal_hardware": bool(lock_proximal_hardware and rank == 0),
             "morphology_part": "finger_root_rigid_body" if rank == 0 else "finger_link_rigid_body",
-            "joint_to_joint_segment": source_id in editable_ids,
-            "segment_mesh_merged": bool(
-                source_id in editable_ids and source_node.get("mesh") is not None
-            ),
-        }
-        output.append(node_record)
+        })
     return {
         "slot_id": slot_id,
         "role": output_role,
@@ -741,7 +707,6 @@ def instantiate_finger(
         "reference_attachment_rotation": realized_reference_frame.tolist(),
         "connector_transform_applied": True,
         "proximal_hardware_locked": lock_proximal_hardware,
-        "editable_source_part_ids": editable_ids,
     }
 
 
@@ -914,11 +879,7 @@ def main() -> int:
         selected = {role: deepcopy(bundles[f"{seed_id}:{role}"]) for role in base_roles}
         actions = [{
             "operation": "LOCK_SOURCE_TOPOLOGY_ORDER_AND_ATTACHMENTS",
-            "allowed_geometry_edits": [
-                "per_finger_per_source_rigid_part_length",
-                "shared_normal_body_or_distal_radius",
-                "shared_thumb_body_or_distal_radius",
-            ],
+            "allowed_geometry_edits": ["finger_link_length", "finger_link_radius"],
         }]
 
         if seed_id in PROTECTED_TRANSMISSION_SOURCES:
@@ -1054,97 +1015,39 @@ def main() -> int:
         })
         slots = []
         realized_finger_parameters = {}
-        width_spec = finger_spec.get("width_scales", {})
-        if not isinstance(width_spec, dict):
-            raise ValueError("fingers.width_scales must be an object")
-        legacy_default_radius = finger_spec.get("default_radius_scale")
-        normal_body_radius = float(width_spec.get(
-            "normal_body",
-            legacy_default_radius if legacy_default_radius is not None else rng.uniform(0.88, 1.14),
-        ))
-        normal_distal_radius = float(width_spec.get(
-            "normal_distal",
-            legacy_default_radius if legacy_default_radius is not None else rng.uniform(0.88, 1.14),
-        ))
-        thumb_body_radius = float(width_spec.get(
-            "thumb_body",
-            legacy_default_radius if legacy_default_radius is not None else rng.uniform(0.88, 1.14),
-        ))
-        thumb_distal_radius = float(width_spec.get(
-            "thumb_distal",
-            legacy_default_radius if legacy_default_radius is not None else rng.uniform(0.88, 1.14),
-        ))
-        for name, value in {
-            "normal_body": normal_body_radius,
-            "normal_distal": normal_distal_radius,
-            "thumb_body": thumb_body_radius,
-            "thumb_distal": thumb_distal_radius,
-        }.items():
-            if not 0.60 <= value <= 1.45:
-                raise ValueError(f"{name} radius scale must lie in [0.60, 1.45]")
         for slot_id, role in enumerate(base_roles):
             bundle = selected[role]
             role_spec = finger_spec.get(role, {})
             if not isinstance(role_spec, dict):
                 raise ValueError(f"finger specification for {role} must be an object")
-            legacy_length = role_spec.get(
-                "length_scale", finger_spec.get("default_length_scale")
-            )
-            source_part_ids = list(bundle["source_part_ids"])
-            editable_part_ids = list(source_part_ids)
-            if seed_id in PROTECTED_TRANSMISSION_SOURCES and editable_part_ids:
-                editable_part_ids = editable_part_ids[1:]
-            requested_lengths = role_spec.get("length_scales_by_source_part")
-            if requested_lengths is None:
-                if legacy_length is None:
-                    length_scales_by_source_part = {
-                        source_id: float(rng.uniform(0.87, 1.17))
-                        for source_id in editable_part_ids
-                    }
-                else:
-                    length_scales_by_source_part = {
-                        source_id: float(legacy_length)
-                        for source_id in editable_part_ids
-                    }
-            elif isinstance(requested_lengths, dict):
-                length_scales_by_source_part = {
-                    int(source_id): float(value)
-                    for source_id, value in requested_lengths.items()
-                }
-            else:
-                values = [float(value) for value in requested_lengths]
-                if len(values) != len(editable_part_ids):
-                    raise ValueError(
-                        f"{role} needs {len(editable_part_ids)} source-part length scales"
-                    )
-                length_scales_by_source_part = dict(zip(
-                    editable_part_ids, values, strict=True
-                ))
-            if set(length_scales_by_source_part) != set(editable_part_ids) or any(
-                not 0.55 <= value <= 1.60
-                for value in length_scales_by_source_part.values()
-            ):
-                raise ValueError(
-                    f"{role} source-part length scales must exactly cover the editable bundle"
+            length_scale = float(
+                role_spec.get(
+                    "length_scale",
+                    finger_spec.get("default_length_scale", rng.uniform(0.87, 1.17)),
                 )
-            if role == "thumb":
-                body_radius_scale = thumb_body_radius
-                distal_radius_scale = thumb_distal_radius
-            else:
-                body_radius_scale = normal_body_radius
-                distal_radius_scale = normal_distal_radius
+            )
+            radius_scale = float(
+                role_spec.get(
+                    "radius_scale",
+                    finger_spec.get("default_radius_scale", rng.uniform(0.88, 1.14)),
+                )
+            )
+            if not 0.55 <= length_scale <= 1.60:
+                raise ValueError(
+                    f"{role} length_scale must lie in [0.55, 1.60]"
+                )
+            if not 0.60 <= radius_scale <= 1.45:
+                raise ValueError(
+                    f"{role} radius_scale must lie in [0.60, 1.45]"
+                )
             realized_finger_parameters[role] = {
-                "length_scales_by_source_part": {
-                    str(source_id): value
-                    for source_id, value in length_scales_by_source_part.items()
-                },
-                "body_radius_scale": body_radius_scale,
-                "distal_radius_scale": distal_radius_scale,
+                "length_scale": length_scale,
+                "radius_scale": radius_scale,
             }
             slots.append(instantiate_finger(
                 parts, slot_id, role, target_slots[role], bundle,
                 sources[bundle["source_hand_id"]], candidates,
-                length_scales_by_source_part, body_radius_scale, distal_radius_scale,
+                length_scale, radius_scale,
                 lock_proximal_hardware=seed_id in PROTECTED_TRANSMISSION_SOURCES,
             ))
 
@@ -1174,21 +1077,11 @@ def main() -> int:
                 "palm": {
                     "layout_mode": layout_mode,
                     "expansion": palm_layout.get("palm_expansion", 0.0),
-                    "prototype_index": palm_spec.get("prototype_index"),
-                    "prototype_bank_id": palm_spec.get(
-                        "prototype_bank_id", f"{seed_id}:palm32"
-                    ),
                     "scale_x": sx,
                     "scale_z": sz,
                     "yaw": yaw,
                 },
                 "fingers": realized_finger_parameters,
-                "shared_width_scales": {
-                    "normal_body": normal_body_radius,
-                    "normal_distal": normal_distal_radius,
-                    "thumb_body": thumb_body_radius,
-                    "thumb_distal": thumb_distal_radius,
-                },
             },
             "edit_mode": mode,
             "palm_layout": palm_layout,
@@ -1226,19 +1119,6 @@ def main() -> int:
             "protected_platform_node_ids": protected_platform_node_ids,
             "palm_transform": palm_linear.tolist(),
             "grammar_actions": actions,
-            "general_morphology": (
-                None
-                if "general_morphology_vector" not in design_spec
-                else {
-                    "vector": design_spec["general_morphology_vector"],
-                    "vector_names": design_spec["general_morphology_vector_names"],
-                    "vector_dimension": len(design_spec["general_morphology_vector"]),
-                    "palm_prototype_bank_id": palm_spec.get(
-                        "prototype_bank_id", f"{seed_id}:palm32"
-                    ),
-                    "palm_prototype_index": palm_spec.get("prototype_index"),
-                }
-            ),
             "finger_slots": slots,
             "parts": parts,
         })
@@ -1303,33 +1183,11 @@ def main() -> int:
             ):
                 raise ValueError(f"{hand['hand_id']}: finger root disconnected")
 
-    segment_endpoint_errors = []
-    segment_endpoint_checks = 0
-    for hand in hands:
-        for child in hand["parts"][1:]:
-            parent = hand["parts"][int(child["parent"])]
-            if (
-                child.get("mechanism_bundle_id")
-                != parent.get("mechanism_bundle_id")
-                or "source_relative_pos" not in child
-            ):
-                continue
-            expected = np.asarray(parent["mesh_linear"], dtype=float) @ np.asarray(
-                child["source_relative_pos"], dtype=float
-            )
-            actual = np.asarray(child["relative_pos"], dtype=float)
-            segment_endpoint_errors.append(float(np.linalg.norm(actual - expected)))
-            segment_endpoint_checks += 1
-    if segment_endpoint_errors and max(segment_endpoint_errors) > 1.0e-10:
-        raise ValueError("generic segment mesh endpoint and child joint disagree")
-
-    used_source_ids = list(dict.fromkeys(hand["seed_source"] for hand in hands))
     summary = {
         "generation_seed": generation_seed,
-        "source_hands": len(used_source_ids),
+        "source_hands": len(eligible_palms),
         "generated_hands": len(hands),
-        "source_hand_ids": used_source_ids,
-        "available_source_hand_ids": eligible_palms,
+        "source_hand_ids": eligible_palms,
         "ignored_non_morphology_registry_sources": non_morphology_registry_sources,
         "finger_count_range": [
             min(hand["finger_count"] for hand in hands),
@@ -1346,8 +1204,6 @@ def main() -> int:
         "hands_with_preserved_base_or_palm_dof": sum(
             hand["base_palm_kinematics"]["dof_count"] > 0 for hand in hands
         ),
-        "joint_to_joint_segment_endpoint_checks": segment_endpoint_checks,
-        "maximum_segment_endpoint_error": max(segment_endpoint_errors, default=0.0),
     }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(
