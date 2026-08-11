@@ -157,6 +157,59 @@ def apply_midas_axis_deformation(
     return result
 
 
+def apply_general_axis_deformation(
+    mesh: trimesh.Trimesh, specification: dict
+) -> trimesh.Trimesh:
+    """Stretch one generic phalanx while keeping its motor interfaces rigid.
+
+    Unlike the MiDas implementation, heterogeneous source hands do not expose
+    dimensions in millimetres.  The source joint-to-joint distance is used when
+    available; terminal links infer their longitudinal extent from the mesh.
+    Width is an isotropic radial scale, shared according to the general grammar.
+    """
+    vertices = np.array(mesh.vertices, dtype=np.float64, copy=True)
+    axis = np.asarray(specification["longitudinal_axis"], dtype=np.float64)
+    axis /= np.linalg.norm(axis)
+    coordinate = vertices @ axis
+    source_min, source_max = float(np.min(coordinate)), float(np.max(coordinate))
+    source_length = source_max - source_min
+    if source_length <= 1.0e-8:
+        raise ValueError("generic phalanx has no longitudinal extent")
+    length_scale = float(specification["length_scale"])
+    # Generic source CAD has no certified connector-cap locations.  Scaling
+    # the complete joint-local rigid segment about its proximal joint is the
+    # only source-independent transform that exactly matches the independently
+    # scaled child-joint offset.  Guessing a cap from mesh bounds leaves some
+    # multi-piece links behind and creates the visible floating seams.
+    vertices += ((length_scale - 1.0) * coordinate)[:, None] * axis
+
+    normalized = (coordinate - source_min) / source_length
+    ramp_up = _smoothstep(
+        normalized / 0.20
+    )
+    if bool(specification.get("distal_connector_fixed", True)):
+        ramp_down = _smoothstep((1.0 - normalized) / 0.20)
+        body_weight = np.minimum(ramp_up, ramp_down)
+    else:
+        body_weight = ramp_up
+
+    # Scale around the phalanx's geometric centreline.  This avoids the hooked
+    # fingertip artifact caused by scaling an offset CAD body about frame zero.
+    bounds_center = 0.5 * (
+        np.asarray(mesh.bounds[0], dtype=np.float64)
+        + np.asarray(mesh.bounds[1], dtype=np.float64)
+    )
+    centreline_offset = bounds_center - float(np.dot(bounds_center, axis)) * axis
+    axial = (vertices @ axis)[:, None] * axis
+    radial = vertices - axial - centreline_offset
+    radius_scale = float(specification["radius_scale"])
+    vertices += ((radius_scale - 1.0) * body_weight)[:, None] * radial
+
+    result = mesh.copy()
+    result.vertices = vertices
+    return result
+
+
 def apply_midas_palm_deformation(
     mesh: trimesh.Trimesh, specification: dict
 ) -> trimesh.Trimesh:
@@ -368,6 +421,10 @@ def main() -> int:
             mesh = load_source(source_mesh["file"]).copy()
             linear = np.asarray(node["mesh_linear"], dtype=float)
             mesh.vertices = np.asarray(mesh.vertices, dtype=float) @ linear.T
+            if "general_axis_deformation" in node:
+                mesh = apply_general_axis_deformation(
+                    mesh, node["general_axis_deformation"]
+                )
             if "midas_axis_deformation" in node:
                 mesh = apply_midas_axis_deformation(
                     mesh, node["midas_axis_deformation"]
