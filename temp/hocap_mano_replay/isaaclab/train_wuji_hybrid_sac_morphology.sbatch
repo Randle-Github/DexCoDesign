@@ -8,10 +8,11 @@
 #SBATCH --mem=192G
 #SBATCH --time=04:00:00
 #SBATCH --exclude=hk47,spd-13,voltron,ig-88,sonny
-#SBATCH --output=/coc/flash7/yliu3735/workspace/DexCoDesign/artifacts/wuji_morphology_hybrid_sac/slurm-%j.out
+#SBATCH --output=slurm-wuji-hybrid-sac-%j.out
 
 set -euo pipefail
-REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/run}"
 POPULATION="${POPULATION:-4096}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4096}"
@@ -41,8 +42,10 @@ CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-0}"
 BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 
-source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
-conda activate codesign
+CONDA_SH="${CONDA_SH:?launch through scripts/dexcodesign/launch_hand_learning.sh or export CONDA_SH}"
+CONDA_ENV="${CONDA_ENV:-codesign}"
+source "${CONDA_SH}"
+conda activate "${CONDA_ENV}"
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
 export OMP_NUM_THREADS=1

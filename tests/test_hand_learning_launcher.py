@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -24,12 +25,16 @@ COMMON = [
 
 
 def run_launcher(mode: str, *extra: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["CONDA_SH"] = str(ROOT / "environment.yml")
+    env["CONDA_ENV"] = "codesign"
     return subprocess.run(
         ["bash", str(LAUNCHER), mode, *COMMON, *extra],
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -64,6 +69,8 @@ def test_sac_ppo_multi_gpu_requests_and_shards_allocation() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "--gpus=a40:4" in result.stdout
+    assert "REPO_ROOT_OVERRIDE=" in result.stdout
+    assert "CONDA_SH=" in result.stdout
     assert "GPU_COUNT=4" in result.stdout
     assert "PHYSICS_BATCH_SIZE=32" in result.stdout
     assert "MORPHOLOGY_REPLICAS=32" in result.stdout
@@ -94,3 +101,4 @@ def test_hybrid_runner_keeps_rank_local_sampling_and_global_gather() -> None:
     assert '--nproc_per_node="${GPU_COUNT}"' in sbatch
     assert '--morphology-replicas "${MORPHOLOGY_REPLICAS}"' in sbatch
     assert '--ppo-rollout-multiplier "${PPO_ROLLOUT_MULTIPLIER}"' in sbatch
+    assert "/coc/flash7/yliu3735" not in sbatch

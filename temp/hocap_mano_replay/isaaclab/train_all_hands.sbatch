@@ -8,7 +8,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=02:00:00
 #SBATCH --exclude=hk47,spd-13,voltron,ig-88,sonny
-#SBATCH --output=/coc/flash7/yliu3735/workspace/DexCoDesign/artifacts/isaaclab_all_hands_residual/slurm/train-%A_%a.out
+#SBATCH --output=slurm-all-hand-ppo-%A_%a.out
 
 set -euo pipefail
 
@@ -33,7 +33,8 @@ if [[ -n "${HAND_ID_OVERRIDE:-}" ]]; then
 else
   HAND_ID="${HAND_IDS[${SLURM_ARRAY_TASK_ID:?missing array index}]}"
 fi
-REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/isaaclab_all_hands_residual}"
 ALL_HAND_ASSET_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
 RESULT_SET="${RESULT_SET:-results}"
@@ -62,8 +63,10 @@ if (( NUM_ENVS_PER_HAND > 8192 )) && [[ "${ALLOW_UNSAFE_HIGH_ENVS}" != "1" ]]; t
   exit 2
 fi
 
-source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"
-conda activate codesign
+CONDA_SH="${CONDA_SH:?launch through scripts/dexcodesign/launch_hand_learning.sh or export CONDA_SH}"
+CONDA_ENV="${CONDA_ENV:-codesign}"
+source "${CONDA_SH}"
+conda activate "${CONDA_ENV}"
 cd "${REPO_ROOT}"
 export OMNI_KIT_ACCEPT_EULA=YES
 export DEXCODESIGN_HAND_ID="${HAND_ID}"
