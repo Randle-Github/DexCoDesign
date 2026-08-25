@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from wuji_morphology_space import (
+from wuji_general_space import (
     CONTINUOUS_LOWER_BOUNDS,
     CONTINUOUS_SOURCE_VECTOR,
     CONTINUOUS_UPPER_BOUNDS,

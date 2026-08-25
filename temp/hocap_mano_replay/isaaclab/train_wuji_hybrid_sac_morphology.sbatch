@@ -38,7 +38,7 @@ PPO_CHECKPOINT="${PPO_CHECKPOINT:-}"
 TARGET_REWARD="${TARGET_REWARD:-inf}"
 KIT_ARGS="${KIT_ARGS:---/log/level=error}"
 CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-0}"
-BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_32_expanded_0p70}"
+BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 
 source "/coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh"

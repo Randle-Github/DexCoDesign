@@ -39,6 +39,7 @@ FIFTH_SLOT_PITCH = 0.42
 PALM_LAYOUT_MODES = (
     "source_fixed",
     "anthropomorphic",
+    "source_star_fusion",
     "symmetric",
     "asymmetric",
 )
@@ -193,6 +194,41 @@ def rotation_from_to(source: np.ndarray, target: np.ndarray) -> np.ndarray:
         [-cross[1], cross[0], 0.0],
     ])
     return np.eye(3) + skew + (skew @ skew) / (1.0 + cosine)
+
+
+def interpolate_direction_frame(
+    source_frame: np.ndarray,
+    target_direction: np.ndarray,
+    fraction: float,
+) -> np.ndarray:
+    """Rotate a complete attachment frame toward a direction by a fraction."""
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("frame interpolation fraction must lie in [0, 1]")
+    if fraction == 0.0:
+        return source_frame.copy()
+    source_direction = normalize(
+        source_frame[:, 2], np.asarray([0.0, 0.0, 1.0])
+    )
+    target_direction = normalize(target_direction, source_direction)
+    cross = np.cross(source_direction, target_direction)
+    sine = float(np.linalg.norm(cross))
+    cosine = float(np.clip(np.dot(source_direction, target_direction), -1.0, 1.0))
+    if sine < 1.0e-10:
+        if cosine > 0.0:
+            return source_frame.copy()
+        basis = np.eye(3)[int(np.argmin(np.abs(source_direction)))]
+        axis = normalize(np.cross(source_direction, basis), np.asarray([1.0, 0.0, 0.0]))
+    else:
+        axis = cross / sine
+    angle = math.atan2(sine, cosine) * fraction
+    x, y, z = axis
+    skew = np.asarray(((0.0, -z, y), (z, 0.0, -x), (-y, x, 0.0)))
+    rotation = (
+        math.cos(angle) * np.eye(3)
+        + (1.0 - math.cos(angle)) * np.outer(axis, axis)
+        + math.sin(angle) * skew
+    )
+    return rotation @ source_frame
 
 
 def frame_from_axis_direction(axis: np.ndarray, direction: np.ndarray) -> np.ndarray:
@@ -410,7 +446,8 @@ def apply_global_palm_layout(
         )
         return distance > mount_exclusion_slots
 
-    if mode == "symmetric":
+    radial_symmetric = mode in {"symmetric", "source_star_fusion"}
+    if radial_symmetric:
         starts = []
         for start in range(slot_count):
             proposal = [
@@ -421,7 +458,27 @@ def apply_global_palm_layout(
                 starts.append((start, proposal))
         if not starts:
             raise ValueError("no symmetric House layout can preserve the root mount exclusion sector")
-        _, mount_slots = starts[int(rng.integers(len(starts)))]
+        if mode == "source_star_fusion":
+            source_angles = np.mod(
+                np.arctan2(local[:, 1] - center_z, local[:, 0] - center_x),
+                2.0 * np.pi,
+            )
+
+            def source_alignment(item: tuple[int, list[int]]) -> tuple[float, int]:
+                start, proposal = item
+                proposal_angles = 2.0 * np.pi * np.sort(proposal) / slot_count
+                ordered = np.sort(source_angles)
+                cost = min(
+                    float(np.sum(np.angle(np.exp(1j * (
+                        np.roll(proposal_angles, -shift) - ordered
+                    ))) ** 2))
+                    for shift in range(count)
+                )
+                return cost, start
+
+            _, mount_slots = min(starts, key=source_alignment)
+        else:
+            _, mount_slots = starts[int(rng.integers(len(starts)))]
     else:
         mount_slots = []
         for _ in range(5000):
@@ -476,8 +533,12 @@ def apply_global_palm_layout(
         required_radius = max(required_radius, required / max(0.76 * gap, 1.0e-5))
     palm_radius = required_radius
     radii = rng.uniform(0.76 * palm_radius, 0.90 * palm_radius, size=count)
-    if mode == "symmetric":
-        radii[:] = float(rng.uniform(0.82, 0.88)) * palm_radius
+    if radial_symmetric:
+        radii[:] = (
+            0.85 * palm_radius
+            if mode == "source_star_fusion"
+            else float(rng.uniform(0.82, 0.88)) * palm_radius
+        )
 
     # House positions define the design direction, but manufacturing-oriented
     # samples should not jump all the way from a source palm to that target in
@@ -504,6 +565,19 @@ def apply_global_palm_layout(
                 required = 0.5 * float(widths[index_a] + widths[index_b]) + clearance
                 values.append(float(np.linalg.norm(centers[index_a] - centers[index_b])) - required)
         return centers, min(values, default=float("inf"))
+
+    if requested_blend == 0.0:
+        return {
+            "mode": mode,
+            "edits": [],
+            "slot_count": slot_count,
+            "mount_slots": mount_slots,
+            "source_order_locked": True,
+            "attachment_poses_locked": True,
+            "palm_expansion": 0.0,
+            "source_house_blend": 0.0,
+            "thickness_scale_locked": 1.0,
+        }
 
     layout_blend = requested_blend
     blended_centers, actual_clearance = blended_clearance(layout_blend)
@@ -532,10 +606,11 @@ def apply_global_palm_layout(
         target += float(np.dot(target_slots[role]["reference_anchor"], ey)) * ey
         actual_direction = normalize(q - center, [math.cos(float(angle)), math.sin(float(angle))])
         outgoing = normalize(actual_direction[0] * ex + actual_direction[1] * ez, ez)
-        source_axis = target_slots[role]["reference_frame"][:, 0]
         old = target_slots[role]["anchor"].copy()
         target_slots[role]["anchor"] = target
-        target_slots[role]["frame"] = frame_from_axis_direction(source_axis, outgoing)
+        target_slots[role]["frame"] = interpolate_direction_frame(
+            target_slots[role]["reference_frame"], outgoing, layout_blend
+        )
         edits.append({
             "role": role,
             "angle_degrees": math.degrees(float(angle)),

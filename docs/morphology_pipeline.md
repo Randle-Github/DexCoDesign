@@ -20,7 +20,7 @@ artifacts/hand_morphology/
   reference_graphs.json
   reference_rigid_parts/
   mechanism_bundles.json
-  generated_100/
+  generated_*/
     hand_ir.json
     generation_summary.json
     compiled_hands.json
@@ -79,15 +79,14 @@ search action.
 - Four-finger sources do not synthesize a fifth finger.
 - Base and palm-internal DoFs are copied unchanged.
 
-The current production search variables are:
+The general simulation-hand search variables are:
 
-- finger-link longitudinal scale (`0.87–1.17` in random generation; explicit
-  graph requests may use the validated `0.65–1.45` range);
-- finger-link radial scale (`0.88–1.14` random; `0.65–1.35` explicit);
-- palm X/Z in-plane scale and a bounded in-plane yaw for sources without a
-  protected transmission platform;
-- palm layout mode and continuous `palm_expansion`;
-- small edge-tangent finger-root displacement in anthropomorphic mode.
+- one ordered palm prototype selected from a 32-level source-to-star bank;
+- palm X/Z in-plane scale and bounded in-plane yaw when the source platform is
+  editable;
+- an independent length variable for every editable main-chain phalanx;
+- shared normal-finger body/distal widths and separately shared thumb
+  body/distal widths.
 
 Finger mechanisms are complete source-owned bundles. The current production
 generator does not add, remove, splice, or cross-source fingers, even though
@@ -104,11 +103,12 @@ search variables.
 - finger-root locations along the palm boundary;
 - anthropomorphic, symmetric, or asymmetric palm layouts when compatible.
 
-`palm_expansion` is the continuous source-to-layout interpolation parameter.
-`0` preserves the source finger-root placement, while `1` reaches the selected
-House/star layout. Intermediate values move the palm interfaces and complete
-finger roots together. Explicit values that violate motor-footprint clearance
-fail instead of being silently changed.
+The canonical palm coordinate is continuous in `[0, 1]` and quantizes to 32
+ordered prototypes. Prototype 0 preserves the source palm. Prototype 31 reaches
+expansion 0.70 toward the House/star target. Intermediate prototypes move the
+palm surface and every complete finger-root position and orientation together.
+Explicit values that violate motor-footprint clearance fail instead of being
+silently changed.
 
 Palm thickness is fixed. The wrist/mount region is fixed. Protected
 under-palm hardware is fixed. Active and mimic classification, joint range,

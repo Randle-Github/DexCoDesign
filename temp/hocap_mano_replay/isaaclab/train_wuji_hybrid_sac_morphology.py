@@ -126,6 +126,33 @@ args_cli, hydra_args = parser.parse_known_args()
 args_cli.output_root = args_cli.output_root.resolve()
 args_cli.prototype_bank_root = args_cli.prototype_bank_root.resolve()
 args_cli.seed_trajectory = args_cli.seed_trajectory.resolve()
+bank_signature_path = args_cli.prototype_bank_root / "vectors.schema.json"
+if not bank_signature_path.is_file():
+    parser.error(
+        "prototype bank has no grammar signature; rebuild it with "
+        "build_wuji_palm_prototype_bank.sbatch instead of reusing the legacy bank: "
+        f"{bank_signature_path}"
+    )
+bank_signature = json.loads(bank_signature_path.read_text(encoding="utf-8"))
+expected_bank_signature = {
+    "grammar_id": "general-simulation-hand-v3",
+    "source_hand": "wuji_hand_2",
+    "vector_dimension": 23,
+    "palm_layout_mode": "source_star_fusion",
+    "palm_prototype_count": 32,
+    "palm_expansion_range": [0.0, 0.70],
+    "zero_prototype_is_exact_source": True,
+}
+signature_mismatch = {
+    key: {"expected": expected, "actual": bank_signature.get(key)}
+    for key, expected in expected_bank_signature.items()
+    if bank_signature.get(key) != expected
+}
+if signature_mismatch:
+    parser.error(
+        "prototype bank belongs to a different morphology grammar: "
+        + json.dumps(signature_mismatch, sort_keys=True)
+    )
 if args_cli.physics_batch_size < 1:
     parser.error("--physics-batch-size must be positive")
 if args_cli.shared_ppo_iterations < 0:
@@ -174,7 +201,7 @@ from gpu_wuji_retarget import (  # noqa: E402
     joint_names_from_seed,
     quat_xyzw_matrix,
 )
-from wuji_morphology_space import (  # noqa: E402
+from wuji_general_space import (  # noqa: E402
     LOWER_BOUNDS,
     SOURCE_VECTOR,
     UPPER_BOUNDS,

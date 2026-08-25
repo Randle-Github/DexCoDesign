@@ -20,7 +20,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_ROOT.parents[2]
 EVALUATOR = SCRIPT_ROOT / "evaluate_wuji_morphology.py"
 sys.path.insert(0, str(SCRIPT_ROOT))
-from wuji_morphology_space import (  # noqa: E402
+from wuji_general_space import (  # noqa: E402
     CONTINUOUS_LOWER_BOUNDS,
     CONTINUOUS_SOURCE_VECTOR,
     CONTINUOUS_UPPER_BOUNDS,

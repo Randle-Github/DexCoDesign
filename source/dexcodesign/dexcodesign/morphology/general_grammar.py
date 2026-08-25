@@ -1,8 +1,10 @@
-"""Source-local general hand grammar built on rigid-cap segment deformation.
+"""The single source of truth for simulation-hand morphology.
 
-The module only defines optimizer parameters.  Geometry is implemented by the
-same connector-cap-preserving deformation used by the MiDas manufacturing
-grammar, while legacy whole-finger graph requests remain untouched.
+MiDas manufacturing constraints intentionally live in ``midas_grammar.py``.
+Every other robot hand, including WUJI morphology SAC, consumes this schema and
+decoder. Geometry is implemented by the shared connector-cap-preserving
+compiler; algorithms may choose different optimizers, but may not redefine the
+morphology vector.
 """
 
 from __future__ import annotations
@@ -10,10 +12,19 @@ from __future__ import annotations
 import numpy as np
 
 
+GRAMMAR_ID = "general-simulation-hand-v3"
+
+
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 NORMAL_FINGERS = ("index", "middle", "ring", "pinky")
 PALM_PROTOTYPES = 32
-PALM_EXPANSION_MAX = 0.35
+# The 32 ordered prototypes span the complete source-to-star fusion bank used
+# by morphology search.  Earlier all-hand experiments accidentally stopped at
+# 0.35, which made neighbouring prototypes visually almost indistinguishable.
+# 0.70 is the already validated WUJI search range: the source motor mounts stay
+# fixed-size while the palm surface and complete finger-root frames move
+# together toward the radial target.
+PALM_EXPANSION_MAX = 0.70
 
 
 def build_schema(
@@ -26,7 +37,7 @@ def build_schema(
         "name": "palm_expansion",
         "bounds": [0.0, 1.0],
         "source": 0.0,
-        "kind": "ordered_32_prototype_selector",
+        "kind": "ordered_32_source_star_fusion_selector",
     }]
     if palm_affine_editable:
         parameters.extend((
@@ -60,7 +71,7 @@ def build_schema(
             {"name": "thumb_distal_width", "bounds": [-1.0, 1.0], "source": 0.0},
         ))
     return {
-        "grammar_id": "general-simulation-hand-v2",
+        "grammar_id": GRAMMAR_ID,
         "source_hand": source_hand,
         "vector_dimension": len(parameters),
         "vector_names": [record["name"] for record in parameters],
@@ -73,6 +84,37 @@ def build_schema(
         "zero_vector_is_source": True,
         "auxiliary_linkages_are_not_phalanx_parameters": True,
     }
+
+
+def vector_bounds(schema: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return optimizer bounds in the exact canonical vector order."""
+    bounds = np.asarray(
+        [record["bounds"] for record in schema["parameters"]],
+        dtype=np.float64,
+    )
+    return bounds[:, 0], bounds[:, 1]
+
+
+def source_vector(schema: dict) -> np.ndarray:
+    """Return the exact source-hand vector (all source values are zero)."""
+    return np.asarray(
+        [record["source"] for record in schema["parameters"]],
+        dtype=np.float64,
+    )
+
+
+def palm_prototype_index(value: float) -> int:
+    """Quantize the ordered palm coordinate to one of 32 prototypes."""
+    if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError("palm prototype coordinate must lie in [0, 1]")
+    return int(np.rint(value * (PALM_PROTOTYPES - 1)))
+
+
+def palm_prototype_coordinate(index: int) -> float:
+    """Return the canonical vector coordinate of an ordered prototype."""
+    if not 0 <= int(index) < PALM_PROTOTYPES:
+        raise ValueError(f"palm prototype index must lie in [0, {PALM_PROTOTYPES - 1}]")
+    return int(index) / (PALM_PROTOTYPES - 1)
 
 
 def _scale(value: float, lower: float, upper: float) -> float:
@@ -89,7 +131,7 @@ def decode_vector(vector: np.ndarray | list[float], schema: dict) -> dict:
     if np.any(latent < bounds[:, 0]) or np.any(latent > bounds[:, 1]):
         raise ValueError("general morphology vector exceeds its bounds")
     raw = dict(zip(schema["vector_names"], latent, strict=True))
-    prototype = int(np.rint(raw["palm_expansion"] * (PALM_PROTOTYPES - 1)))
+    prototype = palm_prototype_index(raw["palm_expansion"])
     result = {
         "palm": {
             "prototype_index": prototype,
@@ -118,6 +160,35 @@ def decode_vector(vector: np.ndarray | list[float], schema: dict) -> dict:
                 }
             }
     return result
+
+
+def graph_spec_from_vector(
+    vector: np.ndarray | list[float],
+    schema: dict,
+    *,
+    hand_id: str,
+) -> dict:
+    """Translate one canonical vector into the shared graph-compiler request."""
+    decoded = decode_vector(vector, schema)
+    prototype = int(decoded["palm"]["prototype_index"])
+    return {
+        "hand_id": hand_id,
+        "source_hand": schema["source_hand"],
+        "palm": {
+            "layout_mode": (
+                "source_fixed" if prototype == 0 else "source_star_fusion"
+            ),
+            "prototype_bank_id": f"{schema['source_hand']}:palm32",
+            **decoded["palm"],
+        },
+        "fingers": {
+            **decoded["fingers"],
+            "width_scales": decoded["width_scales"],
+        },
+        "general_morphology_vector": np.asarray(vector, dtype=float).tolist(),
+        "general_morphology_vector_names": list(schema["vector_names"]),
+        "grammar_id": schema["grammar_id"],
+    }
 
 
 def latin_hypercube_vectors(count: int, schema: dict, seed: int) -> np.ndarray:

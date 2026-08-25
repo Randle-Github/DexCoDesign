@@ -5,7 +5,14 @@ from pathlib import Path
 
 import numpy as np
 
-from dexcodesign.morphology.general_grammar import build_schema, decode_vector
+from dexcodesign.morphology.general_grammar import (
+    GRAMMAR_ID,
+    build_schema,
+    decode_vector,
+    graph_spec_from_vector,
+    palm_prototype_coordinate,
+    palm_prototype_index,
+)
 from dexcodesign.morphology.generate import editable_finger_segments, main_finger_path
 
 
@@ -61,6 +68,7 @@ def test_general_extremes_restore_the_original_broad_search_range() -> None:
     upper = decode_vector(np.ones(17), schema)
     assert lower["palm"]["prototype_index"] == 0
     assert upper["palm"]["prototype_index"] == 31
+    assert upper["palm"]["expansion"] == 0.70
     assert set(lower["width_scales"].values()) == {0.60}
     assert set(upper["width_scales"].values()) == {1.45}
     assert {
@@ -73,3 +81,32 @@ def test_general_extremes_restore_the_original_broad_search_range() -> None:
         for finger in upper["fingers"].values()
         for value in finger["length_scales_by_source_part"].values()
     } == {1.60}
+
+
+def test_ordered_palm_bank_and_graph_are_canonical() -> None:
+    schema = build_schema(
+        "wuji_hand_2",
+        {
+            "thumb": (6, 11, 16),
+            "index": (7, 12, 17),
+            "middle": (8, 13, 18),
+            "ring": (9, 14, 19),
+            "pinky": (10, 15, 20),
+        },
+        palm_affine_editable=True,
+    )
+    assert schema["vector_dimension"] == 23
+    for index in range(32):
+        coordinate = palm_prototype_coordinate(index)
+        assert palm_prototype_index(coordinate) == index
+    source = graph_spec_from_vector(
+        np.zeros(schema["vector_dimension"]), schema, hand_id="source"
+    )
+    maximum = np.zeros(schema["vector_dimension"])
+    maximum[0] = 1.0
+    star = graph_spec_from_vector(maximum, schema, hand_id="star")
+    assert source["grammar_id"] == GRAMMAR_ID
+    assert source["palm"]["layout_mode"] == "source_fixed"
+    assert star["palm"]["layout_mode"] == "source_star_fusion"
+    assert star["palm"]["prototype_index"] == 31
+    assert star["palm"]["expansion"] == 0.70

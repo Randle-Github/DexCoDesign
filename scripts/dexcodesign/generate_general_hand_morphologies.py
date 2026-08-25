@@ -20,7 +20,7 @@ sys.path.insert(0, str(SOURCE))
 from dexcodesign.morphology.general_grammar import (  # noqa: E402
     FINGERS,
     build_schema,
-    decode_vector,
+    graph_spec_from_vector,
     latin_hypercube_vectors,
 )
 from dexcodesign.morphology.generate import (  # noqa: E402
@@ -105,27 +105,11 @@ def main() -> int:
             count, schema, seed=args.seed + 97 * source_index
         )
         for local_index, vector in enumerate(vectors):
-            decoded = decode_vector(vector, schema)
-            if local_index == 0:
-                layout = "source_fixed"
-            else:
-                layout = "anthropomorphic"
-            palm = {
-                "layout_mode": layout,
-                "prototype_bank_id": f"{source_id}:palm32",
-                **decoded["palm"],
-            }
-            designs.append({
-                "hand_id": f"general_v2_{serial:03d}_{source_id}",
-                "source_hand": source_id,
-                "palm": palm,
-                "fingers": {
-                    **decoded["fingers"],
-                    "width_scales": decoded["width_scales"],
-                },
-                "general_morphology_vector": vector.tolist(),
-                "general_morphology_vector_names": schema["vector_names"],
-            })
+            designs.append(graph_spec_from_vector(
+                vector,
+                schema,
+                hand_id=f"general_v3_{serial:03d}_{source_id}",
+            ))
             serial += 1
 
     graph_path = output / "graph_spec.json"

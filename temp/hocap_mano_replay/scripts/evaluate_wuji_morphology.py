@@ -18,17 +18,14 @@ REPO_ROOT = SCRIPT_ROOT.parents[2]
 DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
 SOURCE_HAND_ID = "wuji_hand_2"
 sys.path.insert(0, str(SCRIPT_ROOT))
-from wuji_morphology_space import (  # noqa: E402
-    FINGERS,
-    LOWER_BOUNDS,
+from wuji_general_space import (  # noqa: E402
     PALM_EXPANSION_LEVELS,
     PALM_EXPANSION_MAX,
     PALM_EXPANSION_MIN,
     SOURCE_VECTOR,
-    UPPER_BOUNDS,
     VECTOR_NAMES,
+    graph_from_search_vector,
     palm_expansion_from_index,
-    validate_design_vectors,
 )
 import retarget_all_hands as retarget  # noqa: E402
 import run_generated_hand_retarget_physics as generated  # noqa: E402
@@ -36,38 +33,7 @@ import simulate_retargeted_all_hands as physics  # noqa: E402
 
 
 def vector_to_graph(vector: np.ndarray, hand_id: str) -> dict[str, object]:
-    if vector.shape != (len(VECTOR_NAMES),):
-        raise ValueError(
-            f"expected {len(VECTOR_NAMES)} reshape values, got {vector.shape}"
-        )
-    vector = validate_design_vectors(vector)
-    finger_length = vector[4:9]
-    finger_radius = vector[9:14]
-    return {
-        "schema_version": 1,
-        "hand_id": hand_id,
-        "source_hand": SOURCE_HAND_ID,
-        "palm": {
-            "layout_mode": "anthropomorphic",
-            "expansion_index": int(vector[0]),
-            "expansion_levels": PALM_EXPANSION_LEVELS,
-            "expansion": float(palm_expansion_from_index(vector[0])),
-            "scale_x": float(vector[1]),
-            "scale_z": float(vector[2]),
-            "yaw": float(vector[3]),
-        },
-        "fingers": {
-            "default_length_scale": 1.0,
-            "default_radius_scale": 1.0,
-            **{
-                finger: {
-                    "length_scale": float(finger_length[index]),
-                    "radius_scale": float(finger_radius[index]),
-                }
-                for index, finger in enumerate(FINGERS)
-            },
-        },
-    }
+    return graph_from_search_vector(vector, hand_id)
 
 
 def prepare_source_runtime(output_dir: Path) -> Path:

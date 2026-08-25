@@ -19,7 +19,7 @@ import torch
 from torch import nn
 from torch.distributions import Categorical, Normal
 
-from wuji_morphology_space import (
+from wuji_general_space import (
     CONTINUOUS_LOWER_BOUNDS,
     CONTINUOUS_UPPER_BOUNDS,
     LOWER_BOUNDS,

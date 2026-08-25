@@ -61,13 +61,16 @@ TIP_LINKS = {
     "ring": "l_ring_finger_tip",
     "pinky": "l_pinky_tip",
 }
-from wuji_morphology_space import (  # noqa: E402
+from wuji_general_space import (  # noqa: E402
     FINGERS,
+    FINGER_LENGTH_INDICES,
     LOWER_BOUNDS,
+    NORMAL_DISTAL_WIDTH_INDEX,
     PALM_EXPANSION_LEVELS,
     PALM_EXPANSION_MAX,
     PALM_EXPANSION_MIN,
     SOURCE_VECTOR,
+    THUMB_DISTAL_WIDTH_INDEX,
     UPPER_BOUNDS,
     VECTOR_NAMES,
     resolve_design_vectors,
@@ -242,7 +245,11 @@ class WujiBatchKinematics:
         joint_positions = []
         joint_axes = []
         joint_q_indices = []
-        length = vector[..., 4 + finger_index]
+        length_indices = FINGER_LENGTH_INDICES[FINGERS[finger_index]]
+        if len(length_indices) != 3:
+            raise ValueError(
+                f"{FINGERS[finger_index]} needs three editable main-chain segments"
+            )
         palm_scale = torch.stack(
             (vector[..., 1], torch.ones_like(vector[..., 1]), vector[..., 2]), dim=-1
         )
@@ -263,7 +270,11 @@ class WujiBatchKinematics:
                 )
                 xyz = (palm_yaw @ xyz.unsqueeze(-1)).squeeze(-1)
                 origin_rotation = palm_yaw @ origin_rotation
-            else:
+            elif chain_rank >= 2:
+                # The first two edges end at rigid motor/interface bodies.
+                # The remaining three edges are exactly the three editable
+                # main-chain segments in the canonical general grammar.
+                length = vector[..., length_indices[chain_rank - 2]]
                 xyz = xyz * length.unsqueeze(-1)
             position = position + (rotation @ xyz.unsqueeze(-1)).squeeze(-1)
             rotation = rotation @ origin_rotation
@@ -301,7 +312,7 @@ class WujiBatchKinematics:
         candidate_count = vectors.shape[0]
         frame_count = seed_q.shape[0]
         identity_vector = torch.tensor(
-            [0.0, 1.0, 1.0, 0.0, *([1.0] * 10)],
+            resolve_design_vectors(SOURCE_VECTOR[None, :])[0],
             device=self.device,
             dtype=self.dtype,
         ).reshape(1, 1, -1)
@@ -519,7 +530,17 @@ class WujiBatchKinematics:
                 ),
             )
             cap_distance = cap_distance.amin(dim=-1)
-            tip_radius = 0.009 * vector[..., 9:14]
+            tip_width_indices = (
+                THUMB_DISTAL_WIDTH_INDEX,
+                NORMAL_DISTAL_WIDTH_INDEX,
+                NORMAL_DISTAL_WIDTH_INDEX,
+                NORMAL_DISTAL_WIDTH_INDEX,
+                NORMAL_DISTAL_WIDTH_INDEX,
+            )
+            tip_radius = 0.009 * torch.stack(
+                tuple(vector[..., index] for index in tip_width_indices),
+                dim=-1,
+            )
             # Smooth proposal score avoids the zero-gradient/zero-ranking
             # problem of exact binary contact. Exact top-k uses binary reward.
             soft_contact = torch.sigmoid((tip_radius - cap_distance) / 0.0025)

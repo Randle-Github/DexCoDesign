@@ -48,6 +48,21 @@ its complete data flow is documented in
 dependency on `temp/`. Generated reference parts and morphology libraries are
 written to `artifacts/hand_morphology/`.
 
+The two supported hand grammars and the boundary between reusable morphology
+code and the experimental HO-Cap/WUJI training layer are recorded in
+[`docs/project_architecture_audit.md`](docs/project_architecture_audit.md).
+WUJI morphology SAC consumes the same general simulation-hand grammar and palm
+prototype bank as direct morphology generation; it does not define a third
+grammar.
+
+Launch the three learning modes through one interface:
+
+```bash
+scripts/dexcodesign/launch_hand_learning.sh ppo     --reference REF.npz --object-usd OBJECT.usd --output OUT
+scripts/dexcodesign/launch_hand_learning.sh sac     --reference REF.npz --object-usd OBJECT.usd --output OUT
+scripts/dexcodesign/launch_hand_learning.sh sac-ppo --reference REF.npz --object-usd OBJECT.usd --output OUT
+```
+
 Generate 100 source-bound hands with:
 
 ```bash
