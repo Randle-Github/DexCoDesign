@@ -90,6 +90,7 @@ def test_hybrid_runner_keeps_rank_local_sampling_and_global_gather() -> None:
     assert "global_vectors[begin:end]" in runner
     assert "torch.distributed.all_gather_object" in runner
     assert "normalized_morphology_context" in runner
+    assert "if fixed_reference is None:\n        with np.load(args_cli.seed_trajectory)" in runner
     assert '--nproc_per_node="${GPU_COUNT}"' in sbatch
     assert '--morphology-replicas "${MORPHOLOGY_REPLICAS}"' in sbatch
     assert '--ppo-rollout-multiplier "${PPO_ROLLOUT_MULTIPLIER}"' in sbatch

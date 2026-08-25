@@ -1171,20 +1171,24 @@ def main(env_cfg, agent_cfg) -> None:
             "distributed execution is only supported with "
             "--shared-ppo-iterations > 0"
         )
-    with np.load(args_cli.seed_trajectory) as seed:
-        joint_names = joint_names_from_seed(seed)
-        seed_arrays = {
-            "qpos": seed["qpos"].astype(np.float32),
-            "wrist_position": seed["wrist_position"].astype(np.float32),
-            "wrist_quaternion_xyzw": seed["wrist_quaternion_xyzw"].astype(
-                np.float32
-            ),
-            "frame_ids": seed["frame_ids"].astype(np.int64),
-            "qpos_ids": seed["qpos_ids"].astype(np.int64),
-        }
-    kinematics = WujiBatchKinematics(joint_names, torch.device("cuda"))
-    seed_q = torch.from_numpy(seed_arrays["qpos"]).cuda()
     fixed_reference = args_cli.fixed_reference
+    kinematics: WujiBatchKinematics | None = None
+    seed_q: torch.Tensor | None = None
+    seed_arrays: dict[str, np.ndarray] | None = None
+    if fixed_reference is None:
+        with np.load(args_cli.seed_trajectory) as seed:
+            joint_names = joint_names_from_seed(seed)
+            seed_arrays = {
+                "qpos": seed["qpos"].astype(np.float32),
+                "wrist_position": seed["wrist_position"].astype(np.float32),
+                "wrist_quaternion_xyzw": seed["wrist_quaternion_xyzw"].astype(
+                    np.float32
+                ),
+                "frame_ids": seed["frame_ids"].astype(np.int64),
+                "qpos_ids": seed["qpos_ids"].astype(np.int64),
+            }
+        kinematics = WujiBatchKinematics(joint_names, torch.device("cuda"))
+        seed_q = torch.from_numpy(seed_arrays["qpos"]).cuda()
     if fixed_reference is not None:
         if not fixed_reference.is_file():
             raise FileNotFoundError(
@@ -1280,6 +1284,9 @@ def main(env_cfg, agent_cfg) -> None:
         timings = {"sac_update_and_sample_seconds": time.perf_counter() - sac_start}
         retarget_path = generation_root / "gpu_retarget_all.npz"
         if fixed_reference is None:
+            assert kinematics is not None
+            assert seed_q is not None
+            assert seed_arrays is not None
             timings["retarget"] = retarget(
                 vectors_path,
                 retarget_path,
