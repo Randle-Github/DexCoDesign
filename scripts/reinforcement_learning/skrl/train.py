@@ -81,6 +81,7 @@ import time
 from datetime import datetime
 
 import gymnasium as gym
+import numpy as np
 import skrl
 from packaging import version
 
@@ -126,6 +127,69 @@ if args_cli.agent is None:
 else:
     agent_cfg_entry_point = args_cli.agent
     algorithm = agent_cfg_entry_point.split("_cfg")[0].split("skrl_")[-1].lower()
+
+
+def enable_direct_wandb_logging(runner) -> None:
+    """Send SKRL's aggregated TensorBoard scalars directly to W&B.
+
+    SKRL normally relies on W&B's ``sync_tensorboard`` integration. Some W&B
+    releases upload the event file without converting its summaries into run
+    history, leaving the online run without reward curves. Mirror the same
+    aggregates to W&B immediately before SKRL clears its tracking buffer.
+    """
+    try:
+        import wandb
+
+        if wandb.run is None:
+            return
+        wandb.define_metric("trainer_step")
+        wandb.define_metric("*", step_metric="trainer_step")
+
+        agent = runner.agent
+        original_write = agent.write_tracking_data
+
+        def write_tracking_data_with_wandb(*, timestep: int, timesteps: int) -> None:
+            metrics: dict[str, float] = {}
+            for tag, values in agent.tracking_data.items():
+                if tag.endswith("(min)"):
+                    metrics[tag] = float(np.min(values))
+                elif tag.endswith("(max)"):
+                    metrics[tag] = float(np.max(values))
+                else:
+                    metrics[tag] = float(np.mean(values))
+            original_write(timestep=timestep, timesteps=timesteps)
+            if metrics:
+                wandb.log({"trainer_step": timestep, **metrics})
+
+        agent.write_tracking_data = write_tracking_data_with_wandb
+        print("[INFO] Enabled direct SKRL scalar logging to W&B.")
+    except Exception as error:
+        logger.warning("Failed to enable direct W&B scalar logging: %s", error)
+
+
+def log_environment_config_to_wandb(env_cfg, env_yaml_path: str, log_dir: str) -> None:
+    """Record resolved residual-task settings and the complete environment YAML."""
+    try:
+        import wandb
+
+        if wandb.run is None:
+            return
+        config = {
+            f"env.{name}": getattr(env_cfg, name)
+            for name in (
+                "residual_root_position_scale",
+                "residual_root_rotation_scale",
+                "residual_finger_scale",
+                "disable_hand_support_collisions",
+            )
+            if hasattr(env_cfg, name)
+        }
+        if config:
+            wandb.config.update(config, allow_val_change=True)
+        wandb.save(env_yaml_path, base_path=log_dir, policy="now")
+        print("[INFO] Logged resolved environment configuration to W&B.")
+    except Exception as error:
+        logger.warning("Failed to log environment configuration to W&B: %s", error)
 
 
 @hydra_task_config(args_cli.task, agent_cfg_entry_point)
@@ -180,8 +244,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     log_dir = os.path.join(log_root_path, log_dir)
 
     # dump the configuration into log-directory
-    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
-    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    env_yaml_path = os.path.join(log_dir, "params", "env.yaml")
+    agent_yaml_path = os.path.join(log_dir, "params", "agent.yaml")
+    dump_yaml(env_yaml_path, env_cfg)
+    dump_yaml(agent_yaml_path, agent_cfg)
 
     # get checkpoint path (to resume training)
     resume_path = retrieve_file_path(args_cli.checkpoint) if args_cli.checkpoint else None
@@ -224,6 +290,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # configure and instantiate the skrl runner
     # https://skrl.readthedocs.io/en/latest/api/utils/runner.html
     runner = Runner(env, agent_cfg)
+    if agent_cfg["agent"]["experiment"].get("wandb", False):
+        enable_direct_wandb_logging(runner)
+        log_environment_config_to_wandb(env_cfg, env_yaml_path, log_dir)
 
     # load checkpoint (if specified)
     if resume_path:

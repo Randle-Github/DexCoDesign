@@ -97,3 +97,10 @@ Run the official Allegro Hand PPO example:
 ```
 
 The next project layer should add DexCoDesign-owned task definitions, common evaluation metrics, and explicit PPO/SAC configurations without modifying the vendored Isaac Lab core unnecessarily.
+
+## Morphology SAC
+
+The WUJI morphology SAC and optional shared residual PPO integration is
+documented in [`docs/morphology_sac.md`](docs/morphology_sac.md). It imports the
+editable `dexcodesign` package from this monorepo; no second morphology package
+or repository-local `PYTHONPATH` override is used.

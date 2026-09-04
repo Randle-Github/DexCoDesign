@@ -22,7 +22,8 @@
           "passive_mimic_dofs": 0,
           "scalar_dofs": 28,
           "source_format": "mjcf",
-          "source_path": "mano/source/left.canonical.xml"
+          "source_path": "mano/source/left.canonical.xml",
+          "collision_geometry": "visual_mesh"
         },
         "right": {
           "format": "urdf",
@@ -31,7 +32,8 @@
           "passive_mimic_dofs": 0,
           "scalar_dofs": 28,
           "source_format": "mjcf",
-          "source_path": "mano/source/right.canonical.xml"
+          "source_path": "mano/source/right.canonical.xml",
+          "collision_geometry": "visual_mesh"
         }
       }
     },
@@ -354,7 +356,7 @@
     "active_dofs": 498,
     "passive_mimic_dofs": 36,
     "scalar_dofs": 534,
-    "assets_with_changes": 12,
+    "assets_with_changes": 14,
     "loose_passive_dofs": 0,
     "missing_meshes": 0
   }

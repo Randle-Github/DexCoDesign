@@ -19,8 +19,13 @@ ROOT = HERE.parents[3]
 ARTIFACT_ROOT = ROOT / "artifacts" / "hand_morphology"
 SOURCE_GRAPHS = ARTIFACT_ROOT / "reference_graphs.json"
 LIBRARY = ARTIFACT_ROOT / "mechanism_bundles.json"
-OUTPUT = ARTIFACT_ROOT / "generated_100" / "hand_ir.json"
-AUDIT = ARTIFACT_ROOT / "generated_100" / "generation_summary.json"
+GENERATED_ROOT = Path(
+    os.environ.get(
+        "HAND_GENERATION_ROOT", str(ARTIFACT_ROOT / "generated_100")
+    )
+)
+OUTPUT = GENERATED_ROOT / "hand_ir.json"
+AUDIT = GENERATED_ROOT / "generation_summary.json"
 ASSET_ROOT = ROOT / "assets" / "robot_hands"
 DIRECT_REGISTRY = ASSET_ROOT / "direct_motor" / "registry.json"
 DIGITS = ("thumb", "index", "middle", "ring", "pinky")
@@ -34,6 +39,7 @@ FIFTH_SLOT_PITCH = 0.42
 PALM_LAYOUT_MODES = (
     "source_fixed",
     "anthropomorphic",
+    "source_star_fusion",
     "symmetric",
     "asymmetric",
 )
@@ -190,6 +196,41 @@ def rotation_from_to(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     return np.eye(3) + skew + (skew @ skew) / (1.0 + cosine)
 
 
+def interpolate_direction_frame(
+    source_frame: np.ndarray,
+    target_direction: np.ndarray,
+    fraction: float,
+) -> np.ndarray:
+    """Rotate a complete attachment frame toward a direction by a fraction."""
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("frame interpolation fraction must lie in [0, 1]")
+    if fraction == 0.0:
+        return source_frame.copy()
+    source_direction = normalize(
+        source_frame[:, 2], np.asarray([0.0, 0.0, 1.0])
+    )
+    target_direction = normalize(target_direction, source_direction)
+    cross = np.cross(source_direction, target_direction)
+    sine = float(np.linalg.norm(cross))
+    cosine = float(np.clip(np.dot(source_direction, target_direction), -1.0, 1.0))
+    if sine < 1.0e-10:
+        if cosine > 0.0:
+            return source_frame.copy()
+        basis = np.eye(3)[int(np.argmin(np.abs(source_direction)))]
+        axis = normalize(np.cross(source_direction, basis), np.asarray([1.0, 0.0, 0.0]))
+    else:
+        axis = cross / sine
+    angle = math.atan2(sine, cosine) * fraction
+    x, y, z = axis
+    skew = np.asarray(((0.0, -z, y), (z, 0.0, -x), (-y, x, 0.0)))
+    rotation = (
+        math.cos(angle) * np.eye(3)
+        + (1.0 - math.cos(angle)) * np.outer(axis, axis)
+        + math.sin(angle) * skew
+    )
+    return rotation @ source_frame
+
+
 def frame_from_axis_direction(axis: np.ndarray, direction: np.ndarray) -> np.ndarray:
     z = normalize(direction, np.asarray([0.0, 0.0, 1.0]))
     x = axis - float(np.dot(axis, z)) * z
@@ -230,6 +271,7 @@ def vary_attachment_layout(
     rng: np.random.Generator,
     target_slots: dict[str, dict],
     palm_rotation: np.ndarray,
+    expansion: float = 1.0,
 ) -> list[dict]:
     """Move graph attachment frames a small distance along the palm edge.
 
@@ -247,7 +289,7 @@ def vary_attachment_layout(
         outward = normalize(slot["frame"][:, 2], np.asarray([0.0, 0.0, 1.0]))
         tangent = normalize(np.cross(palm_normal, outward), palm_rotation[:, 0])
         limit = (0.035 if role == "thumb" else 0.045) * layout_scale
-        offset = float(rng.uniform(-limit, limit))
+        offset = expansion * float(rng.uniform(-limit, limit))
         slot["anchor"] = slot["anchor"] + offset * tangent
         edits.append({
             "role": role,
@@ -300,6 +342,7 @@ def apply_global_palm_layout(
     palm_rotation: np.ndarray,
     mode: str,
     palm_bounds_local_xz: np.ndarray | None = None,
+    palm_expansion: float | None = None,
 ) -> dict:
     """House of Dextra style discrete-slot motor placement.
 
@@ -310,6 +353,10 @@ def apply_global_palm_layout(
     """
     if mode not in PALM_LAYOUT_MODES:
         raise ValueError(f"unknown palm layout mode {mode!r}")
+    if palm_expansion is not None and not 0.0 <= palm_expansion <= 1.0:
+        raise ValueError(
+            f"palm_expansion must lie in [0, 1], got {palm_expansion}"
+        )
     for slot in target_slots.values():
         slot["reference_anchor"] = slot["anchor"].copy()
         slot["reference_frame"] = slot["frame"].copy()
@@ -323,10 +370,12 @@ def apply_global_palm_layout(
             "minimum_arc_clearance": None,
             "source_order_locked": True,
             "attachment_poses_locked": True,
+            "palm_expansion": 0.0,
             "thickness_scale_locked": 1.0,
         }
 
     if mode == "anthropomorphic":
+        resolved_expansion = 1.0 if palm_expansion is None else palm_expansion
         roles = list(target_slots)
         before = np.asarray([
             [np.dot(target_slots[role]["anchor"], palm_rotation[:, 0]),
@@ -334,7 +383,9 @@ def apply_global_palm_layout(
             for role in roles
         ])
         source_order = canonical_cyclic_roles(roles, before)
-        edits = vary_attachment_layout(rng, target_slots, palm_rotation)
+        edits = vary_attachment_layout(
+            rng, target_slots, palm_rotation, resolved_expansion
+        )
         after = np.asarray([
             [np.dot(target_slots[role]["anchor"], palm_rotation[:, 0]),
              np.dot(target_slots[role]["anchor"], palm_rotation[:, 2])]
@@ -349,6 +400,7 @@ def apply_global_palm_layout(
             "source_cyclic_roles": source_order,
             "target_cyclic_roles": target_order,
             "cyclic_order_preserved": True,
+            "palm_expansion": resolved_expansion,
             "slot_count": None,
             "mount_slots": None,
             "minimum_arc_clearance": None,
@@ -394,7 +446,8 @@ def apply_global_palm_layout(
         )
         return distance > mount_exclusion_slots
 
-    if mode == "symmetric":
+    radial_symmetric = mode in {"symmetric", "source_star_fusion"}
+    if radial_symmetric:
         starts = []
         for start in range(slot_count):
             proposal = [
@@ -405,7 +458,27 @@ def apply_global_palm_layout(
                 starts.append((start, proposal))
         if not starts:
             raise ValueError("no symmetric House layout can preserve the root mount exclusion sector")
-        _, mount_slots = starts[int(rng.integers(len(starts)))]
+        if mode == "source_star_fusion":
+            source_angles = np.mod(
+                np.arctan2(local[:, 1] - center_z, local[:, 0] - center_x),
+                2.0 * np.pi,
+            )
+
+            def source_alignment(item: tuple[int, list[int]]) -> tuple[float, int]:
+                start, proposal = item
+                proposal_angles = 2.0 * np.pi * np.sort(proposal) / slot_count
+                ordered = np.sort(source_angles)
+                cost = min(
+                    float(np.sum(np.angle(np.exp(1j * (
+                        np.roll(proposal_angles, -shift) - ordered
+                    ))) ** 2))
+                    for shift in range(count)
+                )
+                return cost, start
+
+            _, mount_slots = min(starts, key=source_alignment)
+        else:
+            _, mount_slots = starts[int(rng.integers(len(starts)))]
     else:
         mount_slots = []
         for _ in range(5000):
@@ -460,8 +533,12 @@ def apply_global_palm_layout(
         required_radius = max(required_radius, required / max(0.76 * gap, 1.0e-5))
     palm_radius = required_radius
     radii = rng.uniform(0.76 * palm_radius, 0.90 * palm_radius, size=count)
-    if mode == "symmetric":
-        radii[:] = float(rng.uniform(0.82, 0.88)) * palm_radius
+    if radial_symmetric:
+        radii[:] = (
+            0.85 * palm_radius
+            if mode == "source_star_fusion"
+            else float(rng.uniform(0.82, 0.88)) * palm_radius
+        )
 
     # House positions define the design direction, but manufacturing-oriented
     # samples should not jump all the way from a source palm to that target in
@@ -474,7 +551,11 @@ def apply_global_palm_layout(
         center_z + radii * np.sin(angles),
     ])
     source_centers = local.copy()
-    requested_blend = float(rng.uniform(0.52, 0.66))
+    requested_blend = (
+        float(rng.uniform(0.52, 0.66))
+        if palm_expansion is None
+        else palm_expansion
+    )
 
     def blended_clearance(alpha: float) -> tuple[np.ndarray, float]:
         centers = source_centers + alpha * (house_centers - source_centers)
@@ -485,9 +566,22 @@ def apply_global_palm_layout(
                 values.append(float(np.linalg.norm(centers[index_a] - centers[index_b])) - required)
         return centers, min(values, default=float("inf"))
 
+    if requested_blend == 0.0:
+        return {
+            "mode": mode,
+            "edits": [],
+            "slot_count": slot_count,
+            "mount_slots": mount_slots,
+            "source_order_locked": True,
+            "attachment_poses_locked": True,
+            "palm_expansion": 0.0,
+            "source_house_blend": 0.0,
+            "thickness_scale_locked": 1.0,
+        }
+
     layout_blend = requested_blend
     blended_centers, actual_clearance = blended_clearance(layout_blend)
-    if actual_clearance < -1.0e-8:
+    if actual_clearance < -1.0e-8 and palm_expansion is None:
         for candidate_blend in np.linspace(requested_blend, 0.86, 35):
             candidate_centers, candidate_clearance = blended_clearance(float(candidate_blend))
             if candidate_clearance >= -1.0e-8:
@@ -497,6 +591,11 @@ def apply_global_palm_layout(
                 break
         else:
             raise ValueError("source/House blended layout cannot satisfy motor clearance")
+    elif actual_clearance < -1.0e-8:
+        raise ValueError(
+            f"palm_expansion={requested_blend:.6g} violates motor clearance "
+            f"by {-actual_clearance:.6g} canonical length units"
+        )
 
     edits = []
     for index, (role, angle, radius) in enumerate(zip(roles, angles, radii)):
@@ -507,10 +606,11 @@ def apply_global_palm_layout(
         target += float(np.dot(target_slots[role]["reference_anchor"], ey)) * ey
         actual_direction = normalize(q - center, [math.cos(float(angle)), math.sin(float(angle))])
         outgoing = normalize(actual_direction[0] * ex + actual_direction[1] * ez, ez)
-        source_axis = target_slots[role]["reference_frame"][:, 0]
         old = target_slots[role]["anchor"].copy()
         target_slots[role]["anchor"] = target
-        target_slots[role]["frame"] = frame_from_axis_direction(source_axis, outgoing)
+        target_slots[role]["frame"] = interpolate_direction_frame(
+            target_slots[role]["reference_frame"], outgoing, layout_blend
+        )
         edits.append({
             "role": role,
             "angle_degrees": math.degrees(float(angle)),
@@ -551,6 +651,7 @@ def apply_global_palm_layout(
         "minimum_actual_motor_clearance": actual_clearance,
         "requested_source_house_blend": requested_blend,
         "source_house_blend": layout_blend,
+        "palm_expansion": layout_blend,
         "maximum_attachment_displacement": float(np.max(
             np.linalg.norm(blended_centers - source_centers, axis=1)
         )),
@@ -585,11 +686,116 @@ def extra_slot(base_slots: dict[str, dict], palm_linear: np.ndarray) -> dict:
     return target
 
 
+def main_finger_path(source_hand: dict, bundle: dict) -> list[int]:
+    """Return the source root-to-fingertip chain, excluding linkage branches.
+
+    Complete mechanism bundles may contain auxiliary linkage bodies.  The
+    longest root-to-leaf path is the physical digit chain; auxiliary branches
+    remain in the mechanism but never become independent phalanx parameters.
+    """
+    ids = {int(source_id) for source_id in bundle["source_part_ids"]}
+    root = int(bundle["root_part_id"])
+    children: dict[int, list[int]] = defaultdict(list)
+    for source_id in ids:
+        parent = source_hand["parts"][source_id]["parent"]
+        if parent in ids:
+            children[int(parent)].append(source_id)
+
+    paths: list[list[int]] = []
+
+    def visit(source_id: int, path: list[int]) -> None:
+        next_ids = sorted(children[source_id])
+        if not next_ids:
+            paths.append(path)
+            return
+        for child_id in next_ids:
+            visit(child_id, [*path, child_id])
+
+    visit(root, [root])
+    if not paths:
+        raise ValueError(f"{bundle['bundle_id']}: no root-to-leaf path")
+
+    def path_score(path: list[int]) -> tuple[int, float]:
+        return (
+            len(path),
+            sum(float(source_hand["parts"][source_id]["edge_length"]) for source_id in path),
+        )
+
+    return max(paths, key=path_score)
+
+
+def editable_finger_segments(source_hand: dict, bundle: dict) -> list[int]:
+    """Return actual phalanges, excluding motor roots and zero-span frames."""
+    path = main_finger_path(source_hand, bundle)
+    editable: list[int] = []
+    for path_index, source_id in enumerate(path[1:], start=1):
+        node = source_hand["parts"][source_id]
+        if "mesh" not in node:
+            continue
+        terminal = path_index == len(path) - 1
+        if not terminal:
+            child = source_hand["parts"][path[path_index + 1]]
+            if np.linalg.norm(np.asarray(child["relative_pos"], dtype=float)) <= 1.0e-8:
+                continue
+        editable.append(source_id)
+    return editable
+
+
+def _perpendicular_axis(axis: np.ndarray, preferred: np.ndarray) -> np.ndarray:
+    width = preferred - float(np.dot(preferred, axis)) * axis
+    if np.linalg.norm(width) < 1.0e-8:
+        fallback = np.asarray([1.0, 0.0, 0.0])
+        if abs(float(np.dot(fallback, axis))) > 0.90:
+            fallback = np.asarray([0.0, 1.0, 0.0])
+        width = fallback - float(np.dot(fallback, axis)) * axis
+    return width / np.linalg.norm(width)
+
+
+def _map_connector_point(point: np.ndarray, specification: dict) -> np.ndarray:
+    """Apply the same rigid-cap longitudinal map used by the mesh compiler."""
+    axis = np.asarray(specification["longitudinal_axis"], dtype=float)
+    source_length = float(specification["source_length_canonical"])
+    target_length = float(specification["target_length_canonical"])
+    proximal = float(specification["proximal_cap_fraction"]) * source_length
+    distal = (1.0 - float(specification["distal_cap_fraction"])) * source_length
+    target_middle = target_length - proximal - (source_length - distal)
+    if target_middle <= 0.0:
+        raise ValueError("target segment would invert its rigid connector caps")
+    coordinate = float(np.dot(point, axis))
+    if coordinate <= proximal:
+        mapped = coordinate
+    elif coordinate < distal:
+        mapped = proximal + (coordinate - proximal) * target_middle / (distal - proximal)
+    else:
+        mapped = coordinate + target_length - source_length
+    return point + (mapped - coordinate) * axis
+
+
+def _terminal_segment_profile(source_node: dict, source_axis: np.ndarray) -> tuple[np.ndarray, float]:
+    """Infer a terminal link's outward axis and joint-to-tip source length."""
+    axis = source_axis / np.linalg.norm(source_axis)
+    centroid = np.asarray(source_node["mesh"]["centroid_offset"], dtype=float)
+    if float(np.dot(centroid, axis)) < 0.0:
+        axis = -axis
+    bounds = np.asarray(source_node["mesh"]["bounds"], dtype=float)
+    corners = np.asarray([
+        [x, y, z]
+        for x in bounds[:, 0]
+        for y in bounds[:, 1]
+        for z in bounds[:, 2]
+    ])
+    source_length = float(np.max(corners @ axis))
+    if source_length <= 1.0e-6:
+        raise ValueError(f"part {source_node['id']} has no positive terminal extent")
+    return axis, source_length
+
+
 def instantiate_finger(
     output: list[dict], slot_id: int, output_role: str, target_slot: dict,
     bundle: dict, source_hand: dict, candidates: dict[str, dict],
     length_scale: float, radius_scale: float,
     lock_proximal_hardware: bool = False,
+    segment_parameters: dict[int, dict] | None = None,
 ) -> dict:
     ids = bundle["source_part_ids"]
     block_set = set(ids)
@@ -614,6 +820,52 @@ def instantiate_finger(
         + (length_scale - radius_scale) * np.outer(reference_axis, reference_axis)
     )
     reference_linear = reference_deform @ reference_rotation
+    segment_deformations: dict[int, dict] = {}
+    if segment_parameters is not None:
+        path = main_finger_path(source_hand, bundle)
+        editable_path = editable_finger_segments(source_hand, bundle)
+        if set(segment_parameters) != set(editable_path):
+            raise ValueError(
+                f"{output_role}: segment parameters must cover main path "
+                f"{editable_path}, got {sorted(segment_parameters)}"
+            )
+        for path_index, source_id in enumerate(path):
+            if source_id not in segment_parameters:
+                continue
+            source_node = source_hand["parts"][source_id]
+            terminal = path_index == len(path) - 1
+            if terminal:
+                incoming = np.asarray(source_node["relative_pos"], dtype=float)
+                source_axis, source_length = _terminal_segment_profile(
+                    source_node, incoming
+                )
+            else:
+                child_id = path[path_index + 1]
+                child_offset = np.asarray(
+                    source_hand["parts"][child_id]["relative_pos"], dtype=float
+                )
+                source_length = float(np.linalg.norm(child_offset))
+                if source_length <= 1.0e-8:
+                    raise ValueError(f"{output_role}: coincident main-chain joints")
+                source_axis = child_offset / source_length
+            target_longitudinal = rotation @ source_axis
+            target_joint_axis = rotation @ np.asarray(
+                source_node["joint_axis"], dtype=float
+            )
+            width_axis = _perpendicular_axis(target_longitudinal, target_joint_axis)
+            parameters = segment_parameters[source_id]
+            segment_deformations[source_id] = {
+                "longitudinal_axis": target_longitudinal.tolist(),
+                "width_axis": width_axis.tolist(),
+                "source_length_canonical": source_length,
+                "target_length_canonical": source_length * float(parameters["length_scale"]),
+                "width_scale": float(parameters["width_scale"]),
+                "thickness_scale": 1.0,
+                "proximal_cap_fraction": 0.12,
+                "distal_cap_fraction": 0.0 if terminal else 0.12,
+                "distal_connector_fixed": not terminal,
+                "deform_middle_span_only": True,
+            }
     id_map: dict[int, int] = {}
     root_new_id = None
     for rank, source_id in enumerate(ids):
@@ -622,10 +874,14 @@ def instantiate_finger(
         internal = parent_source in block_set
         new_id = len(output)
         id_map[source_id] = new_id
-        node_linear = rotation if lock_proximal_hardware and rank == 0 else linear
+        if segment_parameters is None:
+            node_linear = rotation if lock_proximal_hardware and rank == 0 else linear
+        else:
+            node_linear = rotation
         node_reference_linear = (
             reference_rotation
-            if lock_proximal_hardware and rank == 0
+            if segment_parameters is not None
+            or (lock_proximal_hardware and rank == 0)
             else reference_linear
         )
         if not internal:
@@ -633,12 +889,24 @@ def instantiate_finger(
             parent = 0
             root_new_id = new_id
         else:
-            relative = linear @ np.asarray(source_node["relative_pos"], dtype=float)
+            source_relative = rotation @ np.asarray(
+                source_node["relative_pos"], dtype=float
+            )
+            if segment_parameters is not None and int(parent_source) in segment_deformations:
+                relative = _map_connector_point(
+                    source_relative, segment_deformations[int(parent_source)]
+                )
+            else:
+                relative = (
+                    linear @ np.asarray(source_node["relative_pos"], dtype=float)
+                    if segment_parameters is None
+                    else source_relative
+                )
             parent = id_map[int(parent_source)]
         candidate_id = f"{bundle['source_hand_id']}:part:{source_id}"
         candidate = candidates[candidate_id]
         axis = rotation @ np.asarray(source_node["joint_axis"], dtype=float)
-        output.append({
+        node_record = {
             "id": new_id,
             "parent": parent,
             "role": output_role,
@@ -657,12 +925,24 @@ def instantiate_finger(
             "compatible_candidate_ids": candidate["compatible_candidate_ids"],
             "mesh_linear": node_linear.tolist(),
             "reference_mesh_linear": node_reference_linear.tolist(),
-            "length_scale": 1.0 if lock_proximal_hardware and rank == 0 else length_scale,
-            "radius_scale": 1.0 if lock_proximal_hardware and rank == 0 else radius_scale,
+            "length_scale": (
+                float(segment_parameters[source_id]["length_scale"])
+                if segment_parameters is not None and source_id in segment_parameters
+                else (1.0 if lock_proximal_hardware and rank == 0 else length_scale)
+            ),
+            "radius_scale": (
+                float(segment_parameters[source_id]["width_scale"])
+                if segment_parameters is not None and source_id in segment_parameters
+                else (1.0 if lock_proximal_hardware and rank == 0 else radius_scale)
+            ),
             "source_rank": rank,
             "protected_proximal_hardware": bool(lock_proximal_hardware and rank == 0),
             "morphology_part": "finger_root_rigid_body" if rank == 0 else "finger_link_rigid_body",
-        })
+        }
+        if source_id in segment_deformations:
+            node_record["connector_cap_deformation"] = segment_deformations[source_id]
+            node_record["main_chain_segment"] = True
+        output.append(node_record)
     return {
         "slot_id": slot_id,
         "role": output_role,
@@ -681,6 +961,7 @@ def instantiate_finger(
         "reference_attachment_rotation": realized_reference_frame.tolist(),
         "connector_transform_applied": True,
         "proximal_hardware_locked": lock_proximal_hardware,
+        "main_finger_path": main_finger_path(source_hand, bundle),
     }
 
 
@@ -751,6 +1032,24 @@ def finalize_graph(parts: list[dict]) -> None:
 
 def main() -> int:
     generation_seed = int(os.environ.get("HAND_GENERATION_SEED", "20260718"))
+    palm_expansion_text = os.environ.get("HAND_PALM_EXPANSION")
+    palm_expansion = (
+        None if palm_expansion_text is None else float(palm_expansion_text)
+    )
+    if palm_expansion is not None and not 0.0 <= palm_expansion <= 1.0:
+        raise ValueError(
+            f"HAND_PALM_EXPANSION must lie in [0, 1], got {palm_expansion}"
+        )
+    graph_spec_path = os.environ.get("HAND_GRAPH_SPEC_PATH")
+    if graph_spec_path is None:
+        design_specs: list[dict] = [{} for _ in range(100)]
+    else:
+        graph_payload = json.loads(Path(graph_spec_path).read_text(encoding="utf-8"))
+        design_specs = graph_payload.get("hands", [graph_payload])
+        if not isinstance(design_specs, list) or not design_specs:
+            raise ValueError("graph specification must contain one or more hands")
+        if not all(isinstance(spec, dict) for spec in design_specs):
+            raise ValueError("every graph hand specification must be an object")
     rng = np.random.default_rng(generation_seed)
     source_payload = json.loads(SOURCE_GRAPHS.read_text(encoding="utf-8"))
     sources = {hand["hand_id"]: hand for hand in source_payload["hands"]}
@@ -777,33 +1076,59 @@ def main() -> int:
         }
         if complete:
             eligible_palms.append(hand_id)
-    missing_registry_sources = sorted(set(direct_registry["hands"]) - set(source_coverage))
+    # The direct-motor registry may contain other articulated assets (for
+    # example experimental feet) that intentionally have no hand-morphology
+    # scaffold. Only sources declared by the hand grammar require coverage.
+    non_morphology_registry_sources = sorted(
+        set(direct_registry["hands"]) - set(source_coverage)
+    )
     ineligible_sources = sorted(
         hand_id for hand_id, record in source_coverage.items()
         if not record["eligible"]
     )
-    if missing_registry_sources or ineligible_sources:
+    if ineligible_sources:
         raise ValueError(
             "source coverage is incomplete: "
-            f"missing={missing_registry_sources}, ineligible={ineligible_sources}"
+            f"ineligible={ineligible_sources}"
         )
 
     hands = []
     graph_modes = ("geometry_only",)
-    for index in range(100):
+    for index, design_spec in enumerate(design_specs):
         mode = graph_modes[0]
-        requested_layout_mode = ("anthropomorphic", "symmetric", "asymmetric")[index % 3]
+        palm_spec = design_spec.get("palm", {})
+        finger_spec = design_spec.get("fingers", {})
+        if not isinstance(palm_spec, dict) or not isinstance(finger_spec, dict):
+            raise ValueError("palm and fingers graph parameters must be objects")
+        requested_layout_mode = palm_spec.get(
+            "layout_mode",
+            ("anthropomorphic", "symmetric", "asymmetric")[index % 3],
+        )
         seed_pool = eligible_palms
-        seed_id = seed_pool[index % len(seed_pool)]
+        seed_id = design_spec.get(
+            "source_hand", seed_pool[index % len(seed_pool)]
+        )
+        if seed_id not in seed_pool:
+            raise ValueError(
+                f"unknown or ineligible source_hand {seed_id!r}; "
+                f"choose one of {seed_pool}"
+            )
         seed = sources[seed_id]
         # Large radial rearrangements are incompatible with a fixed tendon or
         # underactuated transmission platform. Keep those hands on the bounded
         # anthropomorphic palm-edit path; other sources retain all three modes.
-        layout_mode = (
-            "anthropomorphic"
-            if seed_id in BOUNDED_PALM_LAYOUT_SOURCES
-            else requested_layout_mode
-        )
+        if (
+            seed_id in BOUNDED_PALM_LAYOUT_SOURCES
+            and requested_layout_mode not in {"source_fixed", "anthropomorphic"}
+        ):
+            if graph_spec_path is not None:
+                raise ValueError(
+                    f"{seed_id} only permits source_fixed or anthropomorphic "
+                    "palm layouts because its transmission platform is bounded"
+                )
+            layout_mode = "anthropomorphic"
+        else:
+            layout_mode = requested_layout_mode
         source_roles = [role for role in DIGITS if f"{seed_id}:{role}" in bundles]
         base_roles = list(source_roles)
         selected = {role: deepcopy(bundles[f"{seed_id}:{role}"]) for role in base_roles}
@@ -819,10 +1144,14 @@ def main() -> int:
             sx = sy = sz = 1.0
             yaw = 0.0
         else:
-            sx = float(rng.uniform(0.93, 1.10))
+            sx = float(palm_spec.get("scale_x", rng.uniform(0.93, 1.10)))
             sy = 1.0
-            sz = float(rng.uniform(0.92, 1.13))
-            yaw = float(rng.uniform(-0.16, 0.16))
+            sz = float(palm_spec.get("scale_z", rng.uniform(0.92, 1.13)))
+            yaw = float(palm_spec.get("yaw", rng.uniform(-0.16, 0.16)))
+        if not 0.70 <= sx <= 1.45 or not 0.70 <= sz <= 1.45:
+            raise ValueError("palm scale_x and scale_z must lie in [0.70, 1.45]")
+        if not -0.35 <= yaw <= 0.35:
+            raise ValueError("palm yaw must lie in [-0.35, 0.35] radians")
         rotation = rot_z(yaw)
         palm_linear = rotation @ np.diag([sx, sy, sz])
         actions.append({
@@ -925,24 +1254,111 @@ def main() -> int:
         target_slots = {role: transformed_slot(slot, palm_linear, rotation) for role, slot in base_slots.items()}
         source_palm_bounds = np.asarray(root["mesh"]["bounds"], dtype=float)[:, [0, 2]]
         palm_bounds_local_xz = source_palm_bounds * np.asarray([sx, sz])
+        design_palm_expansion = palm_spec.get(
+            "expansion", palm_expansion
+        )
+        if design_palm_expansion is not None:
+            design_palm_expansion = float(design_palm_expansion)
         palm_layout = apply_global_palm_layout(
             rng, target_slots, selected, candidates, rotation, layout_mode,
             palm_bounds_local_xz=palm_bounds_local_xz,
+            palm_expansion=design_palm_expansion,
         )
         actions.append({
             "operation": "APPLY_GLOBAL_PALM_LAYOUT",
             **palm_layout,
         })
         slots = []
+        realized_finger_parameters = {}
+        width_spec = finger_spec.get("width_scales", {})
+        if not isinstance(width_spec, dict):
+            raise ValueError("fingers.width_scales must be an object")
         for slot_id, role in enumerate(base_roles):
             bundle = selected[role]
-            length_scale = float(rng.uniform(0.87, 1.17))
-            radius_scale = float(rng.uniform(0.88, 1.14))
+            role_spec = finger_spec.get(role, {})
+            if not isinstance(role_spec, dict):
+                raise ValueError(f"finger specification for {role} must be an object")
+            requested_segments = role_spec.get("length_scales_by_source_part")
+            segment_parameters = None
+            if requested_segments is not None:
+                if not isinstance(requested_segments, dict):
+                    raise ValueError(
+                        f"{role}.length_scales_by_source_part must be an object"
+                    )
+                path = main_finger_path(
+                    sources[bundle["source_hand_id"]], bundle
+                )
+                editable_path = editable_finger_segments(
+                    sources[bundle["source_hand_id"]], bundle
+                )
+                requested = {
+                    int(source_id): float(value)
+                    for source_id, value in requested_segments.items()
+                }
+                if set(requested) != set(editable_path):
+                    raise ValueError(
+                        f"{role} length parameters must cover main-chain parts "
+                        f"{editable_path}, got {sorted(requested)}"
+                    )
+                if any(not 0.55 <= value <= 1.60 for value in requested.values()):
+                    raise ValueError(
+                        f"{role} segment length scales must lie in [0.55, 1.60]"
+                    )
+                normal = role != "thumb"
+                body_width = float(width_spec.get(
+                    "normal_body" if normal else "thumb_body", 1.0
+                ))
+                distal_width = float(width_spec.get(
+                    "normal_distal" if normal else "thumb_distal", 1.0
+                ))
+                if not 0.60 <= body_width <= 1.45 or not 0.60 <= distal_width <= 1.45:
+                    raise ValueError("segment width scales must lie in [0.60, 1.45]")
+                segment_parameters = {
+                    source_id: {
+                        "length_scale": requested[source_id],
+                        "width_scale": (
+                            distal_width if source_id == editable_path[-1] else body_width
+                        ),
+                    }
+                    for source_id in editable_path
+                }
+            length_scale = float(
+                role_spec.get(
+                    "length_scale",
+                    finger_spec.get(
+                        "default_length_scale",
+                        1.0 if segment_parameters is not None else rng.uniform(0.87, 1.17),
+                    ),
+                )
+            )
+            radius_scale = float(
+                role_spec.get(
+                    "radius_scale",
+                    finger_spec.get(
+                        "default_radius_scale",
+                        1.0 if segment_parameters is not None else rng.uniform(0.88, 1.14),
+                    ),
+                )
+            )
+            if not 0.55 <= length_scale <= 1.60:
+                raise ValueError(
+                    f"{role} length_scale must lie in [0.55, 1.60]"
+                )
+            if not 0.60 <= radius_scale <= 1.45:
+                raise ValueError(
+                    f"{role} radius_scale must lie in [0.60, 1.45]"
+                )
+            realized_finger_parameters[role] = {
+                "length_scale": length_scale,
+                "radius_scale": radius_scale,
+                "segment_parameters": segment_parameters,
+            }
             slots.append(instantiate_finger(
                 parts, slot_id, role, target_slots[role], bundle,
                 sources[bundle["source_hand_id"]], candidates,
                 length_scale, radius_scale,
                 lock_proximal_hardware=seed_id in PROTECTED_TRANSMISSION_SOURCES,
+                segment_parameters=segment_parameters,
             ))
 
         if len(slots) > MAX_FINGERS:
@@ -964,8 +1380,19 @@ def main() -> int:
                 f"baseline={baseline_dof}, generated={generated_dof}"
             )
         hands.append({
-            "hand_id": f"grammar_{index + 1:03d}",
+            "hand_id": design_spec.get("hand_id", f"grammar_{index + 1:03d}"),
             "seed_source": seed_id,
+            "graph_parameters": {
+                "source_hand": seed_id,
+                "palm": {
+                    "layout_mode": layout_mode,
+                    "expansion": palm_layout.get("palm_expansion", 0.0),
+                    "scale_x": sx,
+                    "scale_z": sz,
+                    "yaw": yaw,
+                },
+                "fingers": realized_finger_parameters,
+            },
             "edit_mode": mode,
             "palm_layout": palm_layout,
             "baseline_finger_count": len(source_roles),
@@ -1071,6 +1498,7 @@ def main() -> int:
         "source_hands": len(eligible_palms),
         "generated_hands": len(hands),
         "source_hand_ids": eligible_palms,
+        "ignored_non_morphology_registry_sources": non_morphology_registry_sources,
         "finger_count_range": [
             min(hand["finger_count"] for hand in hands),
             max(hand["finger_count"] for hand in hands),

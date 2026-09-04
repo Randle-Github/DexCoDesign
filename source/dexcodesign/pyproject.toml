@@ -8,15 +8,19 @@ version = "0.1.0"
 description = "Grammar-constrained dexterous-hand morphology compiler"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy==2.5.1",
-  "scipy==1.18.0",
-  "trimesh==4.12.2",
-  "shapely==2.1.2",
-  "mujoco==3.3.7",
-  "pillow==12.3.0",
-  "rtree==1.4.1",
-  "pycollada==0.9.3",
+  "numpy>=1.26,<2",
+  "scipy>=1.11,<2",
+  "trimesh>=4,<5",
+  "mapbox-earcut>=2,<3",
+  "shapely>=2,<3",
+  "mujoco>=3,<4",
+  "pillow>=10,<13",
+  "rtree>=1,<2",
+  "pycollada>=0.8,<1",
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=7,<9"]
 
 [tool.setuptools.packages.find]
 where = ["."]

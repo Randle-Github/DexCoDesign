@@ -12,7 +12,8 @@ keywords = ["kit", "robotics", "assets", "isaaclab"]
 
 [dependencies]
 "isaaclab" = {}
-"isaaclab_contrib" = {}
+# The focused DexCoDesign source snapshot does not vendor optional
+# isaaclab_contrib assets. Core DexCoDesign training does not use them.
 
 [core]
 reloadable = false

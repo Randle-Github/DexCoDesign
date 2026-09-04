@@ -67,7 +67,9 @@ _build
 /datasets/
 
 # Tests
-tests/
+/tests/*
+!/tests/test_general_grammar.py
+!/tests/test_midas_grammar.py
 
 # Docker history
 .isaac-lab-docker-history

@@ -71,17 +71,17 @@
           <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
           <joint name="left_j_index1z" pos="0 0 0" axis="0 0 -1" range="0 1.5708" />
           <geom quat="0.992949 -0.00330198 0.115013 0.0285073" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_index1_vis" />
-          <geom name="collision_hand_left_index_1" type="capsule" size="0.008 0.016" pos="0.016 0 0" group="3" rgba="0 1 0 1" />
+          <geom name="collision_hand_left_index_1" type="capsule" size="0.008 0.016" pos="0.016 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
           <body name="left_index2" pos="0.0320372 0.00585704 -0.00531176" quat="0.992687 0.00261912 0.0813131 0.0891864">
             <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
             <joint name="left_j_index2" pos="0 0 0" axis="0 0 -1" range="0 1.74533" />
             <geom quat="0.997574 0.00206105 0.0338008 -0.0608285" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_index2_vis" />
-            <geom name="collision_hand_left_index_2" type="capsule" size="0.007 0.011" pos="0.011 0 0" group="3" rgba="0 1 0 1" />
+            <geom name="collision_hand_left_index_2" type="capsule" size="0.007 0.011" pos="0.011 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
             <body name="left_index3" pos="0.0217759 -0.00397366 -0.00161355" quat="0.995276 0.00115242 0.0364189 -0.0899872">
               <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
               <joint name="left_j_index3" pos="0 0 0" axis="0 0 -1" range="0 1.39626" />
               <geom quat="0.999568 7.53592e-05 -0.00257406 0.0292638" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_index3_vis" />
-              <geom name="collision_hand_left_index_3" type="capsule" size="0.006 0.009" pos="0.009 0 0" group="3" rgba="0 1 0 1" />
+              <geom name="collision_hand_left_index_3" type="capsule" size="0.006 0.009" pos="0.009 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
               <site name="trace_hand_left_index_tip" pos="0.023106 -0.003671 0" size="0.005" rgba="1 0 0 1" />
               <site name="track_hand_left_index_tip" pos="0.023106 -0.003671 0" size="0.005" rgba="0 0 1 1" />
               <site name="left_index_tip" pos="0.023106 -0.003671 0" quat="1 0 0 0" />
@@ -96,17 +96,17 @@
           <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
           <joint name="left_j_middle1z" pos="0 0 0" axis="0 0 -1" range="0 1.5708" />
           <geom quat="0.999812 0.000138377 -0.0177257 0.0078051" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_middle1_vis" />
-          <geom name="collision_hand_left_middle_1" type="capsule" size="0.008 0.016" pos="0.016 0 0" group="3" rgba="0 1 0 1" />
+          <geom name="collision_hand_left_middle_1" type="capsule" size="0.008 0.016" pos="0.016 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
           <body name="left_middle2" pos="0.0313285 0.00235072 -0.00448566" quat="0.99679 0.00152841 0.0709577 0.037047">
             <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
             <joint name="left_j_middle2" pos="0 0 0" axis="0 0 -1" range="0 1.74533" />
             <geom quat="0.995635 -0.00260071 -0.0886064 -0.0292231" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_middle2_vis" />
-            <geom name="collision_hand_left_middle_2" type="capsule" size="0.007 0.012" pos="0.012 0 0" group="3" rgba="0 1 0 1" />
+            <geom name="collision_hand_left_middle_2" type="capsule" size="0.007 0.012" pos="0.012 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
             <body name="left_middle3" pos="0.0231278 -0.00261309 0.00016224" quat="0.998412 -8.48904e-06 -0.00349023 -0.0562232">
               <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
               <joint name="left_j_middle3" pos="0 0 0" axis="0 0 -1" range="0 1.39626" />
               <geom quat="0.996006 0.00229162 -0.0851367 0.0268094" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_middle3_vis" />
-              <geom name="collision_hand_left_middle_3" type="capsule" size="0.006 0.010" pos="0.010 0 0" group="3" rgba="0 1 0 1" />
+              <geom name="collision_hand_left_middle_3" type="capsule" size="0.006 0.010" pos="0.010 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
               <site name="trace_hand_left_middle_tip" pos="0.022723 -0.003808 0" size="0.005" rgba="1 0 0 1" />
               <site name="track_hand_left_middle_tip" pos="0.022723 -0.003808 0" size="0.005" rgba="0 0 1 1" />
               <site name="left_middle_tip" pos="0.022723 -0.003808 0" quat="1 0 0 0" />
@@ -121,17 +121,17 @@
           <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
           <joint name="left_j_pinky1z" pos="0 0 0" axis="0 0 -1" range="0 1.5708" />
           <geom quat="0.959155 0.0168401 -0.276261 0.0584674" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_pinky1_vis" />
-          <geom name="collision_hand_left_pinky_1" type="capsule" size="0.007 0.010" pos="0.010 0 0" group="3" rgba="0 1 0 1" />
+          <geom name="collision_hand_left_pinky_1" type="capsule" size="0.007 0.010" pos="0.010 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
           <body name="left_pinky2" pos="0.0208927 0.0026189 -0.00153353" quat="0.997398 -0.00215815 0.036279 0.0622646">
             <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
             <joint name="left_j_pinky2" pos="0 0 0" axis="0 0 -1" range="0 1.74533" />
             <geom quat="0.950241 -0.000456125 -0.311514 -0.00139136" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_pinky2_vis" />
-            <geom name="collision_hand_left_pinky_2" type="capsule" size="0.006 0.009" pos="0.009 0 0" group="3" rgba="0 1 0 1" />
+            <geom name="collision_hand_left_pinky_2" type="capsule" size="0.006 0.009" pos="0.009 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
             <body name="left_pinky3" pos="0.0189021 -0.00074651 0.00106698" quat="0.999409 0.00047293 -0.028183 -0.0196984">
               <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
               <joint name="left_j_pinky3" pos="0 0 0" axis="0 0 -1" range="0 1.39626" />
               <geom quat="0.958485 0.00519187 -0.284559 0.0174879" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_pinky3_vis" />
-              <geom name="collision_hand_left_pinky_3" type="capsule" size="0.005 0.008" pos="0.008 0 0" group="3" rgba="0 1 0 1" />
+              <geom name="collision_hand_left_pinky_3" type="capsule" size="0.005 0.008" pos="0.008 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
               <site name="trace_hand_left_pinky_tip" pos="0.016054 -0.004705 0" size="0.005" rgba="1 0 0 1" />
               <site name="track_hand_left_pinky_tip" pos="0.016054 -0.004705 0" size="0.005" rgba="0 0 1 1" />
               <site name="left_pinky_tip" pos="0.016054 -0.004705 0" quat="1 0 0 0" />
@@ -146,17 +146,17 @@
           <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
           <joint name="left_j_ring1z" pos="0 0 0" axis="0 0 -1" range="0 1.5708" />
           <geom quat="0.987327 0.0036119 -0.157025 0.0227106" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_ring1_vis" />
-          <geom name="collision_hand_left_ring_1" type="capsule" size="0.007 0.014" pos="0.014 0 0" group="3" rgba="0 1 0 1" />
+          <geom name="collision_hand_left_ring_1" type="capsule" size="0.007 0.014" pos="0.014 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
           <body name="left_ring2" pos="0.0283738 0.0033752 0.00393707" quat="0.995918 -0.000882244 -0.0685799 0.0586873">
             <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
             <joint name="left_j_ring2" pos="0 0 0" axis="0 0 -1" range="0 1.74533" />
             <geom quat="0.995395 -0.00318966 -0.0889052 -0.0357119" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_ring2_vis" />
-            <geom name="collision_hand_left_ring_2" type="capsule" size="0.006 0.012" pos="0.012 0 0" group="3" rgba="0 1 0 1" />
+            <geom name="collision_hand_left_ring_2" type="capsule" size="0.006 0.012" pos="0.012 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
             <body name="left_ring3" pos="0.0243171 -0.00343957 -0.0033447" quat="0.995261 0.000120758 0.0677846 -0.0697243">
               <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
               <joint name="left_j_ring3" pos="0 0 0" axis="0 0 -1" range="0 1.39626" />
               <geom quat="0.98714 0.00532482 -0.156183 0.033655" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_ring3_vis" />
-              <geom name="collision_hand_left_ring_3" type="capsule" size="0.005 0.010" pos="0.010 0 0" group="3" rgba="0 1 0 1" />
+              <geom name="collision_hand_left_ring_3" type="capsule" size="0.005 0.010" pos="0.010 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
               <site name="trace_hand_left_ring_tip" pos="0.021453 -0.00486 0" size="0.005" rgba="1 0 0 1" />
               <site name="track_hand_left_ring_tip" pos="0.021453 -0.00486 0" size="0.005" rgba="0 0 1 1" />
               <site name="left_ring_tip" pos="0.021453 -0.00486 0" quat="1 0 0 0" />
@@ -174,7 +174,7 @@
             <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
             <joint name="left_j_thumb1z" pos="0 0 0" axis="0 0 -1" range="-1.0472 1.0472" />
             <geom quat="0.751793 -0.497092 0.432853 -0.0185414" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_thumb1_vis" />
-            <geom name="collision_hand_left_thumb_1" type="capsule" size="0.008 0.014" pos="0.014 0 0" group="3" rgba="0 1 0 1" />
+            <geom name="collision_hand_left_thumb_1" type="capsule" size="0.008 0.014" pos="0.014 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
             <body name="left_thumb2y" pos="0.0277653 0.0087871 -0.00999011" quat="0.975097 -0.00949146 0.164941 0.147951">
               <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
               <joint name="left_j_thumb2y" pos="0 0 0" axis="0 -1 0" range="-0.174533 0.174533" />
@@ -182,12 +182,12 @@
                 <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
                 <joint name="left_j_thumb2z" pos="0 0 0" axis="0 0 -1" range="0 1.5708" />
                 <geom quat="0.806442 -0.410478 0.371794 -0.207191" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_thumb2_vis" />
-                <geom name="collision_hand_left_thumb_2" type="capsule" size="0.007 0.012" pos="0.012 0 0" group="3" rgba="0 1 0 1" />
+                <geom name="collision_hand_left_thumb_2" type="capsule" size="0.007 0.012" pos="0.012 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
                 <body name="left_thumb3" pos="0.0251906 -0.00996365 0.00050434" quat="0.982278 0.000921531 -0.00965077 -0.187179">
                   <inertial pos="0 0 0" mass="0.02" diaginertia="1.6875e-06 1.6875e-06 1.6875e-06" />
                   <joint name="left_j_thumb3" pos="0 0 0" axis="0 0 -1" range="0 1.39626" />
                   <geom quat="0.826966 -0.475539 0.295964 -0.0489517" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="left_thumb3_vis" />
-                  <geom name="collision_hand_left_thumb_3" type="capsule" size="0.006 0.010" pos="0.010 0 0" group="3" rgba="0 1 0 1" />
+                  <geom name="collision_hand_left_thumb_3" type="capsule" size="0.006 0.010" pos="0.010 0 0" quat="0.707106781187 0 0.707106781187 0" group="3" rgba="0 1 0 1" />
                   <site name="trace_hand_left_thumb_tip" pos="0.026822 -0.00565 0" size="0.005" rgba="1 0 0 1" />
                   <site name="track_hand_left_thumb_tip" pos="0.026822 -0.00565 0" size="0.005" rgba="0 0 1 1" />
                   <site name="left_thumb_tip" pos="0.026822 -0.00565 0" quat="1 0 0 0" />

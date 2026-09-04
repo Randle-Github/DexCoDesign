@@ -1,0 +1,1698 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Residual RL over a reviewed HO-Cap hand reference trajectory.
+
+The command is exactly ``q_target = q_reference + scale * residual``. The
+training reward combines object-pose tracking with EgoEngine-MPC's binary
+pinch-contact term.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import math
+import os
+from collections.abc import Sequence
+from pathlib import Path
+
+import gymnasium as gym
+import numpy as np
+import torch
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObjectCfg
+from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg, ViewerCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensor, ContactSensorCfg
+from isaaclab.sim import SimulationCfg
+from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+from isaaclab.sim.utils import get_all_matching_child_prims
+from isaaclab.utils import configclass
+from isaaclab.utils.io import load_yaml
+from isaaclab.utils.math import quat_apply, quat_error_magnitude
+
+
+REPO_ROOT = Path(__file__).resolve().parents[5]
+ENV_OPTIONS_PATH = Path(__file__).parent / "config" / "mano_residual_env.yaml"
+ENV_OPTIONS = load_yaml(str(ENV_OPTIONS_PATH))
+ASSET_ROOT = REPO_ROOT / "artifacts" / "isaaclab_mano_residual" / "assets"
+MANO_REFERENCE_PATH = (
+    REPO_ROOT
+    / "temp"
+    / "hocap_mano_replay"
+    / "data"
+    / "subset"
+    / "subject_7"
+    / "20231022_192832"
+    / "isaaclab_reference.npz"
+)
+REFERENCE_PATH_OVERRIDE = os.environ.get("DEXCODESIGN_REFERENCE_PATH")
+OBJECT_USD_PATH = Path(
+    os.environ.get(
+        "DEXCODESIGN_OBJECT_USD_PATH",
+        str(ASSET_ROOT / "g04_1.usd"),
+    )
+).expanduser().resolve()
+ALL_HAND_ROOT = REPO_ROOT / "artifacts" / "isaaclab_all_hands_residual"
+MORPHOLOGY_BATCH_MANIFEST_PATH = os.environ.get(
+    "DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"
+)
+MORPHOLOGY_BATCH_MANIFEST = None
+if MORPHOLOGY_BATCH_MANIFEST_PATH:
+    MORPHOLOGY_BATCH_MANIFEST = json.loads(
+        Path(MORPHOLOGY_BATCH_MANIFEST_PATH).read_text(encoding="utf-8")
+    )
+    _batch_usd_paths = [
+        Path(value).expanduser().resolve()
+        for value in MORPHOLOGY_BATCH_MANIFEST["hand_usd_paths"]
+    ]
+    _batch_reference_paths = [
+        Path(value).expanduser().resolve()
+        for value in MORPHOLOGY_BATCH_MANIFEST["reference_paths"]
+    ]
+    if not _batch_usd_paths or len(_batch_usd_paths) != len(_batch_reference_paths):
+        raise ValueError(
+            "Morphology batch manifest needs equally-sized, non-empty "
+            "hand_usd_paths and reference_paths"
+        )
+    HAND_ID = "wuji_morphology_batch"
+else:
+    _batch_usd_paths = []
+    _batch_reference_paths = []
+    HAND_ID = os.environ.get("DEXCODESIGN_HAND_ID", "mano")
+if HAND_ID == "mano":
+    REFERENCE_PATH = (
+        Path(REFERENCE_PATH_OVERRIDE).expanduser().resolve()
+        if REFERENCE_PATH_OVERRIDE
+        else MANO_REFERENCE_PATH
+    )
+    HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
+    ROOT_POSITION_JOINT_NAMES = ("left_pos_x", "left_pos_y", "left_pos_z")
+    ROOT_ROTATION_JOINT_NAMES = ("left_rot_x", "left_rot_y", "left_rot_z")
+    THUMB_CONTACT_LINK_NAMES = ("left_thumb3",)
+    OTHER_FINGER_CONTACT_LINK_NAMES = (
+        "left_index3",
+        "left_middle3",
+        "left_ring3",
+        "left_pinky3",
+    )
+    ALL_HAND_CONTACT_LINK_NAMES = (
+        "left_palm",
+        "left_index1z",
+        "left_index2",
+        "left_index3",
+        "left_middle1z",
+        "left_middle2",
+        "left_middle3",
+        "left_ring1z",
+        "left_ring2",
+        "left_ring3",
+        "left_pinky1z",
+        "left_pinky2",
+        "left_pinky3",
+        "left_thumb1z",
+        "left_thumb2z",
+        "left_thumb3",
+    )
+    PALM_BODY_NAME = "left_palm"
+    MIDDLE_TIP_BODY_NAME = "left_middle3"
+else:
+    if MORPHOLOGY_BATCH_MANIFEST is not None:
+        REFERENCE_PATH = _batch_reference_paths[0]
+        HAND_USD_PATH = _batch_usd_paths[0]
+    else:
+        REFERENCE_PATH = (
+            Path(REFERENCE_PATH_OVERRIDE).expanduser().resolve()
+            if REFERENCE_PATH_OVERRIDE
+            else ALL_HAND_ROOT / "prepared" / HAND_ID / "reference.npz"
+        )
+        HAND_USD_PATH = ALL_HAND_ROOT / "assets" / HAND_ID / "hand.usd"
+    if not REFERENCE_PATH.is_file():
+        raise FileNotFoundError(
+            f"Missing prepared reference for {HAND_ID}: {REFERENCE_PATH}"
+        )
+    with np.load(REFERENCE_PATH) as _schema:
+        THUMB_CONTACT_LINK_NAMES = tuple(
+            _schema["thumb_contact_link_names"].tolist()
+        )
+        OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
+            _schema["other_finger_contact_link_names"].tolist()
+        )
+        if "contact_link_names" not in _schema:
+            raise RuntimeError(
+                f"{REFERENCE_PATH} predates full collision coverage; "
+                "rebuild all-hand assets"
+            )
+        ALL_HAND_CONTACT_LINK_NAMES = tuple(
+            _schema["contact_link_names"].tolist()
+        )
+        PALM_BODY_NAME = str(_schema["palm_body_name"])
+        MIDDLE_TIP_BODY_NAME = str(_schema["middle_tip_body_name"])
+    ROOT_POSITION_JOINT_NAMES = ("root_pos_x", "root_pos_y", "root_pos_z")
+    ROOT_ROTATION_JOINT_NAMES = ("root_rot_x", "root_rot_y", "root_rot_z")
+
+with np.load(REFERENCE_PATH) as _reference_schema:
+    CONTROL_DIM = int(_reference_schema["hand_q"].shape[1])
+    ACTION_DIM = (
+        len(_reference_schema["action_joint_names"])
+        if "action_joint_names" in _reference_schema
+        else CONTROL_DIM
+    )
+OBSERVATION_DIM = 2 * CONTROL_DIM + 34
+ROOT_POSITION_EXPR = "left_pos_.*" if HAND_ID == "mano" else "root_pos_.*"
+ROOT_ROTATION_EXPR = "left_rot_.*" if HAND_ID == "mano" else "root_rot_.*"
+FINGER_JOINT_EXPR = "left_j_.*" if HAND_ID == "mano" else "finger__.*"
+
+
+@configclass
+class ManoResidualEnvCfg(DirectRLEnvCfg):
+    decimation = 4
+    # Every training episode follows the reference from phase zero. PPO rollout
+    # boundaries must not reset or randomly seek within the reference.
+    episode_length_s = 15.0
+    # The PPO action is the normalized residual itself. Keep its declared
+    # bounds identical to the residual executed by _pre_physics_step so the
+    # policy likelihood is evaluated on the action that reaches the robot.
+    action_space = gym.spaces.Box(
+        low=-1.0, high=1.0, shape=(ACTION_DIM,), dtype=np.float32
+    )
+    # EgoEngine-style goal conditioning:
+    # current q (N), current thumb/index tip positions (6), current object
+    # pose (7), goal thumb/index tip poses (14), goal q (N), goal object
+    # pose (7): 2N + 34 values.
+    observation_space = OBSERVATION_DIM
+    # Opt-in morphology conditioning. The morphology search driver sets this
+    # to the design-vector width and appends the matching normalized context.
+    morphology_context_dim = 0
+    state_space = 0
+
+    # When enabled, the hand can pass through the support plane while the
+    # object continues to collide with both the hand and the support.
+    disable_hand_support_collisions: bool = bool(
+        ENV_OPTIONS["collisions"]["disable_hand_support_collisions"]
+    )
+
+    sim: SimulationCfg = SimulationCfg(
+        dt=1.0 / 120.0,
+        render_interval=decimation,
+        log_dir=str(
+            REPO_ROOT
+            / "artifacts"
+            / "isaaclab_all_hands_residual"
+            / "until_success"
+            / "isaaclab_logs"
+        ),
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            # Use Isaac Lab's official dexterous-hand baseline.  The previous
+            # value (2.0) was a project-side grasp aid, not an asset/vendor or
+            # EgoEngine parameter, and can amplify tangential contact chatter.
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+    )
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(0.45, 0.42, 0.38),
+        lookat=(-0.10, 0.0, 0.17),
+        origin_type="env",
+        resolution=(960, 720),
+    )
+
+    hand_cfg: ArticulationCfg = ArticulationCfg(
+        prim_path="/World/envs/env_.*/Hand",
+        spawn=(
+            sim_utils.MultiUsdFileCfg(
+                usd_path=[str(path) for path in _batch_usd_paths],
+                random_choice=False,
+                reuse_duplicate_assets=True,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=True,
+                    max_depenetration_velocity=1.0,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=False,
+                    solver_position_iteration_count=8,
+                    solver_velocity_iteration_count=2,
+                ),
+            )
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else sim_utils.UsdFileCfg(
+                usd_path=str(HAND_USD_PATH),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=True,
+                    max_depenetration_velocity=1.0,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=HAND_ID == "mano",
+                    solver_position_iteration_count=8,
+                    solver_velocity_iteration_count=2,
+                ),
+            )
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
+        actuators={
+            # EgoEngine's MANO model uses kp=1000 for the six virtual wrist
+            # joints and kp=300 for all articulated finger joints.  Its
+            # joints have unit armature and position actuators use a critical
+            # damping ratio.
+            "wrist": ImplicitActuatorCfg(
+                joint_names_expr=[ROOT_POSITION_EXPR, ROOT_ROTATION_EXPR],
+                stiffness=1000.0,
+                damping=63.2455532,
+                effort_limit_sim=1000.0,
+                velocity_limit_sim=20.0,
+                armature=1.0,
+            ),
+            "fingers": ImplicitActuatorCfg(
+                joint_names_expr=[FINGER_JOINT_EXPR],
+                stiffness=300.0,
+                damping=34.6410162,
+                effort_limit_sim=1000.0,
+                velocity_limit_sim=20.0,
+                armature=1.0,
+            ),
+        },
+    )
+
+    object_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/Object",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(OBJECT_USD_PATH),
+            activate_contact_sensors=True,
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.92, 0.38, 0.08),
+                roughness=0.55,
+            ),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=False,
+                enable_gyroscopic_forces=True,
+                solver_position_iteration_count=8,
+                solver_velocity_iteration_count=2,
+                max_depenetration_velocity=1.0,
+            ),
+            # Match EgoEngine's object_mass_scale=0.1 against this asset's
+            # original 0.15 kg nominal mass.
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.015),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(),
+    )
+
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+        num_envs=(
+            len(_batch_usd_paths)
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else 1024
+        ),
+        env_spacing=0.65,
+        # Heterogeneous morphology assets must keep independent joint frames
+        # and collision geometry. MultiUsdFileCfg spawns them deterministically
+        # in manifest order when physics replication is disabled.
+        replicate_physics=MORPHOLOGY_BATCH_MANIFEST is None,
+        # ContactSensor discovers one USD reporting prim per environment.
+        # Fabric-only clones are absent from that discovery stage.
+        clone_in_fabric=False,
+    )
+
+    # Residual bounds are applied directly to the reference controller target.
+    # The reference is already close, so root translation and finger residuals
+    # retain the validated conservative ranges. Wrist rotation alone receives
+    # the wider range needed to clear the object during release and retreat.
+    residual_root_position_scale = float(
+        ENV_OPTIONS["residual_actions"]["root_position_scale"]
+    )
+    residual_root_rotation_scale = float(
+        ENV_OPTIONS["residual_actions"]["root_rotation_scale"]
+    )
+    residual_finger_scale = float(
+        ENV_OPTIONS["residual_actions"]["finger_scale"]
+    )
+    object_position_sigma = 0.04
+    object_rotation_sigma = 0.50
+    # Match EgoEngine-MPC's Aria residual-RL reward geometry:
+    # reward = C - ||[w_pos * position_error, w_rot * rotation_error]||_2
+    #          + contact_scale * pinch_contact.
+    object_position_reward_weight = 1.0
+    object_rotation_reward_weight = 0.3
+    contact_reward_weight = 2.0
+    # EgoEngine treats any penetrating thumb/object and other-finger/object
+    # contact pair as active.  A positive Isaac contact force is its analogue.
+    contact_force_threshold = 0.0
+    object_failure_distance = 0.05
+    object_failure_orientation = 1.50
+    randomize_start_phase = False
+    log_rollout_diagnostics = False
+
+
+@configclass
+class ManoResidualPlayEnvCfg(ManoResidualEnvCfg):
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+        num_envs=1,
+        env_spacing=0.65,
+        replicate_physics=True,
+        clone_in_fabric=False,
+    )
+    episode_length_s = 15.0
+    # Evaluation must play the complete reference once. Training intentionally
+    # terminates failed rollouts early, but inheriting that threshold here can
+    # reset the one-environment video to frame zero on every failed step.
+    object_failure_distance = float("inf")
+    object_failure_orientation = float("inf")
+    randomize_start_phase = False
+    log_rollout_diagnostics = True
+
+
+@configclass
+class ManoResidualEvalEnvCfg(ManoResidualEnvCfg):
+    """Full-reference evaluation with training termination thresholds enabled."""
+
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+        num_envs=1,
+        env_spacing=0.65,
+        replicate_physics=True,
+        clone_in_fabric=False,
+    )
+    episode_length_s = 15.0
+    randomize_start_phase = False
+    log_rollout_diagnostics = False
+
+
+class ManoResidualEnv(DirectRLEnv):
+    cfg: ManoResidualEnvCfg
+
+    @property
+    def num_envs(self) -> int:
+        if getattr(self, "_grouped_physics_replicas", False):
+            return len(_batch_reference_paths)
+        return self.scene.num_envs
+
+    def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
+        reference_paths = (
+            _batch_reference_paths
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else [REFERENCE_PATH]
+        )
+        references = [np.load(path) for path in reference_paths]
+        reference = references[0]
+        self._morphology_batch = MORPHOLOGY_BATCH_MANIFEST is not None
+        self._grouped_physics_replicas = bool(
+            self._morphology_batch
+            and MORPHOLOGY_BATCH_MANIFEST is not None
+            and MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
+        )
+        context = (
+            MORPHOLOGY_BATCH_MANIFEST.get("policy_morphology_context")
+            if MORPHOLOGY_BATCH_MANIFEST is not None
+            else None
+        )
+        self._morphology_context_cpu = (
+            None
+            if context is None
+            else torch.as_tensor(context, dtype=torch.float32)
+        )
+        self._reference_joint_names = reference["joint_names"].tolist()
+        self._action_joint_names = (
+            reference["action_joint_names"].tolist()
+            if "action_joint_names" in reference
+            else list(self._reference_joint_names)
+        )
+        self._action_to_control_cpu = torch.from_numpy(
+            reference["action_to_control_matrix"]
+            if "action_to_control_matrix" in reference
+            else np.eye(len(self._reference_joint_names), dtype=np.float32)
+        )
+        def stacked(key: str) -> np.ndarray:
+            values = [entry[key] for entry in references]
+            if self._morphology_batch:
+                return np.stack(values, axis=0)
+            return values[0]
+
+        for candidate in references[1:]:
+            for key in (
+                "joint_names",
+                "action_joint_names",
+                "fingertip_link_names",
+                "thumb_contact_link_names",
+                "other_finger_contact_link_names",
+                "contact_link_names",
+            ):
+                if key in reference and not np.array_equal(reference[key], candidate[key]):
+                    raise RuntimeError(
+                        f"Morphology batch references disagree on {key}; all "
+                        "candidates must preserve WUJI topology"
+                    )
+        self._reference_hand_q_cpu = torch.from_numpy(stacked("hand_q"))
+        if "hand_ctrl" not in reference:
+            raise RuntimeError(
+                f"{REFERENCE_PATH} has no hand_ctrl; regenerate the "
+                "EgoEngine-style reference before training"
+            )
+        self._reference_hand_ctrl_cpu = torch.from_numpy(stacked("hand_ctrl"))
+        self._reference_object_pose_cpu = torch.from_numpy(
+            stacked("object_pose_wxyz")
+        )
+        required_fingertip_keys = (
+            "fingertip_pose_wxyz",
+            "fingertip_link_names",
+            "fingertip_offsets",
+        )
+        missing_fingertip_keys = [
+            key for key in required_fingertip_keys if key not in reference
+        ]
+        if missing_fingertip_keys:
+            raise RuntimeError(
+                f"{REFERENCE_PATH} is missing {missing_fingertip_keys}; regenerate "
+                "the EgoEngine-style reference before training"
+            )
+        self._reference_fingertip_pose_cpu = torch.from_numpy(
+            stacked("fingertip_pose_wxyz")
+        )
+        self._reference_fingertip_link_names = reference[
+            "fingertip_link_names"
+        ].tolist()
+        self._fingertip_offsets_cpu = torch.from_numpy(stacked("fingertip_offsets"))
+        self._reference_length = int(reference["hand_q"].shape[0])
+
+        super().__init__(cfg, render_mode, **kwargs)
+
+        self.action_dim = gym.spaces.flatdim(self.single_action_space)
+        if self.action_dim != len(self._action_joint_names):
+            raise RuntimeError(
+                f"Action space has {self.action_dim} dimensions but {HAND_ID} "
+                f"defines {len(self._action_joint_names)} active joints"
+            )
+        if self.hand.num_joints != len(self._reference_joint_names):
+            raise RuntimeError(
+                f"Expected {len(self._reference_joint_names)} controlled {HAND_ID} "
+                f"joints, found {self.hand.num_joints}: {self.hand.joint_names}"
+            )
+        missing = sorted(set(self._reference_joint_names) - set(self.hand.joint_names))
+        if missing:
+            raise RuntimeError(
+                f"Reference joints missing from imported {HAND_ID} articulation: {missing}"
+            )
+
+        reference_order = [self._reference_joint_names.index(name) for name in self.hand.joint_names]
+        joint_axis = 2 if self._morphology_batch else 1
+        self.reference_hand_q = self._reference_hand_q_cpu.index_select(
+            joint_axis, torch.tensor(reference_order)
+        ).to(self.device)
+        self.reference_hand_ctrl = self._reference_hand_ctrl_cpu.index_select(
+            joint_axis, torch.tensor(reference_order)
+        ).to(self.device)
+        self.action_to_control = self._action_to_control_cpu[reference_order].to(
+            self.device
+        )
+        if self.action_to_control.shape != (
+            self.hand.num_joints,
+            self.action_dim,
+        ):
+            raise RuntimeError(
+                f"{HAND_ID} action-to-control map has shape "
+                f"{tuple(self.action_to_control.shape)}, expected "
+                f"({self.hand.num_joints}, {self.action_dim})"
+            )
+        self.reference_object_pose = self._reference_object_pose_cpu.to(self.device)
+        self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
+            self.device
+        )
+        self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
+        self.morphology_context = (
+            None
+            if self._morphology_context_cpu is None
+            else self._morphology_context_cpu.to(self.device)
+        )
+        if self.morphology_context is not None:
+            expected = (self.num_envs, self.cfg.morphology_context_dim)
+            if tuple(self.morphology_context.shape) != expected:
+                raise RuntimeError(
+                    f"morphology context has shape {tuple(self.morphology_context.shape)}, "
+                    f"expected {expected}"
+                )
+
+        limits = self.hand.root_physx_view.get_dof_limits().to(self.device)
+        self.joint_lower_limits = limits[..., 0]
+        self.joint_upper_limits = limits[..., 1]
+
+        self.residual_scale = torch.full(
+            (self.action_dim,), self.cfg.residual_finger_scale, device=self.device
+        )
+        self._root_position_action_indices = torch.tensor(
+            [
+                self._action_joint_names.index(name)
+                for name in ROOT_POSITION_JOINT_NAMES
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self._root_rotation_action_indices = torch.tensor(
+            [
+                self._action_joint_names.index(name)
+                for name in ROOT_ROTATION_JOINT_NAMES
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self._finger_action_indices = torch.tensor(
+            [
+                index
+                for index, name in enumerate(self._action_joint_names)
+                if name
+                not in set(ROOT_POSITION_JOINT_NAMES + ROOT_ROTATION_JOINT_NAMES)
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self.residual_scale[self._root_position_action_indices] = (
+            self.cfg.residual_root_position_scale
+        )
+        self.residual_scale[self._root_rotation_action_indices] = (
+            self.cfg.residual_root_rotation_scale
+        )
+
+        self.phase_buf = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.actions = torch.zeros(
+            (self.num_envs, self.action_dim), dtype=torch.float, device=self.device
+        )
+        self.joint_targets = torch.zeros(
+            (self.num_envs, self.hand.num_joints),
+            dtype=torch.float,
+            device=self.device,
+        )
+        self._object_position_error = torch.zeros(self.num_envs, device=self.device)
+        self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
+        # Evaluation curves report the accumulated C-error pose reward only.
+        # Contact remains part of the optimization reward but is intentionally
+        # excluded from this episode-return diagnostic.
+        self._pose_episode_return = torch.zeros(self.num_envs, device=self.device)
+        self._last_evaluated_phase = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
+        success_capture_path = os.environ.get(
+            "HAND_SUCCESS_TRAJECTORY_PATH",
+            os.environ.get("MANO_SUCCESS_TRAJECTORY_PATH"),
+        )
+        best_rollout_path = os.environ.get("HAND_BEST_ROLLOUT_PATH")
+        self._success_capture_path = (
+            Path(success_capture_path).expanduser().resolve()
+            if success_capture_path
+            else None
+        )
+        self._best_rollout_path = (
+            Path(best_rollout_path).expanduser().resolve()
+            if best_rollout_path
+            else None
+        )
+        # Training launchers historically stop as soon as a complete rollout
+        # is captured. Standalone evaluators disable this exit so they can
+        # consume the terminal transition and write their matching JSON.
+        self._exit_after_success_capture = (
+            os.environ.get("HAND_EXIT_AFTER_SUCCESS_CAPTURE", "1") == "1"
+        )
+        self._success_capture_written = False
+        self._best_rollout_phase = -1
+        self._best_rollout_return = float("-inf")
+        if self._best_rollout_path is not None and self._best_rollout_path.is_file():
+            try:
+                with np.load(self._best_rollout_path) as previous_rollout:
+                    previous_metadata = json.loads(
+                        str(previous_rollout["metadata_json"])
+                    )
+                self._best_rollout_phase = int(
+                    previous_metadata.get("final_phase", -1)
+                )
+                self._best_rollout_return = float(
+                    previous_metadata.get("pose_tracking_return", 0.0)
+                    + previous_metadata.get("contact_return", 0.0)
+                )
+                print(
+                    "HAND_BEST_ROLLOUT_RESUMED "
+                    f"hand_id={HAND_ID} path={self._best_rollout_path} "
+                    f"phase={self._best_rollout_phase}",
+                    flush=True,
+                )
+            except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+                # A malformed prior capture must not prevent training. It will
+                # be replaced as soon as the resumed run records a valid phase.
+                self._best_rollout_phase = -1
+        self._capture_enabled = (
+            self._success_capture_path is not None
+            or self._best_rollout_path is not None
+        )
+        if self._capture_enabled:
+            capture_shape = (self.num_envs, self._reference_length)
+            self._capture_hand_q = torch.zeros(
+                (*capture_shape, self.hand.num_joints),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_object_pose = torch.zeros(
+                (*capture_shape, 7),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_actions = torch.zeros(
+                (*capture_shape, self.action_dim),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_joint_targets = torch.zeros(
+                (*capture_shape, self.hand.num_joints),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            self._capture_pose_reward = torch.zeros(
+                capture_shape, dtype=torch.float32, device=self.device
+            )
+            self._capture_contact_reward = torch.zeros_like(
+                self._capture_pose_reward
+            )
+        self._last_diagnostic_phase = -1
+        self._palm_body_index = self.hand.body_names.index(PALM_BODY_NAME)
+        self._middle_tip_body_index = self.hand.body_names.index(
+            MIDDLE_TIP_BODY_NAME
+        )
+        missing_fingertip_links = sorted(
+            set(self._reference_fingertip_link_names) - set(self.hand.body_names)
+        )
+        if missing_fingertip_links:
+            raise RuntimeError(
+                f"Reference fingertip links missing from imported {HAND_ID} articulation: "
+                f"{missing_fingertip_links}"
+            )
+        self._fingertip_body_indices = [
+            self.hand.body_names.index(name)
+            for name in self._reference_fingertip_link_names
+        ]
+
+    def _reference_at(
+        self,
+        tensor: torch.Tensor,
+        phases: torch.Tensor,
+        env_ids: torch.Tensor | Sequence[int] | None = None,
+    ) -> torch.Tensor:
+        """Gather phase-aligned references for homogeneous or batched hands."""
+
+        if not self._morphology_batch:
+            return tensor[phases]
+        if env_ids is None:
+            ids = torch.arange(self.num_envs, device=self.device)
+        elif isinstance(env_ids, torch.Tensor):
+            ids = env_ids.to(device=self.device, dtype=torch.long)
+        else:
+            ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+        return tensor[ids, phases]
+
+    def _environment_root(self, index: int) -> str:
+        if not self._grouped_physics_replicas:
+            return f"/World/envs/env_{index}"
+        assert MORPHOLOGY_BATCH_MANIFEST is not None
+        unique = int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+        replica_index, morphology_index = divmod(index, unique)
+        return (
+            f"/World/envs/env_{replica_index}/SuperEnvironment"
+            f"/morph_{morphology_index:06d}"
+        )
+
+    def _environment_regex(self) -> str:
+        if self._grouped_physics_replicas:
+            return "/World/envs/env_.*/SuperEnvironment/morph_.*"
+        return "/World/envs/env_.*"
+
+    def _setup_scene(self) -> None:
+        grouped_replicas = self._grouped_physics_replicas
+        if grouped_replicas:
+            self._spawn_grouped_morphology_sources()
+            self._apply_morphology_batch_overlays(
+                count=int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+            )
+            for morphology_index in range(
+                int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+            ):
+                source_root = self._environment_root(morphology_index)
+                self._validate_collision_coverage(
+                    hand_root_path=f"{source_root}/Hand",
+                    object_root_path=f"{source_root}/Object",
+                )
+            self._spawn_support_ground()
+            self._spawn_dome_light()
+            if self.cfg.disable_hand_support_collisions:
+                for index in range(
+                    int(MORPHOLOGY_BATCH_MANIFEST["unique_morphology_count"])
+                ):
+                    self._filter_hand_support_collisions(
+                        hand_root_path=f"{self._environment_root(index)}/Hand",
+                        support_root_path="/World/ground",
+                    )
+        else:
+            self.hand = Articulation(self.cfg.hand_cfg)
+            self._apply_morphology_batch_overlays()
+        visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
+        if HAND_ID == "mano" and visual_manifest_path.is_file():
+            visual_manifest = json.loads(visual_manifest_path.read_text(encoding="utf-8"))
+            for link_name, relative_usd_path in visual_manifest.items():
+                visual_cfg = sim_utils.UsdFileCfg(
+                    usd_path=str(ASSET_ROOT / relative_usd_path),
+                )
+                visual_cfg.func(
+                    f"/World/envs/env_0/Hand/{link_name}/visual_overlay",
+                    visual_cfg,
+                )
+        if grouped_replicas:
+            self._clone_grouped_morphology_environments()
+            print("[MORPHOLOGY_GROUPED_STAGE] clone_complete", flush=True)
+            hand_cfg = copy.deepcopy(self.cfg.hand_cfg)
+            hand_cfg.spawn = None
+            object_cfg = copy.deepcopy(self.cfg.object_cfg)
+            object_cfg.spawn = None
+            print("[MORPHOLOGY_GROUPED_STAGE] constructing_articulation", flush=True)
+            self.hand = Articulation(hand_cfg)
+            print("[MORPHOLOGY_GROUPED_STAGE] articulation_constructed", flush=True)
+            self.object = RigidObject(object_cfg)
+            print("[MORPHOLOGY_GROUPED_STAGE] rigid_object_constructed", flush=True)
+        else:
+            self.object = RigidObject(self.cfg.object_cfg)
+        # ContactSensor filtering is one-to-many: its prim_path must resolve to
+        # one reporting rigid body per environment.  Use the object as that
+        # body and filter its contacts against the two hand-link groups.
+        env_regex = self._environment_regex()
+        self._thumb_contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path=f"{env_regex}/Object",
+                update_period=0.0,
+                history_length=0,
+                filter_prim_paths_expr=[
+                    f"{env_regex}/Hand/{link_name}"
+                    for link_name in THUMB_CONTACT_LINK_NAMES
+                ],
+            )
+        )
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] thumb_sensor_constructed", flush=True)
+        self._other_finger_contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path=f"{env_regex}/Object",
+                update_period=0.0,
+                history_length=0,
+                filter_prim_paths_expr=[
+                    f"{env_regex}/Hand/{link_name}"
+                    for link_name in OTHER_FINGER_CONTACT_LINK_NAMES
+                ],
+            )
+        )
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] other_sensor_constructed", flush=True)
+        self._all_hand_contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path=f"{env_regex}/Object",
+                update_period=0.0,
+                history_length=0,
+                filter_prim_paths_expr=[
+                    f"{env_regex}/Hand/{link_name}"
+                    for link_name in ALL_HAND_CONTACT_LINK_NAMES
+                ],
+            )
+        )
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] all_sensor_constructed", flush=True)
+        if not grouped_replicas:
+            self._validate_collision_coverage(
+                hand_root_path=f"{self._environment_root(0)}/Hand",
+                object_root_path=f"{self._environment_root(0)}/Object",
+            )
+        if not grouped_replicas:
+            self._spawn_support_ground()
+            hand_roots = (
+                [f"/World/envs/env_{index}/Hand" for index in range(self.num_envs)]
+                if self._morphology_batch
+                else ["/World/envs/env_0/Hand"]
+            )
+            if self.cfg.disable_hand_support_collisions:
+                for hand_root in hand_roots:
+                    self._filter_hand_support_collisions(
+                        hand_root_path=hand_root,
+                        support_root_path="/World/ground",
+                    )
+            else:
+                print(
+                    f"[HAND_COLLISION_FILTER:{HAND_ID}] hand-support collision "
+                    "filtering is disabled; physical collisions remain enabled"
+                )
+        # InteractiveScene already creates all independent environment Xforms
+        # before _setup_scene when replicate_physics=False. Re-cloning here
+        # would overwrite the deterministic MultiUsdFileCfg assignments.
+        if self.cfg.scene.replicate_physics and not grouped_replicas:
+            self.scene.clone_environments(copy_from_source=False)
+        self.scene.articulations["hand"] = self.hand
+        self.scene.rigid_objects["object"] = self.object
+        self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
+        self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
+        self.scene.sensors["object_all_hand_contact"] = self._all_hand_contact_sensor
+        if grouped_replicas:
+            print("[MORPHOLOGY_GROUPED_STAGE] setup_scene_complete", flush=True)
+        if not grouped_replicas:
+            self._spawn_dome_light()
+
+    def _spawn_dome_light(self) -> None:
+        light_cfg = sim_utils.DomeLightCfg(
+            intensity=1800.0, color=(0.85, 0.85, 0.85)
+        )
+        light_cfg.func("/World/Light", light_cfg)
+
+    def _spawn_support_ground(self) -> None:
+        spawn_ground_plane(
+            prim_path="/World/ground",
+            cfg=GroundPlaneCfg(
+                color=(0.25, 0.27, 0.30),
+                physics_material=sim_utils.RigidBodyMaterialCfg(
+                    static_friction=1.0,
+                    dynamic_friction=1.0,
+                    restitution=0.0,
+                ),
+            ),
+        )
+
+    def _spawn_grouped_morphology_sources(self) -> None:
+        """Spawn only one physical source environment per unique morphology."""
+
+        manifest = MORPHOLOGY_BATCH_MANIFEST
+        assert manifest is not None
+        unique = int(manifest["unique_morphology_count"])
+        super_usd = manifest.get("hand_super_environment_usd")
+        if not super_usd:
+            raise ValueError("grouped replication requires a static hand super-environment USD")
+        local_origins = np.asarray(
+            manifest["hand_super_environment_origins"][:unique], dtype=np.float32
+        )
+        source_replica = "/World/envs/env_0/SuperEnvironment"
+        super_cfg = sim_utils.UsdFileCfg(usd_path=str(Path(super_usd).resolve()))
+        super_cfg.func(source_replica, super_cfg)
+        source_parent_expression = (
+            "/World/envs/env_0/SuperEnvironment/morph_.*"
+        )
+        object_spawn = copy.deepcopy(self.cfg.object_cfg.spawn)
+        object_spawn.func(
+            f"{source_parent_expression}/Object",
+            object_spawn,
+            replicate_physics=False,
+            clone_in_fabric=False,
+        )
+        print(
+            "[MORPHOLOGY_GROUPED_SOURCES] "
+            f"unique={unique} total_envs={self.num_envs}",
+            flush=True,
+        )
+        self._morphology_local_origins = local_origins
+
+    def _clone_grouped_morphology_environments(self) -> None:
+        """Clone one heterogeneous super-environment into PPO replicas.
+
+        The source contains every unique morphology. Isaac Sim therefore sees
+        one homogeneous replication operation even though each replica block
+        contains heterogeneous hands.
+        """
+
+        manifest = MORPHOLOGY_BATCH_MANIFEST
+        assert manifest is not None
+        unique = int(manifest["unique_morphology_count"])
+        replicas = int(manifest["morphology_replicas"])
+        if unique * replicas != self.num_envs:
+            raise ValueError(
+                f"grouped morphology shape {unique}x{replicas} != {self.num_envs}"
+            )
+        local_origins = self._morphology_local_origins
+        self.scene.clone_environments(copy_from_source=False)
+        block_origins = self.scene.env_origins.detach().cpu().numpy()
+        if len(block_origins) != replicas:
+            raise RuntimeError(
+                f"official scene clone returned {len(block_origins)} blocks, "
+                f"expected {replicas}"
+            )
+        flattened_origins = np.concatenate(
+            [local_origins + block_origin for block_origin in block_origins], axis=0
+        )
+        self.scene._default_env_origins = torch.as_tensor(
+            flattened_origins, device=self.device, dtype=torch.float32
+        )
+        print(
+            "[MORPHOLOGY_GROUPED_PHYSX_CLONES] "
+            f"sources={unique} replicas={replicas} total={self.num_envs}",
+            flush=True,
+        )
+
+    def _apply_morphology_batch_overlays(self, count: int | None = None) -> None:
+        """Author per-env continuous morphology before PhysX parses the stage.
+
+        The discrete palm mesh comes from one of the canonical prototype USDs.
+        Only the affine link geometry and joint-frame opinions vary per env.
+        Keeping those opinions in the scene root lets the multi-asset spawner
+        reuse 32 prototypes for thousands of candidates.
+        """
+
+        manifest = MORPHOLOGY_BATCH_MANIFEST
+        if not (
+            self._morphology_batch
+            and manifest is not None
+            and manifest.get("runtime_parametric_overlays", False)
+        ):
+            return
+        count = len(manifest["hand_usd_paths"]) if count is None else count
+        required = (
+            "parametric_link_names",
+            "parametric_relative_transforms",
+            "parametric_link_translations",
+            "parametric_joint_names",
+            "parametric_joint_local_positions",
+        )
+        for key in required:
+            if len(manifest[key]) < count:
+                raise ValueError(f"runtime morphology overlay count mismatch for {key}")
+        stage = self.scene.stage
+        resolved_links: list[list[str]] = []
+        resolved_joints: list[list[str]] = []
+        visual_overlay_sources: list[tuple[str, Sdf.Path] | None] = []
+        visual_overlay_paths = manifest.get("visual_overlay_usd_paths")
+        if visual_overlay_paths is not None and len(visual_overlay_paths) < count:
+            raise ValueError("runtime morphology visual-overlay count mismatch")
+        source_indices = (
+            list(range(count))
+            if self._grouped_physics_replicas
+            else list(range(count))
+        )
+        for logical_index, manifest_index in enumerate(source_indices):
+            hand_root = f"{self._environment_root(manifest_index)}/Hand"
+            hand_prim = stage.GetPrimAtPath(hand_root)
+            if not hand_prim.IsValid():
+                raise ValueError(f"missing spawned morphology hand at {hand_root}")
+            # The importer can nest instance roots at the hand, link, and
+            # geometry levels. Recursively deinstance the candidate subtree
+            # so no collision descendant remains a read-only instance proxy.
+            pending = [hand_prim]
+            while pending:
+                prim = pending.pop()
+                if prim.IsInstance() or prim.IsInstanceable():
+                    prim.SetInstanceable(False)
+                pending.extend(prim.GetChildren())
+            link_children = {child.GetName() for child in hand_prim.GetChildren()}
+            joint_scope = stage.GetPrimAtPath(f"{hand_root}/joints")
+            joint_children = (
+                {child.GetName() for child in joint_scope.GetChildren()}
+                if joint_scope.IsValid()
+                else set()
+            )
+
+            def resolve(raw_name: str, available: set[str], kind: str) -> str:
+                if raw_name in available:
+                    return raw_name
+                matches = [
+                    value
+                    for value in available
+                    if value.endswith(f"__{raw_name}")
+                ]
+                if len(matches) != 1:
+                    raise ValueError(
+                        f"cannot uniquely resolve morphology {kind} {raw_name} "
+                        f"at env {manifest_index}: {matches}"
+                    )
+                return matches[0]
+
+            resolved_links.append(
+                [
+                    resolve(name, link_children, "link")
+                    for name in manifest["parametric_link_names"][manifest_index]
+                ]
+            )
+            resolved_joints.append(
+                [
+                    resolve(name, joint_children, "joint")
+                    for name in manifest["parametric_joint_names"][manifest_index]
+                ]
+            )
+            if visual_overlay_paths is None:
+                visual_overlay_sources.append(None)
+            else:
+                visual_usd = str(Path(visual_overlay_paths[manifest_index]).resolve())
+                visual_stage = Usd.Stage.Open(visual_usd)
+                if visual_stage is None or not visual_stage.GetDefaultPrim().IsValid():
+                    raise ValueError(
+                        f"cannot open morphology visual overlay: {visual_usd}"
+                    )
+                visual_root = visual_stage.GetDefaultPrim().GetPath()
+                missing_visuals = [
+                    link_name
+                    for link_name in resolved_links[-1]
+                    if not visual_stage.GetPrimAtPath(
+                        visual_root.AppendChild(link_name).AppendChild("visuals")
+                    ).IsValid()
+                ]
+                if missing_visuals:
+                    raise ValueError(
+                        f"morphology visual overlay {visual_usd} lacks link visuals: "
+                        f"{missing_visuals}"
+                    )
+                visual_overlay_sources.append(
+                    (visual_usd, visual_root)
+                )
+        with Sdf.ChangeBlock():
+            for logical_index, manifest_index in enumerate(source_indices):
+                hand_root = f"{self._environment_root(manifest_index)}/Hand"
+                links = resolved_links[logical_index]
+                transforms = manifest["parametric_relative_transforms"][manifest_index]
+                translations = manifest["parametric_link_translations"][manifest_index]
+                if not (len(links) == len(transforms) == len(translations)):
+                    raise ValueError(
+                        "runtime morphology link overlay mismatch at env "
+                        f"{manifest_index}"
+                    )
+                for link_name, transform, translation in zip(
+                    links, transforms, translations, strict=True
+                ):
+                    link_path = f"{hand_root}/{link_name}"
+                    link = stage.GetPrimAtPath(link_path)
+                    link.GetAttribute("xformOp:translate").Set(
+                        Gf.Vec3d(*translation)
+                    )
+                    matrix = np.asarray(transform, dtype=np.float64)
+                    visual_source = visual_overlay_sources[logical_index]
+                    if visual_source is not None:
+                        visual_usd, visual_root = visual_source
+                        source_visual = visual_root.AppendChild(
+                            link_name
+                        ).AppendChild("visuals")
+                        visual = stage.DefinePrim(
+                            f"{link_path}/visuals", "Xform"
+                        )
+                        visual.GetReferences().AddReference(
+                            visual_usd, source_visual
+                        )
+                    if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
+                        matrix_value = Gf.Matrix4d(
+                            *matrix.reshape(-1).tolist()
+                        )
+                        # Search assets contain only ``collisions`` while
+                        # inspection assets also contain ``visuals``. Apply
+                        # the identical morphology transform to both scopes so
+                        # adding render geometry cannot change the collision
+                        # geometry that was evaluated during optimization.
+                        for geometry_scope in ("collisions", "visuals"):
+                            geometry = stage.GetPrimAtPath(
+                                f"{link_path}/{geometry_scope}"
+                            )
+                            if not geometry.IsValid():
+                                continue
+                            xform = UsdGeom.Xformable(geometry)
+                            xform.ClearXformOpOrder()
+                            xform.AddTransformOp(opSuffix="morphology").Set(
+                                matrix_value
+                            )
+                joint_names = resolved_joints[logical_index]
+                positions = manifest["parametric_joint_local_positions"][manifest_index]
+                if len(joint_names) != len(positions):
+                    raise ValueError(
+                        f"runtime morphology joint overlay mismatch at env {index}"
+                    )
+                for joint_name, position in zip(
+                    joint_names, positions, strict=True
+                ):
+                    joint = stage.GetPrimAtPath(
+                        f"{hand_root}/joints/{joint_name}"
+                    )
+                    joint.GetAttribute("physics:localPos0").Set(
+                        Gf.Vec3f(*position)
+                    )
+        print(
+            "[MORPHOLOGY_RUNTIME_OVERLAYS] "
+            f"authored={count} prototypes={len(set(manifest['hand_usd_paths']))}",
+            flush=True,
+        )
+
+    def _validate_collision_coverage(
+        self,
+        hand_root_path: str,
+        object_root_path: str,
+    ) -> None:
+        """Fail before simulation if a physical hand part or object lacks collision."""
+
+        stage = self.scene.stage
+        missing_links: list[str] = []
+        collider_count = 0
+        for link_name in ALL_HAND_CONTACT_LINK_NAMES:
+            link_path = f"{hand_root_path}/{link_name}"
+            link = stage.GetPrimAtPath(link_path)
+            colliders = []
+            if link.IsValid():
+                colliders = get_all_matching_child_prims(
+                    link_path,
+                    predicate=lambda prim: prim.HasAPI(UsdPhysics.CollisionAPI),
+                    stage=stage,
+                    traverse_instance_prims=True,
+                )
+            if not colliders:
+                missing_links.append(link_name)
+            collider_count += len(colliders)
+        if missing_links:
+            raise RuntimeError(
+                f"{HAND_ID} has physical hand parts without collision USD prims: "
+                f"{missing_links}"
+            )
+
+        object_root = stage.GetPrimAtPath(object_root_path)
+        object_colliders = []
+        if object_root.IsValid():
+            object_colliders = get_all_matching_child_prims(
+                object_root_path,
+                predicate=lambda prim: prim.HasAPI(UsdPhysics.CollisionAPI),
+                stage=stage,
+                traverse_instance_prims=True,
+            )
+        if not object_colliders:
+            raise RuntimeError(f"Object has no collision USD prim below {object_root_path}")
+        object_approximations = sorted(
+            {
+                str(UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get())
+                for prim in object_colliders
+                if prim.HasAPI(UsdPhysics.MeshCollisionAPI)
+            }
+        )
+        if object_approximations != ["convexDecomposition"]:
+            raise RuntimeError(
+                "Object collision must use convexDecomposition, got "
+                f"{object_approximations or ['missing MeshCollisionAPI']}"
+            )
+        self._object_collision_approximations = object_approximations
+        print(
+            f"[HAND_COLLISION_COVERAGE:{HAND_ID}] "
+            f"physical_links={len(ALL_HAND_CONTACT_LINK_NAMES)} "
+            f"hand_colliders={collider_count} "
+            f"object_colliders={len(object_colliders)} "
+            f"object_approximation={object_approximations[0]}"
+        )
+
+    def _filter_hand_support_collisions(
+        self,
+        hand_root_path: str,
+        support_root_path: str,
+    ) -> None:
+        """Disable only hand-support contacts while preserving object contacts.
+
+        EgoEngine lets the hand interact with the manipulated object but not
+        with the static table/support. The object is intentionally untouched,
+        so object-hand and object-support collision pairs remain active.
+        """
+        stage = self.scene.stage
+        hand_root = stage.GetPrimAtPath(hand_root_path)
+        support_root = stage.GetPrimAtPath(support_root_path)
+        if not hand_root.IsValid() or not support_root.IsValid():
+            raise RuntimeError(
+                "Cannot configure hand-support collision filtering: "
+                f"hand={hand_root_path}, support={support_root_path}"
+            )
+
+        support_colliders = [
+            prim.GetPath()
+            for prim in Usd.PrimRange(support_root)
+            if prim.HasAPI(UsdPhysics.CollisionAPI)
+        ]
+        if not support_colliders:
+            raise RuntimeError(f"No collision shapes found below {support_root_path}")
+
+        filtered_prims = 0
+        for prim in Usd.PrimRange(hand_root):
+            if not (
+                prim.HasAPI(UsdPhysics.RigidBodyAPI)
+                or prim.HasAPI(UsdPhysics.CollisionAPI)
+            ):
+                continue
+            relationship = (
+                UsdPhysics.FilteredPairsAPI.Apply(prim).CreateFilteredPairsRel()
+            )
+            for support_collider in support_colliders:
+                relationship.AddTarget(support_collider)
+            filtered_prims += 1
+
+        if filtered_prims == 0:
+            raise RuntimeError(f"No hand collision bodies found below {hand_root_path}")
+        if not self._morphology_batch or hand_root_path.endswith("/env_0/Hand"):
+            suffix = (
+                f" across {self.num_envs} heterogeneous environments"
+                if self._morphology_batch
+                else ""
+            )
+            print(
+                f"[HAND_COLLISION_FILTER:{HAND_ID}] "
+                f"disabled hand-support pairs for {filtered_prims} hand prims"
+                f"{suffix}; object-hand and object-support pairs remain enabled"
+            )
+
+    def _pre_physics_step(self, actions: torch.Tensor) -> None:
+        self.actions = torch.clamp(actions, -1.0, 1.0)
+        base_targets = self._reference_at(self.reference_hand_ctrl, self.phase_buf)
+        active_residual = self.residual_scale * self.actions
+        control_residual = active_residual @ self.action_to_control.T
+        targets = base_targets + control_residual
+        self.joint_targets = torch.clamp(
+            targets,
+            self.joint_lower_limits,
+            self.joint_upper_limits,
+        )
+        if self._capture_enabled:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self._capture_actions[env_ids, self.phase_buf] = self.actions
+            self._capture_joint_targets[env_ids, self.phase_buf] = self.joint_targets
+
+    def _apply_action(self) -> None:
+        self.hand.set_joint_position_target(self.joint_targets)
+
+    def _get_observations(self) -> dict[str, torch.Tensor]:
+        object_pos = self.object.data.root_pos_w - self.scene.env_origins
+        object_pose = torch.cat((object_pos, self.object.data.root_quat_w), dim=-1)
+        fingertip_body_quat = self.hand.data.body_quat_w[
+            :, self._fingertip_body_indices
+        ]
+        fingertip_body_pos = (
+            self.hand.data.body_pos_w[:, self._fingertip_body_indices]
+            - self.scene.env_origins[:, None, :]
+        )
+        fingertip_offsets = (
+            self.fingertip_offsets
+            if self._morphology_batch
+            else self.fingertip_offsets[None, :, :].expand(self.num_envs, -1, -1)
+        )
+        fingertip_offset_w = quat_apply(
+            fingertip_body_quat.reshape(-1, 4),
+            fingertip_offsets.reshape(-1, 3),
+        ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
+        fingertip_pos = fingertip_body_pos + fingertip_offset_w
+        goal_fingertip_pose = self._reference_at(
+            self.reference_fingertip_pose, self.phase_buf
+        )
+        goal_object_pose = self._reference_at(
+            self.reference_object_pose, self.phase_buf
+        )
+        if self.cfg.log_rollout_diagnostics and self.num_envs == 1:
+            phase_index = int(self.phase_buf[0].item())
+            if phase_index != self._last_diagnostic_phase and (
+                phase_index < 3 or phase_index % 110 == 0
+            ):
+                actual_q = self.hand.data.joint_pos[0]
+                target_q = self.joint_targets[0]
+                if self._morphology_batch:
+                    reference_q = self.reference_hand_q[0, phase_index]
+                    reference_object_pos = self.reference_object_pose[0, phase_index, :3]
+                else:
+                    reference_q = self.reference_hand_q[phase_index]
+                    reference_object_pos = self.reference_object_pose[phase_index, :3]
+                palm_pos = self.hand.data.body_pos_w[0, self._palm_body_index]
+                middle_tip_pos = self.hand.data.body_pos_w[0, self._middle_tip_body_index]
+                print(
+                    f"[HAND_ROLLOUT:{HAND_ID}] "
+                    f"phase={phase_index} "
+                    f"hand_actual_root={actual_q[:6].detach().cpu().tolist()} "
+                    f"hand_target_root={target_q[:6].detach().cpu().tolist()} "
+                    f"hand_reference_root={reference_q[:6].detach().cpu().tolist()} "
+                    f"palm_pos={palm_pos.detach().cpu().tolist()} "
+                    f"middle_tip_pos={middle_tip_pos.detach().cpu().tolist()} "
+                    f"object_actual_pos={object_pos[0].detach().cpu().tolist()} "
+                    f"object_reference_pos={reference_object_pos.detach().cpu().tolist()}"
+                )
+                self._last_diagnostic_phase = phase_index
+        observation = torch.cat(
+            (
+                self.hand.data.joint_pos,
+                fingertip_pos.flatten(start_dim=1),
+                object_pose,
+                goal_fingertip_pose.flatten(start_dim=1),
+                self._reference_at(self.reference_hand_q, self.phase_buf),
+                goal_object_pose,
+            ),
+            dim=-1,
+        )
+        if self.morphology_context is not None:
+            observation = torch.cat((observation, self.morphology_context), dim=-1)
+        return {"policy": observation}
+
+    def _compute_object_errors(self) -> None:
+        object_pos = self.object.data.root_pos_w - self.scene.env_origins
+        reference_pose = self._reference_at(
+            self.reference_object_pose, self.phase_buf
+        )
+        self._object_position_error = torch.linalg.vector_norm(
+            object_pos - reference_pose[:, :3], dim=-1
+        )
+        self._object_rotation_error = quat_error_magnitude(
+            self.object.data.root_quat_w,
+            reference_pose[:, 3:7],
+        )
+
+    def _contact_sensor_force(self, sensor: ContactSensor) -> torch.Tensor:
+        force_matrix = sensor.data.force_matrix_w
+        if force_matrix is None:
+            return torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        return torch.linalg.vector_norm(
+            force_matrix.reshape(self.num_envs, -1, 3),
+            dim=-1,
+        ).amax(dim=-1)
+
+    def _compute_pinch_contact(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        thumb_force = self._contact_sensor_force(self._thumb_contact_sensor)
+        other_finger_force = self._contact_sensor_force(self._other_finger_contact_sensor)
+        thumb_contact = thumb_force > self.cfg.contact_force_threshold
+        other_finger_contact = other_finger_force > self.cfg.contact_force_threshold
+        return (
+            thumb_contact,
+            other_finger_contact,
+            thumb_contact & other_finger_contact,
+            thumb_force,
+            other_finger_force,
+        )
+
+    def _get_rewards(self) -> torch.Tensor:
+        self._compute_object_errors()
+        weighted_position_error = (
+            self.cfg.object_position_reward_weight
+            * self._object_position_error
+        )
+        weighted_rotation_error = (
+            self.cfg.object_rotation_reward_weight
+            * self._object_rotation_error
+        )
+        pose_tracking_error = torch.sqrt(
+            weighted_position_error.square()
+            + weighted_rotation_error.square()
+        )
+        reward_offset_c = math.sqrt(
+            (
+                self.cfg.object_position_reward_weight
+                * self.cfg.object_failure_distance
+            )
+            ** 2
+            + (
+                self.cfg.object_rotation_reward_weight
+                * self.cfg.object_failure_orientation
+            )
+            ** 2
+        )
+        pose_tracking_reward = reward_offset_c - pose_tracking_error
+        (
+            thumb_contact,
+            other_finger_contact,
+            pinch_contact,
+            thumb_force,
+            other_finger_force,
+        ) = self._compute_pinch_contact()
+        all_hand_force = self._contact_sensor_force(self._all_hand_contact_sensor)
+        all_hand_contact = all_hand_force > self.cfg.contact_force_threshold
+        contact_reward = pinch_contact.to(torch.float32) * self.cfg.contact_reward_weight
+        total_reward = pose_tracking_reward + contact_reward
+        # Keep per-environment components available after DirectRLEnv performs
+        # its automatic reset. Morphology evaluation consumes the exact same
+        # reward tensors returned to PPO, without reconstructing a proxy.
+        self._last_pose_tracking_reward = pose_tracking_reward
+        self._last_contact_reward = contact_reward
+        self._last_pinch_contact = pinch_contact
+        self._last_thumb_contact_force = thumb_force
+        self._last_other_finger_contact_force = other_finger_force
+        self._pose_episode_return += pose_tracking_reward
+        if self._capture_enabled:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self._capture_pose_reward[env_ids, self.phase_buf] = pose_tracking_reward
+            self._capture_contact_reward[env_ids, self.phase_buf] = contact_reward
+        finger_residual = (
+            self.actions[:, self._finger_action_indices]
+            * self.residual_scale[self._finger_action_indices]
+        ).abs()
+        log = {
+            "object_position_error_m": self._object_position_error.mean(),
+            "object_rotation_error_rad": self._object_rotation_error.mean(),
+            "weighted_object_position_error": weighted_position_error.mean(),
+            "weighted_object_rotation_error": weighted_rotation_error.mean(),
+            "pose_tracking_error": pose_tracking_error.mean(),
+            "reward_offset_c": reward_offset_c,
+            "pose_tracking_reward": pose_tracking_reward.mean(),
+            "thumb_object_contact": thumb_contact.to(torch.float32).mean(),
+            "other_finger_object_contact": other_finger_contact.to(torch.float32).mean(),
+            "pinch_contact_reward": contact_reward.mean(),
+            "thumb_object_contact_force_n": thumb_force.mean(),
+            "other_finger_object_contact_force_n": other_finger_force.mean(),
+            "all_hand_object_contact": all_hand_contact.to(torch.float32).mean(),
+            "all_hand_object_contact_force_n": all_hand_force.mean(),
+            "finger_residual_abs_mean_rad": finger_residual.mean(),
+            "finger_residual_abs_max_rad": finger_residual.amax(dim=-1).mean(),
+            "reference_phase_fraction": (
+                self.phase_buf.to(torch.float32).mean()
+                / float(self._reference_length - 1)
+            ),
+        }
+        completed = self.reset_buf
+        if completed.any():
+            log["pose_tracking_return"] = self._pose_episode_return[completed].mean()
+            log["completed_episode_steps"] = (
+                self.episode_length_buf[completed].to(torch.float32).mean()
+            )
+        self.extras["log"] = log
+        return total_reward
+
+    def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+        # EgoEngine applies ctrl_ref[t] and evaluates against reference t+1.
+        self.phase_buf = torch.clamp(
+            self.phase_buf + 1,
+            max=self._reference_length - 1,
+        )
+        self._compute_object_errors()
+        # DirectRLEnv resets finished environments before returning from step().
+        # Preserve the phase used for termination so external evaluation can
+        # distinguish a true last-reference timeout from an early reset.
+        self._last_evaluated_phase.copy_(self.phase_buf)
+        invalid = ~torch.isfinite(self._object_position_error) | ~torch.isfinite(
+            self._object_rotation_error
+        )
+        object_lost = (
+            (self._object_position_error > self.cfg.object_failure_distance)
+            | (self._object_rotation_error > self.cfg.object_failure_orientation)
+        )
+        end_of_reference = self.phase_buf >= self._reference_length - 1
+        if self._capture_enabled:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self._capture_hand_q[env_ids, self.phase_buf] = self.hand.data.joint_pos
+            object_position = (
+                self.object.data.root_pos_w - self.scene.env_origins
+            )
+            object_pose = torch.cat(
+                (object_position, self.object.data.root_quat_w), dim=-1
+            )
+            self._capture_object_pose[env_ids, self.phase_buf] = object_pose
+            successful = end_of_reference & ~invalid & ~object_lost
+            if successful.any():
+                successful_ids = successful.nonzero(as_tuple=False).flatten()
+                if os.environ.get("HAND_CAPTURE_BEST_SUCCESS", "0") == "1":
+                    success_returns = (
+                        self._capture_pose_reward[successful_ids].sum(dim=1)
+                        + self._capture_contact_reward[successful_ids].sum(dim=1)
+                    )
+                    success_env_id = int(
+                        successful_ids[torch.argmax(success_returns)].item()
+                    )
+                else:
+                    success_env_id = int(successful_ids[0].item())
+                self._save_success_trajectory(success_env_id)
+            finished = invalid | object_lost | end_of_reference
+            if finished.any():
+                finished_ids = finished.nonzero(as_tuple=False).flatten()
+                finished_phases = self.phase_buf[finished_ids]
+                max_phase = finished_phases.max()
+                phase_mask = finished_phases == max_phase
+                phase_ids = finished_ids[phase_mask]
+                phase = int(max_phase.item())
+                frame_mask = (
+                    torch.arange(self._reference_length, device=self.device)[None]
+                    <= phase
+                )
+                candidate_returns = (
+                    (self._capture_pose_reward[phase_ids] * frame_mask).sum(dim=1)
+                    + (self._capture_contact_reward[phase_ids] * frame_mask).sum(dim=1)
+                )
+                candidate_offset = int(torch.argmax(candidate_returns).item())
+                candidate_env_id = int(phase_ids[candidate_offset].item())
+                # Save before DirectRLEnv resets the completed environment;
+                # otherwise phase_buf and the captured episode are overwritten.
+                self._save_best_trajectory(candidate_env_id)
+        time_out = (self.episode_length_buf >= self.max_episode_length) | end_of_reference
+        return invalid | object_lost, time_out
+
+    def _save_rollout_trajectory(
+        self,
+        output_path: Path,
+        env_id: int,
+        last_phase: int,
+        *,
+        success: bool,
+    ) -> dict[str, object]:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "hand_id": HAND_ID,
+            "status": "success" if success else "farthest",
+            "success": success,
+            "env_id": env_id,
+            "final_phase": last_phase,
+            "reference_last_phase": self._reference_length - 1,
+            "position_error_m": float(self._object_position_error[env_id].item()),
+            "rotation_error_rad": float(self._object_rotation_error[env_id].item()),
+            "pose_tracking_return": float(
+                self._capture_pose_reward[env_id, : last_phase + 1].sum().item()
+            ),
+            "contact_return": float(
+                self._capture_contact_reward[env_id, : last_phase + 1].sum().item()
+            ),
+            "joint_names": list(self.hand.joint_names),
+            "action_joint_names": list(self._action_joint_names),
+            "residual_root_position_scale": self.cfg.residual_root_position_scale,
+            "residual_root_rotation_scale": self.cfg.residual_root_rotation_scale,
+            "residual_finger_scale": self.cfg.residual_finger_scale,
+        }
+        temporary_path = output_path.with_suffix(output_path.suffix + ".tmp")
+        with temporary_path.open("wb") as stream:
+            np.savez_compressed(
+                stream,
+                hand_q=self._capture_hand_q[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                object_pose_wxyz=self._capture_object_pose[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                actions=self._capture_actions[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                joint_targets=self._capture_joint_targets[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                pose_reward=self._capture_pose_reward[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                contact_reward=self._capture_contact_reward[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy(),
+                metadata_json=np.asarray(json.dumps(metadata)),
+            )
+        temporary_path.replace(output_path)
+        return metadata
+
+    def _save_best_trajectory(self, env_id: int) -> None:
+        if self._best_rollout_path is None:
+            return
+        last_phase = int(self.phase_buf[env_id].item())
+        candidate_return = float(
+            self._capture_pose_reward[env_id, : last_phase + 1].sum().item()
+            + self._capture_contact_reward[env_id, : last_phase + 1].sum().item()
+        )
+        if last_phase < self._best_rollout_phase or (
+            last_phase == self._best_rollout_phase
+            and candidate_return <= self._best_rollout_return
+        ):
+            return
+        metadata = self._save_rollout_trajectory(
+            self._best_rollout_path,
+            env_id,
+            last_phase,
+            success=last_phase >= self._reference_length - 1,
+        )
+        self._best_rollout_phase = last_phase
+        self._best_rollout_return = candidate_return
+        print(
+            "HAND_BEST_ROLLOUT_CAPTURED "
+            f"hand_id={HAND_ID} path={self._best_rollout_path} "
+            f"env_id={env_id} phase={last_phase} "
+            f"total_reward={candidate_return:.9f} "
+            f"position_error_m={metadata['position_error_m']:.9f} "
+            f"rotation_error_rad={metadata['rotation_error_rad']:.9f}",
+            flush=True,
+        )
+
+    def _save_success_trajectory(self, env_id: int) -> None:
+        if self._success_capture_path is None or self._success_capture_written:
+            return
+        last_phase = self._reference_length - 1
+        metadata = self._save_rollout_trajectory(
+            self._success_capture_path,
+            env_id,
+            last_phase,
+            success=True,
+        )
+        print(
+            "HAND_SUCCESS_TRAJECTORY_CAPTURED "
+            f"hand_id={HAND_ID} path={self._success_capture_path} "
+            f"env_id={env_id} phase={last_phase} "
+            f"position_error_m={metadata['position_error_m']:.9f} "
+            f"rotation_error_rad={metadata['rotation_error_rad']:.9f}",
+            flush=True,
+        )
+        self._success_capture_written = True
+        if self._exit_after_success_capture:
+            raise SystemExit(0)
+
+    def _reset_idx(self, env_ids: Sequence[int] | None) -> None:
+        if env_ids is None:
+            env_ids = self.hand._ALL_INDICES
+        super()._reset_idx(env_ids)
+
+        if self.cfg.randomize_start_phase:
+            max_start = self._reference_length - self.max_episode_length - 2
+            self.phase_buf[env_ids] = torch.randint(
+                low=0,
+                high=max(max_start + 1, 1),
+                size=(len(env_ids),),
+                device=self.device,
+            )
+        else:
+            self.phase_buf[env_ids] = 0
+
+        hand_root_state = self.hand.data.default_root_state[env_ids].clone()
+        hand_root_state[:, :3] += self.scene.env_origins[env_ids]
+        hand_root_state[:, 7:] = 0.0
+        env_ids_tensor = torch.as_tensor(
+            env_ids, device=self.device, dtype=torch.long
+        )
+        joint_pos = self._reference_at(
+            self.reference_hand_q,
+            self.phase_buf[env_ids_tensor],
+            env_ids_tensor,
+        )
+        joint_vel = torch.zeros_like(joint_pos)
+        self.hand.write_root_pose_to_sim(hand_root_state[:, :7], env_ids)
+        self.hand.write_root_velocity_to_sim(hand_root_state[:, 7:], env_ids)
+        self.hand.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+        ctrl = self._reference_at(
+            self.reference_hand_ctrl,
+            self.phase_buf[env_ids_tensor],
+            env_ids_tensor,
+        )
+        self.hand.set_joint_position_target(ctrl, env_ids=env_ids)
+        self.joint_targets[env_ids] = ctrl
+
+        object_pose = self._reference_at(
+            self.reference_object_pose,
+            self.phase_buf[env_ids_tensor],
+            env_ids_tensor,
+        ).clone()
+        object_pose[:, :3] += self.scene.env_origins[env_ids]
+        object_velocity = torch.zeros((len(env_ids), 6), device=self.device)
+        self.object.write_root_pose_to_sim(object_pose, env_ids)
+        self.object.write_root_velocity_to_sim(object_velocity, env_ids)
+        self.actions[env_ids] = 0.0
+        self._pose_episode_return[env_ids] = 0.0
+        if self._capture_enabled:
+            self._capture_hand_q[env_ids, 0] = joint_pos
+            initial_object_pose = self._reference_at(
+                self.reference_object_pose,
+                torch.zeros(len(env_ids_tensor), device=self.device, dtype=torch.long),
+                env_ids_tensor,
+            )
+            self._capture_object_pose[env_ids, 0] = initial_object_pose
+            self._capture_actions[env_ids, 0] = 0.0
+            self._capture_joint_targets[env_ids, 0] = ctrl
+            self._capture_pose_reward[env_ids, 0] = 0.0
+            self._capture_contact_reward[env_ids, 0] = 0.0

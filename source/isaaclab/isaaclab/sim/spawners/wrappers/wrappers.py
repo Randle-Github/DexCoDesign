@@ -71,7 +71,12 @@ def spawn_multi_asset(
 
     # spawn everything first in a "Dataset" prim
     proto_prim_paths = list()
+    reused_prototypes: dict[tuple[type, str], str] = {}
     for index, asset_cfg in enumerate(cfg.assets_cfg):
+        reuse_key = (type(asset_cfg), str(getattr(asset_cfg, "usd_path", "")))
+        if cfg.reuse_duplicate_assets and reuse_key in reused_prototypes:
+            proto_prim_paths.append(reused_prototypes[reuse_key])
+            continue
         # append semantic tags if specified
         if cfg.semantic_tags is not None:
             if asset_cfg.semantic_tags is None:
@@ -96,6 +101,8 @@ def spawn_multi_asset(
         )
         # append to proto prim paths
         proto_prim_paths.append(proto_prim_path)
+        if cfg.reuse_duplicate_assets:
+            reused_prototypes[reuse_key] = proto_prim_path
 
     # resolve prim paths for spawning and cloning
     prim_paths = [f"{source_prim_path}/{asset_path}" for source_prim_path in source_prim_paths]
@@ -165,7 +172,7 @@ def spawn_multi_usd_file(
     usd_template_cfg = UsdFileCfg()
     for attr_name, attr_value in cfg.__dict__.items():
         # skip names we know are not present
-        if attr_name in ["func", "usd_path", "random_choice"]:
+        if attr_name in ["func", "usd_path", "random_choice", "reuse_duplicate_assets"]:
             continue
         # set the attribute into the template
         setattr(usd_template_cfg, attr_name, attr_value)
@@ -177,6 +184,7 @@ def spawn_multi_usd_file(
         multi_asset_cfg.assets_cfg.append(usd_cfg)
     # set random choice
     multi_asset_cfg.random_choice = cfg.random_choice
+    multi_asset_cfg.reuse_duplicate_assets = cfg.reuse_duplicate_assets
 
     # propagate the contact sensor settings
     # note: the default value for activate_contact_sensors in MultiAssetSpawnerCfg is False.

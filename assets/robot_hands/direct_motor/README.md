@@ -27,9 +27,11 @@ direct_motor/
   <hand_id>/<left|right>/meshes/*.obj
 ```
 
-All visual and collision meshes are materialized beside each URDF. Mesh faces
-are preserved rather than decimated; very large meshes are split into OBJ
-chunks only to keep individual importer inputs manageable.
+Visual and collision meshes are materialized beside each URDF. For MANO, the
+actual per-link hand visual meshes are reused as collision meshes; SPIDER's
+extra capsule/box collision proxies are deliberately excluded. Mesh faces are
+preserved rather than decimated; very large meshes are split into OBJ chunks
+only to keep individual importer inputs manageable.
 
 ## Conversion rules
 

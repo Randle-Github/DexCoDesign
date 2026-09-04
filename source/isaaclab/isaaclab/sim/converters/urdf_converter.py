@@ -140,7 +140,13 @@ class UrdfConverter(AssetConverterBase):
         import_config.set_collision_from_visuals(self.cfg.collision_from_visuals)
         # consolidating links that are connected by fixed joints
         import_config.set_merge_fixed_joints(self.cfg.merge_fixed_joints)
-        import_config.set_merge_fixed_ignore_inertia(self.cfg.merge_fixed_joints)
+        # ``set_merge_fixed_ignore_inertia`` is not available in the URDF
+        # importer bundled with Isaac Sim 4.5 (2.3.10).  It was added to newer
+        # importer releases used by Isaac Lab 2.3.x.  Keep the newer behavior
+        # when supported, while allowing Sim 4.5 to use its native fixed-joint
+        # merge semantics.
+        if hasattr(import_config, "set_merge_fixed_ignore_inertia"):
+            import_config.set_merge_fixed_ignore_inertia(self.cfg.merge_fixed_joints)
         # -- physics settings
         # create fix joint for base link
         import_config.set_fix_base(self.cfg.fix_base)

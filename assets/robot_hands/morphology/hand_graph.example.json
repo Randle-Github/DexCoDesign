@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "hand_id": "example_allegro_expanded",
+  "source_hand": "allegro_hand_v5",
+  "palm": {
+    "layout_mode": "symmetric",
+    "expansion": 0.65,
+    "scale_x": 1.05,
+    "scale_z": 1.0,
+    "yaw": 0.0
+  },
+  "fingers": {
+    "default_length_scale": 1.0,
+    "default_radius_scale": 1.0,
+    "thumb": {
+      "length_scale": 0.95
+    },
+    "middle": {
+      "length_scale": 1.1
+    }
+  }
+}

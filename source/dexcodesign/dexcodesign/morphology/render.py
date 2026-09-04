@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -16,12 +17,15 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
-OUTPUTS = ROOT / "artifacts" / "hand_morphology" / "generated_100"
+OUTPUTS = Path(os.environ.get(
+    "HAND_GENERATION_ROOT",
+    str(ROOT / "artifacts" / "hand_morphology" / "generated_100"),
+))
 INPUT = OUTPUTS / "compiled_hands.json"
 TILE_DIR = OUTPUTS / "render_tiles"
 FINAL = OUTPUTS / "hands_100.png"
 WIDTH, HEIGHT = 1920, 1080
-COLUMNS = 5
+COLUMNS = 4
 SPACING_X, SPACING_Y = 3.1, 3.15
 COLORS = (
     ".95 .55 .22 1", ".25 .65 .98 1", ".30 .82 .58 1", ".93 .35 .47 1", ".67 .48 .98 1",
@@ -135,21 +139,34 @@ def main() -> int:
         if missing:
             raise ValueError(f"unknown hand ids: {sorted(missing)}")
         output = args.output or OUTPUTS / "selected_hands.png"
-        distance = args.camera_distance or max(5.8, 2.15 * math.ceil(len(hands) / COLUMNS) + 2.6)
+        distance = args.camera_distance or max(9.0, 2.15 * math.ceil(len(hands) / COLUMNS) + 2.6)
         tile = render_tile(hands, 98, camera_distance=distance)
         with Image.open(tile) as image:
             image.convert("RGB").save(output)
         print(f"selected hands -> {output}")
         return 0
-    if len(hands) != 100:
-        raise ValueError(f"expected 100 hands, got {len(hands)}")
-    tiles = [render_tile(hands[index * 25:(index + 1) * 25], index) for index in range(4)]
-    canvas = Image.new("RGB", (WIDTH * 2, HEIGHT * 2))
+    panel_count = min(4, max(1, math.ceil(len(hands) / 8)))
+    groups = [group.tolist() for group in np.array_split(np.asarray(hands, dtype=object), panel_count)]
+    tiles = [
+        render_tile(
+            group,
+            index,
+            camera_distance=max(9.0, 2.15 * math.ceil(len(group) / COLUMNS) + 2.6),
+        )
+        for index, group in enumerate(groups)
+    ]
+    canvas_columns = min(2, panel_count)
+    canvas_rows = math.ceil(panel_count / canvas_columns)
+    canvas = Image.new("RGB", (WIDTH * canvas_columns, HEIGHT * canvas_rows))
     for index, path in enumerate(tiles):
         with Image.open(path) as image:
-            canvas.paste(image.convert("RGB"), ((index % 2) * WIDTH, (index // 2) * HEIGHT))
-    canvas.save(FINAL)
-    print(f"stitched 10x10 contact sheet -> {FINAL}")
+            canvas.paste(
+                image.convert("RGB"),
+                ((index % canvas_columns) * WIDTH, (index // canvas_columns) * HEIGHT),
+            )
+    final = args.output or OUTPUTS / f"hands_{len(hands)}.png"
+    canvas.save(final)
+    print(f"stitched {len(hands)}-hand contact sheet -> {final}")
     return 0
 
 

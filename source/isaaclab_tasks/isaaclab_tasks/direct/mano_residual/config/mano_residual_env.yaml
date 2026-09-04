@@ -1,0 +1,13 @@
+# Environment-level collision choices for the MANO residual task.
+collisions:
+  # true:  disable physical contacts between the hand and support/table
+  # false: enable physical contacts between the hand and support/table
+  # Hand-object and object-support collisions remain enabled in both cases.
+  disable_hand_support_collisions: False
+
+# Maximum residual correction produced by a normalized policy action in
+# [-1, 1]. Position is in meters; rotation and finger joints are in radians.
+residual_actions:
+  root_position_scale: 0.10
+  root_rotation_scale: 0.30
+  finger_scale: 0.30

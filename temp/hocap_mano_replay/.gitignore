@@ -1,0 +1,16 @@
+# Re-downloadable upstream archives and nested source checkouts.
+/data/raw/
+/vendor/
+
+# Local datasets, generated assets, and experiment outputs.
+/data/
+/artifacts/
+/generated_wuji_moderate/
+
+# Machine-local launch settings; keep the example configuration tracked.
+/isaaclab/all_hands_independent.conf
+
+# Machine-specific MuJoCo exports contain absolute local mesh paths.
+/artifacts/*scene.xml
+/artifacts/all_hands_ik_cache/*.xml
+/artifacts/all_hands_physics_cache/*.xml

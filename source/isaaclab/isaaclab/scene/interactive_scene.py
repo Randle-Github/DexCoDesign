@@ -34,9 +34,13 @@ from isaaclab.sim.views import XformPrimView
 from isaaclab.terrains import TerrainImporter, TerrainImporterCfg
 from isaaclab.utils.version import get_isaac_sim_version
 
-# Note: This is a temporary import for the VisuoTactileSensorCfg class.
-# It will be removed once the VisuoTactileSensor class is added to the core Isaac Lab framework.
-from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
+# The focused DexCoDesign snapshot omits the optional isaaclab_contrib
+# package. Keep core scenes usable while preserving tactile support whenever
+# that package is installed.
+try:
+    from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
+except ModuleNotFoundError:
+    VisuoTactileSensorCfg = ()  # type: ignore[assignment,misc]
 
 from .interactive_scene_cfg import InteractiveSceneCfg
 
