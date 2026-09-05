@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
-#SBATCH --output=slurm-wuji-hybrid-sac-%j.out
+#SBATCH --output=slurm_logs/slurm-wuji-hybrid-sac-%j.out
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
