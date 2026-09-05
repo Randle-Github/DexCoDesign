@@ -128,6 +128,7 @@ class SkrlConditionalMorphologySAC:
         self.elite_mutation_sigma = float(elite_mutation_sigma)
         self.reward_scale = float(reward_scale)
         self.seed = int(seed)
+        self.wandb_enabled = bool(wandb)
         self.output_root = Path(output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.device = torch.device(device)
@@ -219,6 +220,9 @@ class SkrlConditionalMorphologySAC:
             "project": wandb_project,
             "group": wandb_group,
             "tags": ["WUJI", "morphology", "SAC"],
+            # SKRL binds its custom EventFileWriter before wandb.init can patch
+            # TensorBoard. Log generation metrics explicitly instead.
+            "sync_tensorboard": False,
         }
         self.memory = memory
         self.agent = SAC(
@@ -370,6 +374,33 @@ class SkrlConditionalMorphologySAC:
                 break
         self.archive_actions = all_actions[kept]
         self.archive_rewards = all_rewards[kept]
+        if self.wandb_enabled:
+            try:
+                import wandb
+
+                wandb.log(
+                    {
+                        "Reward / Instantaneous reward (max)": float(
+                            candidate_rewards.max()
+                        ),
+                        "Reward / Instantaneous reward (mean)": float(
+                            candidate_rewards.mean()
+                        ),
+                        "Reward / Instantaneous reward (min)": float(
+                            candidate_rewards.min()
+                        ),
+                        "Morphology / Elite archive best reward": float(
+                            self.archive_rewards.max()
+                        ),
+                        "Morphology / Replay size": int(len(self.memory)),
+                    },
+                    step=generation,
+                )
+            except Exception as exc:
+                print(
+                    f"WARNING: failed to log generation {generation} to W&B: {exc}",
+                    flush=True,
+                )
         np.savez_compressed(
             self.output_root / "elite_archive.npz",
             actions=self.archive_actions,
