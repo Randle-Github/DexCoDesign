@@ -226,6 +226,133 @@ from skrl_sac_wuji_morphology import (  # noqa: E402
 )
 
 
+REFERENCE_PHASE_COUNT = 445
+
+
+def log_generation_to_wandb(
+    generation: int,
+    rows: list[dict],
+    optimizer_status: dict | None,
+    cumulative_environment_steps: int,
+) -> None:
+    """Log population summaries and one queryable candidate table to W&B."""
+    if not args_cli.wandb:
+        return
+    try:
+        import wandb
+
+        rewards = np.asarray(
+            [row["total_reward"] for row in rows], dtype=np.float64
+        )
+        phases = np.asarray([row["phase"] for row in rows], dtype=np.float64)
+        success = np.asarray(
+            [row["success"] for row in rows], dtype=np.float64
+        )
+        table = wandb.Table(
+            columns=[
+                "generation",
+                "candidate_index",
+                "candidate_id",
+                "total_reward",
+                "pose_reward",
+                "contact_reward",
+                "phase",
+                "environment_steps",
+                "survival",
+                "survival_ratio",
+                "success",
+                "position_error_m",
+                "orientation_error_rad",
+                "sample_source",
+                "palm_prototype_index",
+                "requested_palm_expansion",
+                "design_vector",
+            ]
+        )
+        for row in sorted(rows, key=lambda item: item["candidate_index"]):
+            phase = int(row["phase"])
+            table.add_data(
+                generation,
+                int(row["candidate_index"]),
+                row["candidate_id"],
+                float(row["total_reward"]),
+                float(row["pose_reward"]),
+                float(row["contact_reward"]),
+                phase,
+                int(row.get("environment_steps", max(phase, 0))),
+                f"{phase}/{REFERENCE_PHASE_COUNT}",
+                phase / REFERENCE_PHASE_COUNT,
+                bool(row["success"]),
+                float(row["position_error_m"]),
+                float(row["orientation_error_rad"]),
+                row.get("sample_source", "unknown"),
+                row.get("palm_prototype_index"),
+                row.get("requested_palm_expansion"),
+                row.get("semantic_vector", row.get("vector")),
+            )
+        metrics: dict[str, object] = {
+            "Progress / Environment steps": cumulative_environment_steps,
+            "Reward / Instantaneous reward (max)": float(rewards.max()),
+            "Reward / Instantaneous reward (mean)": float(rewards.mean()),
+            "Reward / Instantaneous reward (min)": float(rewards.min()),
+            "Survival / Phase (max)": float(phases.max()),
+            "Survival / Phase (mean)": float(phases.mean()),
+            "Survival / Phase (min)": float(phases.min()),
+            "Survival / Ratio (max)": float(
+                phases.max() / REFERENCE_PHASE_COUNT
+            ),
+            "Survival / Ratio (mean)": float(
+                phases.mean() / REFERENCE_PHASE_COUNT
+            ),
+            "Survival / Ratio (min)": float(
+                phases.min() / REFERENCE_PHASE_COUNT
+            ),
+            "Survival / Success ratio": float(success.mean()),
+            "Survival / Max (out of 445)": (
+                f"{int(phases.max())}/{REFERENCE_PHASE_COUNT}"
+            ),
+            "Survival / Mean (out of 445)": (
+                f"{phases.mean():.2f}/{REFERENCE_PHASE_COUNT}"
+            ),
+            "Survival / Min (out of 445)": (
+                f"{int(phases.min())}/{REFERENCE_PHASE_COUNT}"
+            ),
+            "Morphology / Candidate performance": table,
+            "Environment steps / Reward (max)": float(rewards.max()),
+            "Environment steps / Reward (mean)": float(rewards.mean()),
+            "Environment steps / Reward (min)": float(rewards.min()),
+            "Environment steps / Survival ratio (max)": float(
+                phases.max() / REFERENCE_PHASE_COUNT
+            ),
+            "Environment steps / Survival ratio (mean)": float(
+                phases.mean() / REFERENCE_PHASE_COUNT
+            ),
+            "Environment steps / Survival ratio (min)": float(
+                phases.min() / REFERENCE_PHASE_COUNT
+            ),
+        }
+        if optimizer_status is not None:
+            metrics["Morphology / Replay size"] = int(
+                optimizer_status.get("replay_size", 0)
+            )
+            if "elite_archive_best_reward" in optimizer_status:
+                metrics["Morphology / Elite archive best reward"] = float(
+                    optimizer_status["elite_archive_best_reward"]
+                )
+        if generation == 0:
+            wandb.define_metric("Progress / Environment steps")
+            wandb.define_metric(
+                "Environment steps/*",
+                step_metric="Progress / Environment steps",
+            )
+        wandb.log(metrics, step=generation)
+    except Exception as exc:
+        print(
+            f"WARNING: failed to log generation {generation} to W&B: {exc}",
+            flush=True,
+        )
+
+
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
 
@@ -422,6 +549,9 @@ def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict],
     count = len(manifest["vectors"])
     actions = torch.zeros((count, raw.action_dim), device=raw.device)
     active = torch.ones(count, dtype=torch.bool, device=raw.device)
+    environment_steps = torch.zeros(
+        count, dtype=torch.long, device=raw.device
+    )
     pose = torch.zeros(count, device=raw.device)
     contact = torch.zeros(count, device=raw.device)
     phase = torch.full((count,), -1, dtype=torch.long, device=raw.device)
@@ -433,6 +563,7 @@ def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict],
     start = time.perf_counter()
     with torch.inference_mode():
         for _ in range(raw._reference_length + 2):
+            environment_steps[active] += 1
             _, _, terminated, truncated, _ = env.step(actions)
             pose[active] += raw._last_pose_tracking_reward[active]
             contact[active] += raw._last_contact_reward[active]
@@ -472,6 +603,7 @@ def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict],
                 "contact_reward": float(contact[i].item()),
                 "pinch_contact_steps": int(pinch[i].item()),
                 "phase": int(phase[i].item()),
+                "environment_steps": int(environment_steps[i].item()),
                 "success": bool(phase[i].item() >= raw._reference_length - 1),
                 "position_error_m": float(position[i].item()),
                 "orientation_error_rad": float(orientation[i].item()),
@@ -658,6 +790,9 @@ def evaluate_shared_policy(
     ).parameters
     count = raw_env.num_envs
     active = torch.ones(count, dtype=torch.bool, device=raw_env.device)
+    environment_steps = torch.zeros(
+        count, dtype=torch.long, device=raw_env.device
+    )
     pose = torch.zeros(count, device=raw_env.device)
     contact = torch.zeros(count, device=raw_env.device)
     phase = torch.full((count,), -1, dtype=torch.long, device=raw_env.device)
@@ -668,6 +803,7 @@ def evaluate_shared_policy(
     start = time.perf_counter()
     with torch.inference_mode():
         for _ in range(raw_env._reference_length + 2):
+            environment_steps[active] += 1
             if agent_act_requires_states:
                 outputs = runner.agent.act(
                     observations, None, timestep=0, timesteps=0
@@ -738,6 +874,7 @@ def evaluate_shared_policy(
                 "pinch_contact_steps": float(pinch[ids].float().mean().item()),
                 "phase": int(group_phase.max().item()),
                 "mean_phase": float(group_phase.float().mean().item()),
+                "environment_steps": int(environment_steps[ids].sum().item()),
                 "success": bool(group_success.any().item()),
                 "success_count": int(group_success.sum().item()),
                 "replicas": int(len(ids)),
@@ -922,6 +1059,7 @@ def shared_ppo_outer_search(
         )
 
     history: list[dict] = []
+    cumulative_environment_steps = 0
     for generation in range(args_cli.generations):
         generation_root = output / f"generation_{generation:03d}"
         vectors_path = generation_root / "vectors.npy"
@@ -1091,6 +1229,15 @@ def shared_ppo_outer_search(
                     "reward_max": float(values.max()),
                 }
             optimizer_status["sample_source_metrics"] = source_metrics
+            cumulative_environment_steps += sum(
+                int(row["environment_steps"]) for row in all_rows
+            )
+            log_generation_to_wandb(
+                generation,
+                all_rows,
+                optimizer_status,
+                cumulative_environment_steps,
+            )
             summary = {
                 "schema_version": 1,
                 "algorithm": "fixed_reference_shared_ppo_outer_skrl_sac",
@@ -1111,6 +1258,7 @@ def shared_ppo_outer_search(
                     * args_cli.ppo_rollout_multiplier
                 ),
                 "global_envs": args_cli.population * args_cli.morphology_replicas,
+                "cumulative_environment_steps": cumulative_environment_steps,
                 "world_size": world_size,
                 "ppo_iterations": args_cli.shared_ppo_iterations,
                 "best": all_rows[0],
@@ -1129,6 +1277,7 @@ def shared_ppo_outer_search(
                     "mean_reward": float(rewards.mean()),
                     "best_phase": all_rows[0]["phase"],
                     "success_count": sum(row["success"] for row in all_rows),
+                    "cumulative_environment_steps": cumulative_environment_steps,
                     "ppo_iterations_total": (
                         (generation + 1) * args_cli.shared_ppo_iterations
                     ),
@@ -1227,6 +1376,7 @@ def main(env_cfg, agent_cfg) -> None:
     history = []
     previous_summary: Path | None = None
     stage_created = False
+    cumulative_environment_steps = 0
     skrl_optimizer = None
     if args_cli.optimizer_backend == "skrl":
         skrl_optimizer = SkrlConditionalMorphologySAC(
@@ -1392,6 +1542,15 @@ def main(env_cfg, agent_cfg) -> None:
                     "success_count": sum(row["success"] for row in source_rows),
                 }
             optimizer_status["sample_source_metrics"] = source_metrics
+        cumulative_environment_steps += sum(
+            int(row["environment_steps"]) for row in rows
+        )
+        log_generation_to_wandb(
+            generation,
+            rows,
+            optimizer_status,
+            cumulative_environment_steps,
+        )
         timings["physx_initialization_seconds"] = initialization_seconds
         timings["physx_rollout_seconds"] = rollout_seconds
         summary = {
@@ -1416,6 +1575,7 @@ def main(env_cfg, agent_cfg) -> None:
             "top_k_prefilter_used": False,
             "candidate_count": args_cli.population,
             "completed": len(rows),
+            "cumulative_environment_steps": cumulative_environment_steps,
             "best": rows[0],
             "results": rows,
             "timings": timings,
@@ -1430,6 +1590,7 @@ def main(env_cfg, agent_cfg) -> None:
                 "best_reward": rows[0]["total_reward"],
                 "best_phase": rows[0]["phase"],
                 "success_count": sum(row["success"] for row in rows),
+                "cumulative_environment_steps": cumulative_environment_steps,
                 "timings": timings,
             }
         )

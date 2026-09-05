@@ -374,33 +374,6 @@ class SkrlConditionalMorphologySAC:
                 break
         self.archive_actions = all_actions[kept]
         self.archive_rewards = all_rewards[kept]
-        if self.wandb_enabled:
-            try:
-                import wandb
-
-                wandb.log(
-                    {
-                        "Reward / Instantaneous reward (max)": float(
-                            candidate_rewards.max()
-                        ),
-                        "Reward / Instantaneous reward (mean)": float(
-                            candidate_rewards.mean()
-                        ),
-                        "Reward / Instantaneous reward (min)": float(
-                            candidate_rewards.min()
-                        ),
-                        "Morphology / Elite archive best reward": float(
-                            self.archive_rewards.max()
-                        ),
-                        "Morphology / Replay size": int(len(self.memory)),
-                    },
-                    step=generation,
-                )
-            except Exception as exc:
-                print(
-                    f"WARNING: failed to log generation {generation} to W&B: {exc}",
-                    flush=True,
-                )
         np.savez_compressed(
             self.output_root / "elite_archive.npz",
             actions=self.archive_actions,
@@ -420,6 +393,7 @@ class SkrlConditionalMorphologySAC:
             "elite_replay_fraction": self.elite_replay_fraction,
             "elite_mutation_sigma": self.elite_mutation_sigma,
             "elite_archive_size": len(self.archive_actions),
+            "elite_archive_best_reward": float(self.archive_rewards.max()),
             "reward_scale": self.reward_scale,
             "palm_representation": "continuous_action_quantized_at_physx_boundary",
             "terminal_one_step_transitions": True,
