@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #SBATCH --job-name=wuji-hybrid-sac
 #SBATCH --partition=ravichandar-lab
 #SBATCH --account=ravichandar-lab
@@ -11,7 +11,10 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_logs/slurm-wuji-hybrid-sac-%j.out
 
-set -euo pipefail
+set -Eeuo pipefail
+trap 'STATUS=$?; echo "ERROR: line ${LINENO}: ${BASH_COMMAND} (exit ${STATUS})" >&2' ERR
+echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-${SCRIPT_DIR}}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_sac/cluster_run_${SLURM_JOB_ID:-manual}}"
