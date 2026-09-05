@@ -38,6 +38,14 @@ parser.add_argument(
 )
 parser.add_argument("--sac-updates", type=int, default=400)
 parser.add_argument("--sac-batch-size", type=int, default=1024)
+parser.add_argument(
+    "--wandb",
+    action="store_true",
+    help="log SKRL SAC/PPO metrics to Weights & Biases",
+)
+parser.add_argument("--wandb-project", default="DexCoDesign")
+parser.add_argument("--wandb-group", default="wuji-hybrid-sac")
+parser.add_argument("--wandb-run-name", default="conditional_morphology_sac")
 parser.add_argument("--uniform-fraction", type=float, default=0.15)
 parser.add_argument("--elite-mutation-fraction", type=float, default=0.30)
 parser.add_argument("--elite-replay-fraction", type=float, default=0.05)
@@ -767,8 +775,16 @@ def train_and_evaluate_shared_ppo(
     ppo_cfg["trainer"]["close_environment_at_exit"] = False
     experiment = ppo_cfg["agent"]["experiment"]
     experiment["directory"] = str(output / "ppo_logs" / f"rank_{rank:02d}")
-    experiment["experiment_name"] = f"generation_{generation:03d}"
+    experiment["experiment_name"] = (
+        f"{args_cli.wandb_run_name}_ppo_generation_{generation:03d}"
+    )
     experiment["checkpoint_interval"] = 0
+    experiment["wandb"] = args_cli.wandb
+    experiment["wandb_kwargs"] = {
+        "project": args_cli.wandb_project,
+        "group": args_cli.wandb_group,
+        "tags": ["WUJI", "morphology", "PPO"],
+    }
 
     start = time.perf_counter()
     raw_gym_env = gym.make(args_cli.task, cfg=cfg)
@@ -899,6 +915,10 @@ def shared_ppo_outer_search(
             seed=args_cli.seed,
             output_root=output,
             device=f"cuda:{local_rank}",
+            wandb=args_cli.wandb,
+            wandb_project=args_cli.wandb_project,
+            wandb_group=args_cli.wandb_group,
+            wandb_run_name=f"{args_cli.wandb_run_name}_sac",
         )
 
     history: list[dict] = []
@@ -1222,6 +1242,10 @@ def main(env_cfg, agent_cfg) -> None:
             seed=args_cli.seed,
             output_root=output,
             device="cuda",
+            wandb=args_cli.wandb,
+            wandb_project=args_cli.wandb_project,
+            wandb_group=args_cli.wandb_group,
+            wandb_run_name=args_cli.wandb_run_name,
         )
     for generation in range(args_cli.generations):
         generation_root = output / f"generation_{generation:03d}"

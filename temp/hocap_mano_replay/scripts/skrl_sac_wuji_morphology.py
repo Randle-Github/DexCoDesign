@@ -107,6 +107,10 @@ class SkrlConditionalMorphologySAC:
         seed: int,
         output_root: Path,
         device: str | torch.device = "cuda",
+        wandb: bool = False,
+        wandb_project: str = "DexCoDesign",
+        wandb_group: str = "wuji-hybrid-sac",
+        wandb_run_name: str = "conditional_morphology_sac",
     ) -> None:
         if not 0.0 <= uniform_fraction <= 1.0:
             raise ValueError("uniform_fraction must be in [0, 1]")
@@ -207,9 +211,15 @@ class SkrlConditionalMorphologySAC:
             lambda rewards, _timestep, _timesteps: rewards * self.reward_scale
         )
         cfg.experiment.directory = str(self.output_root / "skrl_logs")
-        cfg.experiment.experiment_name = "conditional_morphology_sac"
-        cfg.experiment.write_interval = 0
+        cfg.experiment.experiment_name = wandb_run_name
+        cfg.experiment.write_interval = 1 if wandb else 0
         cfg.experiment.checkpoint_interval = 0
+        cfg.experiment.wandb = bool(wandb)
+        cfg.experiment.wandb_kwargs = {
+            "project": wandb_project,
+            "group": wandb_group,
+            "tags": ["WUJI", "morphology", "SAC"],
+        }
         self.memory = memory
         self.agent = SAC(
             models={
