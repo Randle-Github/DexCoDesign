@@ -45,6 +45,14 @@ def main() -> int:
     parser.add_argument("--index", type=int, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument(
+        "--fixed-reference",
+        type=Path,
+        help=(
+            "local override for a downloaded search manifest whose recorded "
+            "reference path belongs to another machine"
+        ),
+    )
+    parser.add_argument(
         "--physics-only",
         action="store_true",
         help="export collision-only URDF/USD for the physical capture scene",
@@ -109,9 +117,13 @@ def main() -> int:
     )
     raw_urdf = runtime / hand_id / "left" / "hand.urdf"
     usd = root / "asset" / "hand.usd"
-    fixed_reference = Path(
-        manifest.get("fixed_reference")
-        or manifest["reference_paths"][args.index]
+    fixed_reference = (
+        args.fixed_reference
+        if args.fixed_reference is not None
+        else Path(
+            manifest.get("fixed_reference")
+            or manifest["reference_paths"][args.index]
+        )
     ).expanduser().resolve()
     # Repackage the already-fixed command trajectory into the generated-hand
     # wrapper format (6-DoF virtual wrist + contact/body metadata).  This is a

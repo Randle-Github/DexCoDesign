@@ -118,7 +118,7 @@ def render_exact_sheet(
 ) -> None:
     maximum_extent = max(float(np.max(np.ptp(hand_bounds(hand), axis=0))) for hand in hands)
     camera_distance = 2.05 * maximum_extent
-    columns = 10
+    columns = min(10, len(hands))
     rows = math.ceil(len(hands) / columns)
     canvas = Image.new("RGB", (columns * tile_size, rows * tile_size))
     with tempfile.TemporaryDirectory(prefix="midas_exact_render_") as temporary:
