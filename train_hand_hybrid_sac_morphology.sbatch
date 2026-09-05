@@ -11,8 +11,6 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_logs/slurm-wuji-hybrid-sac-%j.out
 
-set -Eeuo pipefail
-trap 'STATUS=$?; echo "ERROR: line ${LINENO}: ${BASH_COMMAND} (exit ${STATUS})" >&2' ERR
 echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,11 +70,18 @@ require_file "${OBJECT_USD}"
 require_file "${REPO_ROOT}/artifacts/hand_morphology/reference_graphs.json"
 require_file "${REPO_ROOT}/artifacts/hand_morphology/mechanism_bundles.json"
 
-source "${CONDA_SH}"
-conda activate "${CONDA_ENV}"
+if ! source "${CONDA_SH}"; then
+  echo "ERROR: failed to initialize conda from ${CONDA_SH}" >&2
+  exit 1
+fi
+if ! conda activate "${CONDA_ENV}"; then
+  echo "ERROR: failed to activate conda environment ${CONDA_ENV}" >&2
+  exit 1
+fi
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
 export OMP_NUM_THREADS=1
+export PYTHONUNBUFFERED=1
 export OMNI_KIT_ACCEPT_EULA=YES
 export DEXCODESIGN_OBJECT_USD_PATH="${OBJECT_USD}"
 if [[ "${WANDB_ENABLED}" == "1" ]]; then
