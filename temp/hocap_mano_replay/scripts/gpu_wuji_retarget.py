@@ -564,23 +564,23 @@ class WujiBatchKinematics:
 def joint_names_from_seed(seed: np.lib.npyio.NpzFile) -> list[str]:
     if "joint_names" in seed:
         return [str(value) for value in seed["joint_names"].tolist()]
-    # Existing retarget caches predate explicit names. Recover them from the
-    # exact MuJoCo qpos addresses once; subsequent GPU passes store names.
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import retarget_all_hands as retarget
-
-    retarget.CACHE_ROOT.mkdir(parents=True, exist_ok=True)
-    scene = retarget.make_scene("wuji_hand_2")
-    import mujoco
-
-    model = mujoco.MjModel.from_xml_path(str(scene))
-    by_qpos = {
-        int(model.jnt_qposadr[joint_id]): str(model.joint(joint_id).name)
-        for joint_id in range(model.njnt)
-    }
-    return [by_qpos[int(qpos_id)] for qpos_id in seed["qpos_ids"]]
+    # Existing retarget caches predate explicit names. The cached qpos columns
+    # follow the movable-joint order of the source WUJI URDF. Reading that
+    # tracked file avoids constructing an unrelated MuJoCo object scene (and
+    # therefore avoids requiring the ignored HO-Cap object meshes on a cluster).
+    root = ET.parse(SOURCE_URDF).getroot()
+    joint_names = [
+        str(joint.get("name"))
+        for joint in root.findall("joint")
+        if joint.get("type") not in {"fixed", "floating"}
+    ]
+    qpos_count = int(seed["qpos"].shape[1])
+    if len(joint_names) != qpos_count:
+        raise ValueError(
+            "source WUJI URDF movable-joint count does not match seed qpos: "
+            f"{len(joint_names)} versus {qpos_count}"
+        )
+    return joint_names
 
 
 def sample_vectors(count: int, seed: int) -> np.ndarray:
