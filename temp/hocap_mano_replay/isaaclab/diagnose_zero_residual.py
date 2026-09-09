@@ -57,9 +57,13 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
         for _ in range(raw._reference_length + 2):
             _, reward, terminated, truncated, _ = env.step(actions)
             evaluated_phase = raw._last_evaluated_phase[0]
+            reference_hand_q = raw._reference_at(
+                raw.reference_hand_q,
+                raw._last_evaluated_phase,
+            )[0]
             hand_q_error = (
                 raw.hand.data.joint_pos[0]
-                - raw.reference_hand_q[evaluated_phase]
+                - reference_hand_q
             ).abs()
             max_error_joint_id = int(hand_q_error.argmax().item())
             (

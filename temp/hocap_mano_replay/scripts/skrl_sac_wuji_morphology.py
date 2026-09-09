@@ -111,6 +111,7 @@ class SkrlConditionalMorphologySAC:
         wandb_project: str = "DexCoDesign",
         wandb_group: str = "wuji-hybrid-sac",
         wandb_run_name: str = "conditional_morphology_sac",
+        fixed_palm_prototype: int | None = None,
     ) -> None:
         if not 0.0 <= uniform_fraction <= 1.0:
             raise ValueError("uniform_fraction must be in [0, 1]")
@@ -120,6 +121,13 @@ class SkrlConditionalMorphologySAC:
             raise ValueError("elite_replay_fraction must be in [0, 1]")
         if uniform_fraction + elite_mutation_fraction + elite_replay_fraction >= 1.0:
             raise ValueError("proposal mixture fractions must sum to less than 1")
+        if fixed_palm_prototype is not None and not (
+            0 <= fixed_palm_prototype < PALM_EXPANSION_LEVELS
+        ):
+            raise ValueError(
+                "fixed_palm_prototype must be in "
+                f"[0, {PALM_EXPANSION_LEVELS - 1}]"
+            )
         self.population = int(population)
         self.generations = int(generations)
         self.uniform_fraction = float(uniform_fraction)
@@ -129,10 +137,18 @@ class SkrlConditionalMorphologySAC:
         self.reward_scale = float(reward_scale)
         self.seed = int(seed)
         self.wandb_enabled = bool(wandb)
+        self.fixed_palm_prototype = fixed_palm_prototype
+        if fixed_palm_prototype is None:
+            self.action_lower_bounds = ACTION_LOWER_BOUNDS
+            self.action_upper_bounds = ACTION_UPPER_BOUNDS
+        else:
+            self.action_lower_bounds = CONTINUOUS_LOWER_BOUNDS
+            self.action_upper_bounds = CONTINUOUS_UPPER_BOUNDS
+        self.action_dim = len(self.action_lower_bounds)
         self.output_root = Path(output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.device = torch.device(device)
-        self.archive_actions = np.empty((0, ACTION_DIM), dtype=np.float32)
+        self.archive_actions = np.empty((0, self.action_dim), dtype=np.float32)
         self.archive_rewards = np.empty(0, dtype=np.float32)
         self.observation_space = gym.spaces.Box(
             low=-1.0,
@@ -143,7 +159,7 @@ class SkrlConditionalMorphologySAC:
         self.action_space = gym.spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(ACTION_DIM,),
+            shape=(self.action_dim,),
             dtype=np.float32,
         )
         policy = gaussian_model(
@@ -206,7 +222,7 @@ class SkrlConditionalMorphologySAC:
         cfg.learning_starts = 0
         cfg.learn_entropy = True
         cfg.initial_entropy_value = 0.05
-        cfg.target_entropy = -0.5 * float(ACTION_DIM)
+        cfg.target_entropy = -0.5 * float(self.action_dim)
         cfg.mixed_precision = False
         cfg.rewards_shaper = (
             lambda rewards, _timestep, _timesteps: rewards * self.reward_scale
@@ -271,7 +287,7 @@ class SkrlConditionalMorphologySAC:
             selected = available[cursor : cursor + random_count]
             cursor += random_count
             actions[selected] = torch.from_numpy(
-                rng.uniform(-1.0, 1.0, (random_count, ACTION_DIM)).astype(
+                rng.uniform(-1.0, 1.0, (random_count, self.action_dim)).astype(
                     np.float32
                 )
             ).to(self.device)
@@ -290,7 +306,7 @@ class SkrlConditionalMorphologySAC:
             mutated = self.archive_actions[parent_indices] + rng.normal(
                 0.0,
                 self.elite_mutation_sigma,
-                size=(len(mutation_indices), ACTION_DIM),
+                size=(len(mutation_indices), self.action_dim),
             ).astype(np.float32)
             actions[mutation_indices] = torch.from_numpy(
                 np.clip(mutated, -1.0, 1.0)
@@ -305,20 +321,52 @@ class SkrlConditionalMorphologySAC:
 
         # Preserve an exact source-hand baseline in every generation.
         observations[0].fill_(1.0)
+        source_values = (
+            SOURCE_SEMANTIC_VECTOR
+            if self.fixed_palm_prototype is None
+            else CONTINUOUS_SOURCE_VECTOR
+        )
         source_action = 2.0 * (
-            (SOURCE_SEMANTIC_VECTOR - ACTION_LOWER_BOUNDS)
-            / (ACTION_UPPER_BOUNDS - ACTION_LOWER_BOUNDS)
+            (source_values - self.action_lower_bounds)
+            / (self.action_upper_bounds - self.action_lower_bounds)
         ) - 1.0
         actions[0] = torch.from_numpy(source_action.astype(np.float32)).to(
             self.device
         )
         sources[0] = "source_baseline"
-        semantic_vectors = normalized_to_semantic(
-            actions.detach().cpu().numpy().astype(np.float32)
-        )
+        normalized_actions = actions.detach().cpu().numpy().astype(np.float32)
+        if self.fixed_palm_prototype is None:
+            semantic_vectors = normalized_to_semantic(normalized_actions)
+        else:
+            continuous_values = (
+                self.action_lower_bounds
+                + 0.5 * (normalized_actions + 1.0)
+                * (self.action_upper_bounds - self.action_lower_bounds)
+            ).astype(np.float32)
+            palm_expansion = (
+                self.fixed_palm_prototype
+                * PALM_EXPANSION_MAX
+                / (PALM_EXPANSION_LEVELS - 1)
+            )
+            semantic_vectors = np.concatenate(
+                (
+                    np.full(
+                        (self.population, 1),
+                        palm_expansion,
+                        dtype=np.float32,
+                    ),
+                    continuous_values,
+                ),
+                axis=1,
+            )
         vectors, palms = semantic_to_prototype_vectors(semantic_vectors)
-        vectors[0] = SOURCE_VECTOR.astype(np.float32)
-        semantic_vectors[0] = SOURCE_SEMANTIC_VECTOR.astype(np.float32)
+        if self.fixed_palm_prototype is None:
+            vectors[0] = SOURCE_VECTOR.astype(np.float32)
+            semantic_vectors[0] = SOURCE_SEMANTIC_VECTOR.astype(np.float32)
+        else:
+            vectors[0, 0] = float(self.fixed_palm_prototype)
+            vectors[0, 1:] = SOURCE_VECTOR[1:].astype(np.float32)
+            semantic_vectors[0, 1:] = CONTINUOUS_SOURCE_VECTOR.astype(np.float32)
         return ProposalBatch(
             vectors=vectors,
             semantic_vectors=semantic_vectors,
@@ -395,7 +443,13 @@ class SkrlConditionalMorphologySAC:
             "elite_archive_size": len(self.archive_actions),
             "elite_archive_best_reward": float(self.archive_rewards.max()),
             "reward_scale": self.reward_scale,
-            "palm_representation": "continuous_action_quantized_at_physx_boundary",
+            "palm_representation": (
+                "continuous_action_quantized_at_physx_boundary"
+                if self.fixed_palm_prototype is None
+                else "fixed_precompiled_prototype"
+            ),
+            "fixed_palm_prototype": self.fixed_palm_prototype,
+            "learned_action_dimension": self.action_dim,
             "terminal_one_step_transitions": True,
             "checkpoint": str(checkpoint),
         }

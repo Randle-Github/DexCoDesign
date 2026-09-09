@@ -18,6 +18,7 @@ REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-${SCRIPT_DIR}}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_sac/cluster_run_${SLURM_JOB_ID:-manual}}"
 POPULATION="${POPULATION:-1024}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-16}"
+ROLLOUTS_PER_PROPOSAL="${ROLLOUTS_PER_PROPOSAL:-4}"
 GENERATIONS="${GENERATIONS:-100}"
 SAC_UPDATES="${SAC_UPDATES:-400}"
 SAC_BATCH_SIZE="${SAC_BATCH_SIZE:-1024}"
@@ -44,10 +45,39 @@ WANDB_ENABLED="${WANDB_ENABLED:-1}"
 WANDB_ENTITY="${WANDB_ENTITY:-njyunhai-georgia-tech}"
 WANDB_PROJECT="${WANDB_PROJECT:-DexCoDesign}"
 WANDB_GROUP="${WANDB_GROUP:-wuji-hybrid-sac}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-wuji_hand_2_g04_1_refined_pop${POPULATION}_physxbs${PHYSICS_BATCH_SIZE}_gen${GENERATIONS}_${SLURM_JOB_ID:-manual}}"
+FIXED_PALM_PROTOTYPE="${FIXED_PALM_PROTOTYPE-0}"
+RETARGET_PER_PROPOSAL="${RETARGET_PER_PROPOSAL:-1}"
+if [[ -n "${FIXED_PALM_PROTOTYPE}" ]]; then
+  PALM_RUN_TAG="palm${FIXED_PALM_PROTOTYPE}"
+else
+  PALM_RUN_TAG="palmlearned"
+fi
+if [[ "${RETARGET_PER_PROPOSAL}" == "1" ]]; then
+  RETARGET_RUN_TAG="retarget"
+else
+  RETARGET_RUN_TAG="fixedref"
+fi
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-wuji_hand_2_g04_1_refined_${PALM_RUN_TAG}_${RETARGET_RUN_TAG}_rollouts${ROLLOUTS_PER_PROPOSAL}_pop${POPULATION}_physxbs${PHYSICS_BATCH_SIZE}_gen${GENERATIONS}_${SLURM_JOB_ID:-manual}}"
 BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/all_hands_success_action_retarget/wuji_hand_2/retargeted_trajectory.npz}"
-FIXED_REFERENCE="${FIXED_REFERENCE:-${REPO_ROOT}/artifacts/isaaclab_all_hands_residual/prepared/wuji_hand_2/reference.npz}"
+FIXED_REFERENCE="${FIXED_REFERENCE-}"
+case "${RETARGET_PER_PROPOSAL}" in
+  1)
+    if [[ -n "${FIXED_REFERENCE}" ]]; then
+      echo "ERROR: FIXED_REFERENCE conflicts with RETARGET_PER_PROPOSAL=1" >&2
+      exit 1
+    fi
+    ;;
+  0)
+    if [[ -z "${FIXED_REFERENCE}" ]]; then
+      FIXED_REFERENCE="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual/prepared/wuji_hand_2/reference.npz"
+    fi
+    ;;
+  *)
+    echo "ERROR: RETARGET_PER_PROPOSAL must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
 OBJECT_USD="${DEXCODESIGN_OBJECT_USD_PATH:-${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/g04_1.usd}"
 
 CONDA_SH="${CONDA_SH:-/coc/flash5/yhan389/miniconda3/etc/profile.d/conda.sh}"
@@ -65,7 +95,9 @@ require_file "${REPO_ROOT}/isaaclab.sh"
 require_file "${BANK_ROOT}/vectors.schema.json"
 require_file "${BANK_ROOT}/prepared/physx_batch_manifest.json"
 require_file "${SEED_TRAJECTORY}"
-require_file "${FIXED_REFERENCE}"
+if [[ -n "${FIXED_REFERENCE}" ]]; then
+  require_file "${FIXED_REFERENCE}"
+fi
 require_file "${OBJECT_USD}"
 require_file "${REPO_ROOT}/artifacts/hand_morphology/reference_graphs.json"
 require_file "${REPO_ROOT}/artifacts/hand_morphology/mechanism_bundles.json"
@@ -95,7 +127,8 @@ echo "Job ID: ${SLURM_JOB_ID:-none}"
 echo "Host: $(hostname)"
 echo "Repository: ${REPO_ROOT}"
 echo "Output: ${OUTPUT_ROOT}"
-echo "Population: ${POPULATION}; PhysX batch: ${PHYSICS_BATCH_SIZE}; generations: ${GENERATIONS}"
+echo "Population: ${POPULATION}; PhysX batch: ${PHYSICS_BATCH_SIZE}; rollouts/proposal: ${ROLLOUTS_PER_PROPOSAL}; generations: ${GENERATIONS}"
+echo "Fixed palm prototype: ${FIXED_PALM_PROTOTYPE:-learned}; per-proposal retargeting: ${RETARGET_PER_PROPOSAL}"
 echo "Weights & Biases mode: ${WANDB_MODE}"
 echo "Weights & Biases run: ${WANDB_ENTITY}/${WANDB_PROJECT}/${WANDB_RUN_NAME}"
 nvidia-smi -L
@@ -114,6 +147,9 @@ if [[ "${CONTINUE_AFTER_SUCCESS}" == "1" ]]; then
 fi
 if [[ -n "${FIXED_REFERENCE}" ]]; then
   EXTRA_ARGS+=(--fixed-reference "${FIXED_REFERENCE}")
+fi
+if [[ -n "${FIXED_PALM_PROTOTYPE}" ]]; then
+  EXTRA_ARGS+=(--fixed-palm-prototype "${FIXED_PALM_PROTOTYPE}")
 fi
 if [[ -n "${GROUPED_ZERO_ACTION_VECTORS}" ]]; then
   EXTRA_ARGS+=(--grouped-zero-action-vectors "${GROUPED_ZERO_ACTION_VECTORS}")
@@ -137,6 +173,7 @@ PROGRAM_ARGS=(
   --seed-trajectory "${SEED_TRAJECTORY}" \
   --population "${POPULATION}" \
   --physics-batch-size "${PHYSICS_BATCH_SIZE}" \
+  --rollouts-per-proposal "${ROLLOUTS_PER_PROPOSAL}" \
   --generations "${GENERATIONS}" \
   --sac-updates "${SAC_UPDATES}" \
   --sac-batch-size "${SAC_BATCH_SIZE}" \

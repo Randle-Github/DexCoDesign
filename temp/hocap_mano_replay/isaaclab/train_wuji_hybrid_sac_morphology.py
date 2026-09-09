@@ -30,6 +30,15 @@ parser.add_argument(
         "population in one scene to avoid rebuilding fixed support/object assets"
     ),
 )
+parser.add_argument(
+    "--rollouts-per-proposal",
+    type=int,
+    default=1,
+    help=(
+        "independent zero-residual PhysX rollouts per proposed morphology; "
+        "their mean reward is used for the SAC update"
+    ),
+)
 parser.add_argument("--generations", type=int, default=20)
 parser.add_argument(
     "--continue-after-success",
@@ -46,6 +55,16 @@ parser.add_argument(
 parser.add_argument("--wandb-project", default="DexCoDesign")
 parser.add_argument("--wandb-group", default="wuji-hybrid-sac")
 parser.add_argument("--wandb-run-name", default="conditional_morphology_sac")
+parser.add_argument(
+    "--fixed-palm-prototype",
+    type=int,
+    choices=range(32),
+    metavar="{0..31}",
+    help=(
+        "freeze the palm at one precompiled prototype and remove it from the "
+        "SAC action; prototype 0 is the exact source WUJI palm"
+    ),
+)
 parser.add_argument("--uniform-fraction", type=float, default=0.15)
 parser.add_argument("--elite-mutation-fraction", type=float, default=0.30)
 parser.add_argument("--elite-replay-fraction", type=float, default=0.05)
@@ -163,6 +182,13 @@ if signature_mismatch:
     )
 if args_cli.physics_batch_size < 1:
     parser.error("--physics-batch-size must be positive")
+if args_cli.rollouts_per_proposal < 1:
+    parser.error("--rollouts-per-proposal must be positive")
+if (
+    args_cli.fixed_palm_prototype is not None
+    and args_cli.optimizer_backend != "skrl"
+):
+    parser.error("--fixed-palm-prototype currently requires --optimizer-backend skrl")
 if args_cli.shared_ppo_iterations < 0:
     parser.error("--shared-ppo-iterations must be non-negative")
 if args_cli.morphology_replicas < 1:
@@ -248,19 +274,32 @@ def log_generation_to_wandb(
         success = np.asarray(
             [row["success"] for row in rows], dtype=np.float64
         )
+        best_row = max(rows, key=lambda row: row["total_reward"])
         table = wandb.Table(
             columns=[
                 "generation",
                 "candidate_index",
                 "candidate_id",
                 "total_reward",
+                "reward_std",
+                "reward_min",
+                "reward_median",
+                "reward_max",
                 "pose_reward",
                 "contact_reward",
                 "phase",
+                "phase_std",
+                "phase_min",
+                "phase_mean",
+                "phase_median",
+                "phase_max",
                 "environment_steps",
                 "survival",
                 "survival_ratio",
                 "success",
+                "success_count",
+                "success_rate",
+                "rollouts",
                 "position_error_m",
                 "orientation_error_rad",
                 "sample_source",
@@ -276,13 +315,25 @@ def log_generation_to_wandb(
                 int(row["candidate_index"]),
                 row["candidate_id"],
                 float(row["total_reward"]),
+                float(row.get("reward_std", 0.0)),
+                float(row.get("reward_min", row["total_reward"])),
+                float(row.get("reward_median", row["total_reward"])),
+                float(row.get("reward_max", row["total_reward"])),
                 float(row["pose_reward"]),
                 float(row["contact_reward"]),
                 phase,
+                float(row.get("phase_std", 0.0)),
+                int(row.get("phase_min", phase)),
+                float(row.get("phase_mean", phase)),
+                float(row.get("phase_median", phase)),
+                int(row.get("phase_max", phase)),
                 int(row.get("environment_steps", max(phase, 0))),
                 f"{phase}/{REFERENCE_PHASE_COUNT}",
                 phase / REFERENCE_PHASE_COUNT,
                 bool(row["success"]),
+                int(row.get("success_count", int(bool(row["success"])))),
+                float(row.get("success_rate", float(bool(row["success"])))),
+                int(row.get("rollouts", 1)),
                 float(row["position_error_m"]),
                 float(row["orientation_error_rad"]),
                 row.get("sample_source", "unknown"),
@@ -308,6 +359,56 @@ def log_generation_to_wandb(
                 phases.min() / REFERENCE_PHASE_COUNT
             ),
             "Survival / Success ratio": float(success.mean()),
+            "Robustness / Rollouts per proposal": int(
+                rows[0].get("rollouts", 1)
+            ),
+            "Robustness / Mean success rate": float(
+                np.mean(
+                    [
+                        row.get("success_rate", float(bool(row["success"])))
+                        for row in rows
+                    ]
+                )
+            ),
+            "Robustness / Mean reward std": float(
+                np.mean([row.get("reward_std", 0.0) for row in rows])
+            ),
+            "Robustness / Best candidate reward std": float(
+                best_row.get("reward_std", 0.0)
+            ),
+            "Robustness / Best candidate success rate": float(
+                best_row.get(
+                    "success_rate", float(bool(best_row["success"]))
+                )
+            ),
+            "Robustness / Best candidate rollout success ratio": float(
+                best_row.get(
+                    "success_rate", float(bool(best_row["success"]))
+                )
+            ),
+            "Robustness / Best candidate successful rollouts": int(
+                best_row.get("success_count", int(bool(best_row["success"])))
+            ),
+            "Robustness / Best candidate phase min": float(
+                best_row.get("phase_min", best_row["phase"])
+            ),
+            "Robustness / Best candidate phase mean": float(
+                best_row.get("phase_mean", best_row["phase"])
+            ),
+            "Robustness / Best candidate phase median": float(
+                best_row.get("phase_median", best_row["phase"])
+            ),
+            "Robustness / Best candidate phase max": float(
+                best_row.get("phase_max", best_row["phase"])
+            ),
+            "Robustness / Best candidate survival ratio mean": float(
+                best_row.get("phase_mean", best_row["phase"])
+                / REFERENCE_PHASE_COUNT
+            ),
+            "Robustness / Best candidate survival ratio median": float(
+                best_row.get("phase_median", best_row["phase"])
+                / REFERENCE_PHASE_COUNT
+            ),
             "Survival / Max (out of 445)": (
                 f"{int(phases.max())}/{REFERENCE_PHASE_COUNT}"
             ),
@@ -593,10 +694,20 @@ def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict],
     total = pose + contact
     rows = []
     for i in range(count):
+        candidate_index = (
+            int(manifest["morphology_indices"][i])
+            if "morphology_indices" in manifest
+            else global_offset + i
+        )
         rows.append(
             {
-                "candidate_index": global_offset + i,
+                "candidate_index": candidate_index,
                 "candidate_id": manifest["candidate_ids"][i],
+                "replica_index": (
+                    int(manifest["replica_indices"][i])
+                    if "replica_indices" in manifest
+                    else 0
+                ),
                 "vector": manifest["vectors"][i],
                 "total_reward": float(total[i].item()),
                 "pose_reward": float(pose[i].item()),
@@ -623,6 +734,126 @@ def slice_manifest(manifest: dict, begin: int, end: int) -> dict:
         else:
             result[key] = value
     return result
+
+
+def repeat_manifest_for_rollouts(
+    manifest: dict,
+    replicas: int,
+    global_morphology_indices: list[int],
+) -> dict:
+    """Expand a normal heterogeneous batch with independent rollout replicas."""
+
+    morphology_count = len(manifest["vectors"])
+    if morphology_count != len(global_morphology_indices):
+        raise ValueError("global morphology index count does not match manifest")
+    result: dict = {}
+    # Candidate-major ordering keeps all replicas of one proposal adjacent.
+    for key, value in manifest.items():
+        if isinstance(value, list) and len(value) == morphology_count:
+            result[key] = [item for item in value for _ in range(replicas)]
+        else:
+            result[key] = value
+    result["candidate_ids"] = [
+        f"wuji_physx_{global_index:06d}_rollout_{replica:03d}"
+        for global_index in global_morphology_indices
+        for replica in range(replicas)
+    ]
+    result["morphology_indices"] = [
+        global_index
+        for global_index in global_morphology_indices
+        for _ in range(replicas)
+    ]
+    result["replica_indices"] = [
+        replica
+        for _ in global_morphology_indices
+        for replica in range(replicas)
+    ]
+    result["rollouts_per_proposal"] = replicas
+    result["unique_morphology_count"] = morphology_count
+    result["grouped_physics_replication"] = False
+    return result
+
+
+def aggregate_rollout_rows(
+    raw_rows: list[dict],
+    original_manifest: dict,
+    global_morphology_indices: list[int],
+) -> list[dict]:
+    """Aggregate replicated rollout outcomes into one SAC reward per proposal."""
+
+    grouped: dict[int, list[dict]] = {
+        index: [] for index in global_morphology_indices
+    }
+    for row in raw_rows:
+        grouped[int(row["candidate_index"])].append(row)
+
+    rows: list[dict] = []
+    for local_index, candidate_index in enumerate(global_morphology_indices):
+        replicas = grouped[candidate_index]
+        if not replicas:
+            raise RuntimeError(f"proposal {candidate_index} has no rollout results")
+
+        def values(key: str, dtype=np.float64) -> np.ndarray:
+            return np.asarray([row[key] for row in replicas], dtype=dtype)
+
+        rewards = values("total_reward")
+        poses = values("pose_reward")
+        contacts = values("contact_reward")
+        phases = values("phase")
+        environment_steps = values("environment_steps", dtype=np.int64)
+        successes = values("success", dtype=bool)
+        positions = values("position_error_m")
+        orientations = values("orientation_error_rad")
+        rows.append(
+            {
+                "candidate_index": candidate_index,
+                "candidate_id": original_manifest["candidate_ids"][local_index],
+                "vector": original_manifest["vectors"][local_index],
+                # SAC observes the Monte Carlo mean, not one lucky rollout.
+                "total_reward": float(rewards.mean()),
+                "reward_std": float(rewards.std()),
+                "reward_min": float(rewards.min()),
+                "reward_median": float(np.median(rewards)),
+                "reward_max": float(rewards.max()),
+                "pose_reward": float(poses.mean()),
+                "pose_reward_std": float(poses.std()),
+                "contact_reward": float(contacts.mean()),
+                "contact_reward_std": float(contacts.std()),
+                "pinch_contact_steps": float(
+                    values("pinch_contact_steps").mean()
+                ),
+                "phase": int(round(float(phases.mean()))),
+                "phase_mean": float(phases.mean()),
+                "phase_median": float(np.median(phases)),
+                "phase_std": float(phases.std()),
+                "phase_min": int(phases.min()),
+                "phase_max": int(phases.max()),
+                "survival_ratio_mean": float(
+                    phases.mean() / REFERENCE_PHASE_COUNT
+                ),
+                "survival_ratio_median": float(
+                    np.median(phases) / REFERENCE_PHASE_COUNT
+                ),
+                # A proposal is robustly successful only when every rollout succeeds.
+                "success": bool(successes.all()),
+                "success_count": int(successes.sum()),
+                "success_rate": float(successes.mean()),
+                "rollouts": len(replicas),
+                "environment_steps": int(environment_steps.sum()),
+                "environment_steps_mean": float(environment_steps.mean()),
+                "position_error_m": float(positions.mean()),
+                "position_error_std_m": float(positions.std()),
+                "orientation_error_rad": float(orientations.mean()),
+                "orientation_error_std_rad": float(orientations.std()),
+                "max_thumb_contact_force_n": float(
+                    values("max_thumb_contact_force_n").max()
+                ),
+                "max_other_finger_contact_force_n": float(
+                    values("max_other_finger_contact_force_n").max()
+                ),
+            }
+        )
+    return rows
 
 
 def replicate_manifest(
@@ -1056,6 +1287,7 @@ def shared_ppo_outer_search(
             wandb_project=args_cli.wandb_project,
             wandb_group=args_cli.wandb_group,
             wandb_run_name=f"{args_cli.wandb_run_name}_sac",
+            fixed_palm_prototype=args_cli.fixed_palm_prototype,
         )
 
     history: list[dict] = []
@@ -1396,6 +1628,7 @@ def main(env_cfg, agent_cfg) -> None:
             wandb_project=args_cli.wandb_project,
             wandb_group=args_cli.wandb_group,
             wandb_run_name=args_cli.wandb_run_name,
+            fixed_palm_prototype=args_cli.fixed_palm_prototype,
         )
     for generation in range(args_cli.generations):
         generation_root = output / f"generation_{generation:03d}"
@@ -1411,7 +1644,11 @@ def main(env_cfg, agent_cfg) -> None:
                 "generation": generation,
                 "palm_representation": (
                     "continuous_action_quantized_at_physx_boundary"
+                    if args_cli.fixed_palm_prototype is None
+                    else "fixed_precompiled_prototype"
                 ),
+                "fixed_palm_prototype": args_cli.fixed_palm_prototype,
+                "learned_action_dimension": int(proposal.actions.shape[1]),
                 "sample_source_counts": {
                     source: proposal.sample_sources.count(source)
                     for source in sorted(set(proposal.sample_sources))
@@ -1479,6 +1716,7 @@ def main(env_cfg, agent_cfg) -> None:
         )
         timings.update(prepare_timings)
         rows = []
+        rollout_rows = []
         initialization_seconds = rollout_seconds = 0.0
         batch_records = []
         for begin in range(0, args_cli.population, args_cli.physics_batch_size):
@@ -1487,19 +1725,36 @@ def main(env_cfg, agent_cfg) -> None:
                 sim_utils.create_new_stage()
             stage_created = True
             batch = slice_manifest(manifest, begin, end)
+            morphology_indices = list(range(begin, end))
+            rollout_batch = repeat_manifest_for_rollouts(
+                batch,
+                args_cli.rollouts_per_proposal,
+                morphology_indices,
+            )
             cfg = copy.deepcopy(env_cfg)
-            configure_batch(cfg, batch)
+            configure_batch(cfg, rollout_batch)
             start = time.perf_counter()
             env = gym.make(args_cli.task, cfg=cfg)
             initialization = time.perf_counter() - start
-            batch_rows, rollout_time = evaluate_batch(env, batch, begin)
+            batch_rollout_rows, rollout_time = evaluate_batch(
+                env, rollout_batch, begin
+            )
             env.close()
+            batch_rows = aggregate_rollout_rows(
+                batch_rollout_rows,
+                batch,
+                morphology_indices,
+            )
             rows.extend(batch_rows)
+            rollout_rows.extend(batch_rollout_rows)
             initialization_seconds += initialization
             rollout_seconds += rollout_time
             batch_record = {
                 "begin": begin,
                 "end": end,
+                "proposals": end - begin,
+                "rollouts_per_proposal": args_cli.rollouts_per_proposal,
+                "physical_environments": len(batch_rollout_rows),
                 "initialization_seconds": initialization,
                 "rollout_seconds": rollout_time,
                 "best_phase": max(row["phase"] for row in batch_rows),
@@ -1523,6 +1778,16 @@ def main(env_cfg, agent_cfg) -> None:
                 index = row["candidate_index"]
                 row["sample_source"] = proposal.sample_sources[index]
                 row["palm_prototype_index"] = int(proposal.palm_indices[index])
+                row["requested_palm_expansion"] = float(
+                    proposal.semantic_vectors[index, 0]
+                )
+                row["semantic_vector"] = proposal.semantic_vectors[index].tolist()
+            for row in rollout_rows:
+                index = row["candidate_index"]
+                row["sample_source"] = proposal.sample_sources[index]
+                row["palm_prototype_index"] = int(
+                    proposal.palm_indices[index]
+                )
                 row["requested_palm_expansion"] = float(
                     proposal.semantic_vectors[index, 0]
                 )
@@ -1558,26 +1823,31 @@ def main(env_cfg, agent_cfg) -> None:
             "backend": "persistent_isaaclab_physx_gpu",
             "algorithm": (
                 (
-                    "skrl_sac_fixed_first_reference_no_ppo"
+                    "skrl_sac_fixed_reference_no_ppo"
                     if fixed_reference is not None
-                    else "skrl_sac_with_continuous_palm_action"
+                    else "skrl_sac_per_proposal_retarget_no_ppo"
                 )
                 if skrl_optimizer is not None
                 else "episode_level_hybrid_sac"
             ),
             "retarget_performed": fixed_reference is None,
+            "retarget_per_proposal": fixed_reference is None,
             "fixed_reference": (
                 str(fixed_reference) if fixed_reference is not None else None
             ),
+            "fixed_palm_prototype": args_cli.fixed_palm_prototype,
+            "rollouts_per_proposal": args_cli.rollouts_per_proposal,
             "shared_ppo_iterations": 0,
             "all_candidates_physically_evaluated": True,
             "proxy_used": False,
             "top_k_prefilter_used": False,
             "candidate_count": args_cli.population,
             "completed": len(rows),
+            "completed_rollouts": len(rollout_rows),
             "cumulative_environment_steps": cumulative_environment_steps,
             "best": rows[0],
             "results": rows,
+            "rollout_results": rollout_rows,
             "timings": timings,
             "batches": batch_records,
             "optimizer_status": optimizer_status,
@@ -1589,7 +1859,14 @@ def main(env_cfg, agent_cfg) -> None:
                 "generation": generation,
                 "best_reward": rows[0]["total_reward"],
                 "best_phase": rows[0]["phase"],
+                "best_phase_mean": rows[0]["phase_mean"],
+                "best_phase_median": rows[0]["phase_median"],
+                "best_success_rate": rows[0]["success_rate"],
                 "success_count": sum(row["success"] for row in rows),
+                "successful_rollouts": sum(
+                    row["success_count"] for row in rows
+                ),
+                "rollouts_per_proposal": args_cli.rollouts_per_proposal,
                 "cumulative_environment_steps": cumulative_environment_steps,
                 "timings": timings,
             }
@@ -1600,9 +1877,14 @@ def main(env_cfg, agent_cfg) -> None:
         print(
             "WUJI_HYBRID_SAC_GENERATION "
             f"generation={generation} candidates={len(rows)}/{args_cli.population} "
+            f"rollouts={len(rollout_rows)} "
             f"best_reward={rows[0]['total_reward']:.9f} "
-            f"best_phase={rows[0]['phase']}/445 "
-            f"successes={sum(row['success'] for row in rows)} "
+            f"best_mean_phase={rows[0]['phase_mean']:.2f}/445 "
+            f"best_median_phase={rows[0]['phase_median']:.2f}/445 "
+            f"best_success_ratio={rows[0]['success_count']}/"
+            f"{rows[0]['rollouts']} "
+            f"robust_successes={sum(row['success'] for row in rows)} "
+            f"successful_rollouts={sum(row['success_count'] for row in rows)} "
             f"timings={json.dumps(timings, sort_keys=True)}",
             flush=True,
         )
