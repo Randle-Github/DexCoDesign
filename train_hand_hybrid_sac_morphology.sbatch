@@ -7,7 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus=a40:1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_logs/slurm-wuji-hybrid-sac-%j.out
 
@@ -16,12 +16,12 @@ echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-${SCRIPT_DIR}}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_sac/cluster_run_${SLURM_JOB_ID:-manual}}"
-POPULATION="${POPULATION:-1024}"
-PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-16}"
-ROLLOUTS_PER_PROPOSAL="${ROLLOUTS_PER_PROPOSAL:-4}"
+POPULATION="${POPULATION:-64}"
+PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4}"
+ROLLOUTS_PER_PROPOSAL="${ROLLOUTS_PER_PROPOSAL:-128}"
 GENERATIONS="${GENERATIONS:-100}"
-SAC_UPDATES="${SAC_UPDATES:-400}"
-SAC_BATCH_SIZE="${SAC_BATCH_SIZE:-1024}"
+SAC_UPDATES="${SAC_UPDATES:-64}"
+SAC_BATCH_SIZE="${SAC_BATCH_SIZE:-64}"
 UNIFORM_FRACTION="${UNIFORM_FRACTION:-0.15}"
 ELITE_MUTATION_FRACTION="${ELITE_MUTATION_FRACTION:-0.30}"
 ELITE_REPLAY_FRACTION="${ELITE_REPLAY_FRACTION:-0.05}"
@@ -110,6 +110,7 @@ if ! conda activate "${CONDA_ENV}"; then
   echo "ERROR: failed to activate conda environment ${CONDA_ENV}" >&2
   exit 1
 fi
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${CONDA_PREFIX}/lib"
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
 export OMP_NUM_THREADS=1
