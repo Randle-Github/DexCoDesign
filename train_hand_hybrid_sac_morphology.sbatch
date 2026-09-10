@@ -110,6 +110,7 @@ if ! conda activate "${CONDA_ENV}"; then
   echo "ERROR: failed to activate conda environment ${CONDA_ENV}" >&2
   exit 1
 fi
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
 export OMP_NUM_THREADS=1
