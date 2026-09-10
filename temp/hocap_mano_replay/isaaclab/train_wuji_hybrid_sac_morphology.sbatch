@@ -13,7 +13,7 @@
 echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/run}"
 POPULATION="${POPULATION:-4096}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4096}"
