@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #SBATCH --job-name=wuji-hybrid-sac
-#SBATCH --partition=rl2-lab
-#SBATCH --account=rl2-lab
+#SBATCH --partition=ravichandar-lab
+#SBATCH --account=ravichandar-lab
 #SBATCH --qos=short
 #SBATCH --gpus=a40:1
 #SBATCH --cpus-per-task=32
@@ -10,7 +10,8 @@
 #SBATCH --exclude=hk47,spd-13,voltron,ig-88,sonny
 #SBATCH --output=slurm-wuji-hybrid-sac-%j.out
 
-set -euo pipefail
+echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/run}"
@@ -42,13 +43,20 @@ CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-0}"
 BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 
-CONDA_SH="${CONDA_SH:?launch through scripts/dexcodesign/launch_hand_learning.sh or export CONDA_SH}"
-CONDA_ENV="${CONDA_ENV:-${CONDA_PREFIX:-DexCoDesign_sim4_5_lab_2_3_2}}"
-source "${CONDA_SH}"
-conda activate "${CONDA_ENV}"
+CONDA_SH="${CONDA_SH:-/coc/flash5/yhan389/miniconda3/etc/profile.d/conda.sh}"
+CONDA_ENV="${CONDA_ENV:-DexCoDesign_sim4_5_lab_2_3_2}"
+if ! source "${CONDA_SH}"; then
+  echo "ERROR: failed to initialize conda from ${CONDA_SH}" >&2
+  exit 1
+fi
+if ! conda activate "${CONDA_ENV}"; then
+  echo "ERROR: failed to activate conda environment ${CONDA_ENV}" >&2
+  exit 1
+fi
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
 export OMP_NUM_THREADS=1
+export PYTHONUNBUFFERED=1
 export OMNI_KIT_ACCEPT_EULA=YES
 EXTRA_ARGS=()
 if [[ "${CONTINUE_AFTER_SUCCESS}" == "1" ]]; then
