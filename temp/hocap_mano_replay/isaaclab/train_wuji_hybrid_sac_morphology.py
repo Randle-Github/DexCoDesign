@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import gc
 import inspect
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -41,6 +44,16 @@ parser.add_argument(
 )
 parser.add_argument("--generations", type=int, default=20)
 parser.add_argument(
+    "--isolate-physics-per-generation",
+    action="store_true",
+    help=(
+        "evaluate each generation in a fresh Isaac Sim child process so the OS "
+        "reclaims PhysX/USD native allocations when that generation finishes"
+    ),
+)
+parser.add_argument("--physics-worker-manifest", type=Path, help=argparse.SUPPRESS)
+parser.add_argument("--physics-worker-output", type=Path, help=argparse.SUPPRESS)
+parser.add_argument(
     "--continue-after-success",
     action="store_true",
     help="run every requested generation even when a 445/445 candidate exists",
@@ -55,6 +68,25 @@ parser.add_argument(
 parser.add_argument("--wandb-project", default="DexCoDesign")
 parser.add_argument("--wandb-group", default="wuji-hybrid-sac")
 parser.add_argument("--wandb-run-name", default="conditional_morphology_sac")
+parser.add_argument(
+    "--video", action="store_true",
+    help="record an existing zero-residual training rollout on scheduled generations; upload with --wandb",
+)
+parser.add_argument("--video-interval", type=int, default=10, help="record generations 0, N, 2N, ...")
+parser.add_argument(
+    "--video-candidate-index", type=int, default=0,
+    help="proposal index to record, replica 0; this is not the best-candidate selection",
+)
+parser.add_argument(
+    "--video-length", type=int, default=445,
+    help="maximum control steps recorded, stopping when this rollout terminates",
+)
+parser.add_argument(
+    "--video-stride", type=int, default=2,
+    help="record every N control steps; MP4 fps follows the simulation timestep",
+)
+parser.add_argument("--video-width", type=int, default=640)
+parser.add_argument("--video-height", type=int, default=480)
 parser.add_argument(
     "--fixed-palm-prototype",
     type=int,
@@ -85,6 +117,21 @@ parser.add_argument(
         "official SKRL PPO iterations trained on the complete morphology "
         "population before each outer SAC update; zero preserves morphology-only search"
     ),
+)
+parser.add_argument(
+    "--ppo-observation-mode",
+    choices=("legacy", "palm_geometry"),
+    default="legacy",
+    help=(
+        "shared-PPO observation: palm_geometry uses 60 candidate-specific "
+        "collision-surface landmarks (385 values) and retargets every proposal"
+    ),
+)
+parser.add_argument(
+    "--geometry-inward-direction-mode",
+    choices=("reference_object", "kinematic_normal", "negative_kinematic_normal"),
+    default="kinematic_normal",
+    help="surface side used by the 60-point palm-geometry observation",
 )
 parser.add_argument(
     "--morphology-replicas",
@@ -149,6 +196,7 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=20260805)
 parser.add_argument("--task", default="DexCoDesign-Hand-Residual-Direct-v0")
 AppLauncher.add_app_launcher_args(parser)
+original_cli_argv = list(sys.argv[1:])
 args_cli, hydra_args = parser.parse_known_args()
 args_cli.output_root = args_cli.output_root.resolve()
 args_cli.prototype_bank_root = args_cli.prototype_bank_root.resolve()
@@ -195,6 +243,33 @@ if args_cli.morphology_replicas < 1:
     parser.error("--morphology-replicas must be positive")
 if args_cli.ppo_rollout_multiplier < 1:
     parser.error("--ppo-rollout-multiplier must be positive")
+if args_cli.ppo_observation_mode == "palm_geometry":
+    if not args_cli.shared_ppo_iterations:
+        parser.error("--ppo-observation-mode palm_geometry requires shared PPO")
+    if args_cli.morphology_context:
+        parser.error(
+            "palm_geometry is already morphology-conditioned and must remain "
+            "385-dimensional; remove --morphology-context"
+        )
+    if args_cli.fixed_reference is not None:
+        parser.error(
+            "palm_geometry co-training retargets every proposal; remove "
+            "--fixed-reference"
+        )
+if args_cli.video:
+    if args_cli.shared_ppo_iterations or args_cli.grouped_zero_action_vectors is not None:
+        parser.error("--video currently supports the morphology-only zero-residual rollout workflow")
+    if min(
+        args_cli.video_interval, args_cli.video_length, args_cli.video_stride,
+        args_cli.video_width, args_cli.video_height,
+    ) < 1:
+        parser.error("video interval, length, stride and resolution must be positive")
+    if args_cli.video_width % 2 or args_cli.video_height % 2:
+        parser.error("MP4 video width and height must be even")
+    if not 0 <= args_cli.video_candidate_index < args_cli.population:
+        parser.error("--video-candidate-index must be within the population")
+    if shutil.which("ffmpeg") is None:
+        parser.error("--video requires ffmpeg on PATH")
 if args_cli.fixed_reference is not None:
     args_cli.fixed_reference = args_cli.fixed_reference.expanduser().resolve()
 if args_cli.grouped_zero_action_vectors is not None:
@@ -205,11 +280,25 @@ if args_cli.fixed_ppo_vectors is not None:
     args_cli.fixed_ppo_vectors = args_cli.fixed_ppo_vectors.expanduser().resolve()
 if args_cli.ppo_checkpoint is not None:
     args_cli.ppo_checkpoint = args_cli.ppo_checkpoint.expanduser().resolve()
+if args_cli.physics_worker_manifest is not None:
+    args_cli.physics_worker_manifest = args_cli.physics_worker_manifest.resolve()
+if args_cli.physics_worker_output is not None:
+    args_cli.physics_worker_output = args_cli.physics_worker_output.resolve()
 bank_manifest_path = (
     args_cli.prototype_bank_root / "prepared/physx_batch_manifest.json"
 )
 os.environ["DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"] = str(bank_manifest_path)
 sys.argv = [sys.argv[0]] + hydra_args
+# Keep the isolated coordinator and non-recording generations non-rendering.
+# A recording worker enables offscreen cameras, while remaining --headless.
+if args_cli.video:
+    if args_cli.physics_worker_manifest is not None:
+        recording_worker = bool(
+            json.loads(args_cli.physics_worker_manifest.read_text()).get("training_video")
+        )
+        args_cli.enable_cameras = recording_worker or args_cli.enable_cameras
+    elif not args_cli.isolate_physics_per_generation:
+        args_cli.enable_cameras = True
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
@@ -250,6 +339,12 @@ from skrl_sac_wuji_morphology import (  # noqa: E402
     ProposalBatch,
     SkrlConditionalMorphologySAC,
 )
+from wuji_rollout_video import (  # noqa: E402
+    StreamedRolloutVideo,
+    close_rgb_render_product,
+    generation_video_spec,
+    video_wandb_metrics,
+)
 
 
 REFERENCE_PHASE_COUNT = 445
@@ -260,6 +355,7 @@ def log_generation_to_wandb(
     rows: list[dict],
     optimizer_status: dict | None,
     cumulative_environment_steps: int,
+    video_records: list[dict] | None = None,
 ) -> None:
     """Log population summaries and one queryable candidate table to W&B."""
     if not args_cli.wandb:
@@ -446,6 +542,10 @@ def log_generation_to_wandb(
                 "Environment steps/*",
                 step_metric="Progress / Environment steps",
             )
+        try:
+            metrics.update(video_wandb_metrics(video_records or [], wandb))
+        except Exception as exc:
+            print(f"WARNING: failed to upload rollout video: {exc}", flush=True)
         wandb.log(metrics, step=generation)
     except Exception as exc:
         print(
@@ -456,6 +556,77 @@ def log_generation_to_wandb(
 
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
+
+
+def process_rss_gib() -> float | None:
+    """Return this process's current resident memory on Linux."""
+
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return float(line.split()[1]) / (1024.0**2)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def close_physics_batch(env) -> dict[str, object]:
+    """Close one batch's environment and USD stage."""
+
+    rss_before = process_rss_gib()
+    close_error = None
+    stage_close_error = None
+    stage_closed = False
+    try:
+        env.close()
+    except Exception as exc:  # preserve cleanup attempts after a partial close
+        close_error = repr(exc)
+
+    # Kit and PhysX perform part of stage destruction asynchronously. Pumping
+    # the app before and after close_stage lets those deferred releases run.
+    try:
+        for _ in range(2):
+            simulation_app.update()
+        stage_closed = bool(sim_utils.close_stage())
+        for _ in range(2):
+            simulation_app.update()
+    except Exception as exc:  # do not hide the original rollout exception
+        stage_close_error = repr(exc)
+
+    result: dict[str, object] = {
+        "rss_before_gib": rss_before,
+        "stage_closed": stage_closed,
+    }
+    if close_error is not None:
+        result["environment_close_error"] = close_error
+    if stage_close_error is not None:
+        result["stage_close_error"] = stage_close_error
+    return result
+
+
+def release_process_memory() -> dict[str, object]:
+    """Release caches after the caller has dropped its environment reference."""
+
+    collected = gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Native Kit/PhysX allocations use the process heap rather than Python's
+    # allocator. Return any now-free glibc arenas to Linux when supported.
+    native_heap_trimmed = False
+    if sys.platform.startswith("linux"):
+        try:
+            native_heap_trimmed = bool(
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            )
+        except (AttributeError, OSError):
+            pass
+
+    return {
+        "rss_after_gib": process_rss_gib(),
+        "python_objects_collected": collected,
+        "native_heap_trimmed": native_heap_trimmed,
+    }
 
 
 def retarget(
@@ -633,7 +804,14 @@ def configure_batch(cfg, manifest: dict) -> None:
     cfg.episode_length_s = 15.0
     context = manifest.get("policy_morphology_context")
     cfg.morphology_context_dim = 0 if context is None else len(context[0])
-    cfg.observation_space = env_module.OBSERVATION_DIM + cfg.morphology_context_dim
+    if cfg.observation_mode == "palm_geometry":
+        if context is not None:
+            raise ValueError(
+                "palm_geometry observations cannot append a design-vector context"
+            )
+        cfg.observation_space = env_module.PALM_GEOMETRY_OBSERVATION_DIM
+    else:
+        cfg.observation_space = env_module.OBSERVATION_DIM + cfg.morphology_context_dim
 
 
 def normalized_morphology_context(vectors: np.ndarray) -> np.ndarray:
@@ -644,9 +822,13 @@ def normalized_morphology_context(vectors: np.ndarray) -> np.ndarray:
     return (2.0 * (values - LOWER_BOUNDS) / span - 1.0).astype(np.float32)
 
 
-def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict], float]:
+def evaluate_batch(
+    env, manifest: dict, global_offset: int, video: StreamedRolloutVideo | None = None,
+) -> tuple[list[dict], float]:
     raw = env.unwrapped
     env.reset()
+    if video is not None:
+        video.warm_up(env)
     count = len(manifest["vectors"])
     actions = torch.zeros((count, raw.action_dim), device=raw.device)
     active = torch.ones(count, dtype=torch.bool, device=raw.device)
@@ -663,7 +845,11 @@ def evaluate_batch(env, manifest: dict, global_offset: int) -> tuple[list[dict],
     other_force = torch.zeros(count, device=raw.device)
     start = time.perf_counter()
     with torch.inference_mode():
-        for _ in range(raw._reference_length + 2):
+        for step in range(raw._reference_length + 2):
+            # Capture the state before stepping: env.step auto-resets finished
+            # replicas, so post-step RGB could otherwise show a second episode.
+            if video is not None and active[video.env_index].item():
+                video.capture(raw.render, step)
             environment_steps[active] += 1
             _, _, terminated, truncated, _ = env.step(actions)
             pose[active] += raw._last_pose_tracking_reward[active]
@@ -856,12 +1042,153 @@ def aggregate_rollout_rows(
     return rows
 
 
+def evaluate_manifest_in_process(env_cfg, manifest: dict) -> dict[str, object]:
+    """Evaluate one generation's manifest in the current Isaac Sim process."""
+
+    rows: list[dict] = []
+    rollout_rows: list[dict] = []
+    initialization_seconds = 0.0
+    rollout_seconds = 0.0
+    batch_records: list[dict] = []
+    video_records: list[dict] = []
+    video_spec = manifest.get("training_video")
+    stage_created = False
+    population = len(manifest["vectors"])
+    for begin in range(0, population, args_cli.physics_batch_size):
+        end = min(begin + args_cli.physics_batch_size, population)
+        # The preceding batch closes its stage explicitly. On the first batch
+        # of a later generation there is therefore no current stage even
+        # though this helper's local stage_created flag starts as False.
+        if stage_created or sim_utils.get_current_stage() is None:
+            sim_utils.create_new_stage()
+        stage_created = True
+        batch = slice_manifest(manifest, begin, end)
+        morphology_indices = list(range(begin, end))
+        rollout_batch = repeat_manifest_for_rollouts(
+            batch,
+            args_cli.rollouts_per_proposal,
+            morphology_indices,
+        )
+        cfg = copy.deepcopy(env_cfg)
+        configure_batch(cfg, rollout_batch)
+        record_this_batch = video_spec is not None and begin <= video_spec["candidate_index"] < end
+        video_env_index = 0
+        if record_this_batch:
+            video_env_index = (video_spec["candidate_index"] - begin) * args_cli.rollouts_per_proposal
+            cfg.viewer.env_index = video_env_index
+            cfg.viewer.resolution = (video_spec["width"], video_spec["height"])
+        start = time.perf_counter()
+        env = gym.make(args_cli.task, cfg=cfg, render_mode="rgb_array" if record_this_batch else None)
+        initialization = time.perf_counter() - start
+        video = None
+        try:
+            if record_this_batch:
+                video = StreamedRolloutVideo(video_spec, env.unwrapped.step_dt, video_env_index)
+            batch_rollout_rows, rollout_time = evaluate_batch(
+                env, rollout_batch, begin, video
+            )
+        finally:
+            if video is not None:
+                try:
+                    video_record = video.finish()
+                except Exception as exc:
+                    video_record = {**video_spec, "path": None, "error": repr(exc)}
+                video_record["render_cleanup_errors"] = close_rgb_render_product(env)
+                video_records.append(video_record)
+                print("WUJI_SAC_ROLLOUT_VIDEO " + json.dumps(video_record), flush=True)
+            cleanup_status = close_physics_batch(env)
+            del env
+            del cfg
+            del rollout_batch
+            cleanup_status.update(release_process_memory())
+        print(
+            "WUJI_SAC_PHYSX_CLEANUP "
+            + json.dumps(cleanup_status, sort_keys=True),
+            flush=True,
+        )
+        batch_rows = aggregate_rollout_rows(
+            batch_rollout_rows,
+            batch,
+            morphology_indices,
+        )
+        rows.extend(batch_rows)
+        rollout_rows.extend(batch_rollout_rows)
+        initialization_seconds += initialization
+        rollout_seconds += rollout_time
+        batch_record = {
+            "begin": begin,
+            "end": end,
+            "proposals": end - begin,
+            "rollouts_per_proposal": args_cli.rollouts_per_proposal,
+            "physical_environments": len(batch_rollout_rows),
+            "initialization_seconds": initialization,
+            "rollout_seconds": rollout_time,
+            "cleanup": cleanup_status,
+            "best_phase": max(row["phase"] for row in batch_rows),
+            "best_reward": max(row["total_reward"] for row in batch_rows),
+        }
+        batch_records.append(batch_record)
+        print("WUJI_SAC_PHYSX_BATCH " + json.dumps(batch_record), flush=True)
+    return {
+        "rows": rows,
+        "rollout_rows": rollout_rows,
+        "initialization_seconds": initialization_seconds,
+        "rollout_seconds": rollout_seconds,
+        "batch_records": batch_records,
+        "video_records": video_records,
+    }
+
+
+def run_physics_worker(env_cfg) -> None:
+    """Run one generation in a disposable process and serialize its results."""
+
+    if args_cli.physics_worker_manifest is None or args_cli.physics_worker_output is None:
+        raise ValueError("physics worker requires both hidden path arguments")
+    manifest = json.loads(args_cli.physics_worker_manifest.read_text())
+    result = evaluate_manifest_in_process(env_cfg, manifest)
+    args_cli.physics_worker_output.parent.mkdir(parents=True, exist_ok=True)
+    args_cli.physics_worker_output.write_text(json.dumps(result) + "\n")
+    print(
+        "WUJI_SAC_PHYSX_WORKER_COMPLETE "
+        f"pid={os.getpid()} rss_gib={process_rss_gib()}",
+        flush=True,
+    )
+
+
+def evaluate_manifest_isolated(env_cfg, manifest_path: Path, output_path: Path) -> dict:
+    """Evaluate a generation in a child process that exits after PhysX use."""
+
+    del env_cfg  # configuration is parsed independently inside the worker
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *original_cli_argv,
+        "--physics-worker-manifest",
+        str(manifest_path),
+        "--physics-worker-output",
+        str(output_path),
+    ]
+    print(
+        "WUJI_SAC_PHYSX_WORKER_START "
+        f"coordinator_pid={os.getpid()} manifest={manifest_path}",
+        flush=True,
+    )
+    run(command)
+    result = json.loads(output_path.read_text())
+    print(
+        "WUJI_SAC_PHYSX_WORKER_REAPED "
+        f"coordinator_pid={os.getpid()} rss_gib={process_rss_gib()}",
+        flush=True,
+    )
+    return result
+
+
 def replicate_manifest(
     manifest: dict,
     replicas: int,
     global_morphology_indices: list[int],
 ) -> dict:
-    """Repeat every morphology without changing its frozen reference."""
+    """Repeat every morphology together with its own frozen reference."""
 
     morphology_count = len(manifest["vectors"])
     if morphology_count != len(global_morphology_indices):
@@ -893,7 +1220,9 @@ def replicate_manifest(
     result["morphology_replicas"] = replicas
     result["unique_morphology_count"] = morphology_count
     result["grouped_physics_replication"] = replicas > 1
-    result["fixed_reference_shared_across_morphologies"] = True
+    result["fixed_reference_shared_across_morphologies"] = bool(
+        manifest.get("fixed_reference")
+    )
     return result
 
 
@@ -1207,11 +1536,43 @@ def shared_ppo_outer_search(
             f"population {args_cli.population} must be divisible by world size "
             f"{world_size}"
         )
-    fixed_reference = args_cli.fixed_reference or Path(
-        bank_manifest["reference_paths"][0]
-    ).resolve()
-    if not fixed_reference.is_file():
-        raise FileNotFoundError(f"fixed WUJI reference not found: {fixed_reference}")
+    geometry_observations = args_cli.ppo_observation_mode == "palm_geometry"
+    if geometry_observations:
+        env_cfg.observation_mode = "palm_geometry"
+        env_cfg.observation_space = env_module.PALM_GEOMETRY_OBSERVATION_DIM
+        env_cfg.morphology_context_dim = 0
+        env_cfg.geometry_inward_direction_mode = (
+            args_cli.geometry_inward_direction_mode
+        )
+        with np.load(args_cli.seed_trajectory) as seed:
+            retarget_joint_names = joint_names_from_seed(seed)
+            retarget_seed_arrays = {
+                "qpos": seed["qpos"].astype(np.float32),
+                "wrist_position": seed["wrist_position"].astype(np.float32),
+                "wrist_quaternion_xyzw": seed[
+                    "wrist_quaternion_xyzw"
+                ].astype(np.float32),
+                "frame_ids": seed["frame_ids"].astype(np.int64),
+                "qpos_ids": seed["qpos_ids"].astype(np.int64),
+            }
+        retarget_kinematics = WujiBatchKinematics(
+            retarget_joint_names, torch.device(f"cuda:{local_rank}")
+        )
+        retarget_seed_q = torch.from_numpy(
+            retarget_seed_arrays["qpos"]
+        ).to(retarget_kinematics.device)
+        fixed_reference = None
+    else:
+        retarget_kinematics = None
+        retarget_seed_q = None
+        retarget_seed_arrays = None
+        fixed_reference = args_cli.fixed_reference or Path(
+            bank_manifest["reference_paths"][0]
+        ).resolve()
+        if not fixed_reference.is_file():
+            raise FileNotFoundError(
+                f"fixed WUJI reference not found: {fixed_reference}"
+            )
     if args_cli.ppo_checkpoint is not None and not args_cli.ppo_checkpoint.is_file():
         raise FileNotFoundError(
             f"initial shared PPO checkpoint not found: {args_cli.ppo_checkpoint}"
@@ -1232,12 +1593,21 @@ def shared_ppo_outer_search(
 
     if rank == 0:
         output.mkdir(parents=True, exist_ok=True)
-        (output / "fixed_reference_contract.json").write_text(
+        (output / "co_training_contract.json").write_text(
             json.dumps(
                 {
-                    "reference": str(fixed_reference),
-                    "retarget_per_generation": False,
-                    "policy_reference_is_immutable": True,
+                    "observation_mode": args_cli.ppo_observation_mode,
+                    "observation_dimension": int(env_cfg.observation_space),
+                    "reference": (
+                        None if fixed_reference is None else str(fixed_reference)
+                    ),
+                    "retarget_per_generation": geometry_observations,
+                    "retarget_per_proposal": geometry_observations,
+                    "candidate_collision_surface_landmarks": geometry_observations,
+                    "geometry_inward_direction_mode": (
+                        args_cli.geometry_inward_direction_mode
+                        if geometry_observations else None
+                    ),
                     "population": args_cli.population,
                     "morphology_replicas": args_cli.morphology_replicas,
                     "global_envs": (
@@ -1354,12 +1724,37 @@ def shared_ppo_outer_search(
         rank_root.mkdir(parents=True, exist_ok=True)
         local_vectors_path = rank_root / "vectors.npy"
         np.save(local_vectors_path, global_vectors[begin:end])
+        local_retarget_path = rank_root / "gpu_retarget_all.npz"
+        if geometry_observations:
+            assert retarget_kinematics is not None
+            assert retarget_seed_q is not None
+            assert retarget_seed_arrays is not None
+            retarget_timings = retarget(
+                local_vectors_path,
+                local_retarget_path,
+                retarget_kinematics,
+                retarget_seed_q,
+                retarget_seed_arrays,
+                args_cli.retarget_iterations,
+            )
+        else:
+            retarget_timings = {
+                "seconds": 0.0,
+                "candidates": len(global_indices),
+                "solver_seconds": 0.0,
+                "skipped": True,
+                "fixed_reference": str(fixed_reference),
+            }
         local_manifest, prepare_timings = prepare_assets(
             local_vectors_path,
-            None,
+            local_retarget_path if geometry_observations else None,
             rank_root,
             bank_manifest,
             fixed_reference=fixed_reference,
+        )
+        prepare_timings["retarget_seconds"] = float(retarget_timings["seconds"])
+        prepare_timings["retarget_solver_seconds"] = float(
+            retarget_timings["solver_seconds"]
         )
         expanded_manifest = replicate_manifest(
             local_manifest,
@@ -1472,15 +1867,24 @@ def shared_ppo_outer_search(
             )
             summary = {
                 "schema_version": 1,
-                "algorithm": "fixed_reference_shared_ppo_outer_skrl_sac",
+                "algorithm": (
+                    "retargeted_palm_geometry_shared_ppo_outer_skrl_sac"
+                    if geometry_observations
+                    else "fixed_reference_shared_ppo_outer_skrl_sac"
+                ),
                 "force_source_morphology": args_cli.force_source_morphology,
                 "morphology_context": args_cli.morphology_context,
                 "morphology_context_dim": len(VECTOR_NAMES) if args_cli.morphology_context else 0,
                 "fixed_ppo_vectors": (
                     None if args_cli.fixed_ppo_vectors is None else str(args_cli.fixed_ppo_vectors)
                 ),
-                "retarget_performed": False,
-                "fixed_reference": str(fixed_reference),
+                "observation_mode": args_cli.ppo_observation_mode,
+                "observation_dimension": int(env_cfg.observation_space),
+                "retarget_performed": geometry_observations,
+                "retarget_per_proposal": geometry_observations,
+                "fixed_reference": (
+                    None if fixed_reference is None else str(fixed_reference)
+                ),
                 "population": args_cli.population,
                 "morphology_replicas": args_cli.morphology_replicas,
                 "ppo_rollout_multiplier": args_cli.ppo_rollout_multiplier,
@@ -1551,6 +1955,15 @@ def shared_ppo_outer_search(
 
 @hydra_task_config(args_cli.task, "skrl_cfg_entry_point")
 def main(env_cfg, agent_cfg) -> None:
+    if (args_cli.physics_worker_manifest is None) != (
+        args_cli.physics_worker_output is None
+    ):
+        raise ValueError(
+            "--physics-worker-manifest and --physics-worker-output must be used together"
+        )
+    if args_cli.physics_worker_manifest is not None:
+        run_physics_worker(env_cfg)
+        return
     output = args_cli.output_root
     output.mkdir(parents=True, exist_ok=True)
     bank_manifest = json.loads(bank_manifest_path.read_text())
@@ -1607,7 +2020,6 @@ def main(env_cfg, agent_cfg) -> None:
     replay_path = output / "hybrid_sac_replay.npz"
     history = []
     previous_summary: Path | None = None
-    stage_created = False
     cumulative_environment_steps = 0
     skrl_optimizer = None
     if args_cli.optimizer_backend == "skrl":
@@ -1715,53 +2127,23 @@ def main(env_cfg, agent_cfg) -> None:
             fixed_reference=fixed_reference,
         )
         timings.update(prepare_timings)
-        rows = []
-        rollout_rows = []
-        initialization_seconds = rollout_seconds = 0.0
-        batch_records = []
-        for begin in range(0, args_cli.population, args_cli.physics_batch_size):
-            end = min(begin + args_cli.physics_batch_size, args_cli.population)
-            if stage_created:
-                sim_utils.create_new_stage()
-            stage_created = True
-            batch = slice_manifest(manifest, begin, end)
-            morphology_indices = list(range(begin, end))
-            rollout_batch = repeat_manifest_for_rollouts(
-                batch,
-                args_cli.rollouts_per_proposal,
-                morphology_indices,
+        manifest["training_video"] = generation_video_spec(args_cli.output_root, generation, args_cli)
+        if args_cli.isolate_physics_per_generation:
+            worker_manifest_path = generation_root / "physics_worker_manifest.json"
+            worker_output_path = generation_root / "physics_worker_results.json"
+            worker_manifest_path.write_text(json.dumps(manifest) + "\n")
+            evaluation = evaluate_manifest_isolated(
+                env_cfg,
+                worker_manifest_path,
+                worker_output_path,
             )
-            cfg = copy.deepcopy(env_cfg)
-            configure_batch(cfg, rollout_batch)
-            start = time.perf_counter()
-            env = gym.make(args_cli.task, cfg=cfg)
-            initialization = time.perf_counter() - start
-            batch_rollout_rows, rollout_time = evaluate_batch(
-                env, rollout_batch, begin
-            )
-            env.close()
-            batch_rows = aggregate_rollout_rows(
-                batch_rollout_rows,
-                batch,
-                morphology_indices,
-            )
-            rows.extend(batch_rows)
-            rollout_rows.extend(batch_rollout_rows)
-            initialization_seconds += initialization
-            rollout_seconds += rollout_time
-            batch_record = {
-                "begin": begin,
-                "end": end,
-                "proposals": end - begin,
-                "rollouts_per_proposal": args_cli.rollouts_per_proposal,
-                "physical_environments": len(batch_rollout_rows),
-                "initialization_seconds": initialization,
-                "rollout_seconds": rollout_time,
-                "best_phase": max(row["phase"] for row in batch_rows),
-                "best_reward": max(row["total_reward"] for row in batch_rows),
-            }
-            batch_records.append(batch_record)
-            print("WUJI_SAC_PHYSX_BATCH " + json.dumps(batch_record), flush=True)
+        else:
+            evaluation = evaluate_manifest_in_process(env_cfg, manifest)
+        rows = evaluation["rows"]
+        rollout_rows = evaluation["rollout_rows"]
+        initialization_seconds = float(evaluation["initialization_seconds"])
+        rollout_seconds = float(evaluation["rollout_seconds"])
+        batch_records = evaluation["batch_records"]
         rows.sort(key=lambda row: row["total_reward"], reverse=True)
         optimizer_status = None
         if skrl_optimizer is not None:
@@ -1815,6 +2197,7 @@ def main(env_cfg, agent_cfg) -> None:
             rows,
             optimizer_status,
             cumulative_environment_steps,
+            evaluation.get("video_records", []),
         )
         timings["physx_initialization_seconds"] = initialization_seconds
         timings["physx_rollout_seconds"] = rollout_seconds
@@ -1844,6 +2227,7 @@ def main(env_cfg, agent_cfg) -> None:
             "candidate_count": args_cli.population,
             "completed": len(rows),
             "completed_rollouts": len(rollout_rows),
+            "video_records": evaluation.get("video_records", []),
             "cumulative_environment_steps": cumulative_environment_steps,
             "best": rows[0],
             "results": rows,

@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 from pxr import Gf, Usd, UsdGeom
 
+from dexcodesign.morphology.parametric_mesh import deform_link_meshes
+
 
 def attach_parametric_collisions(
     candidate_usd: Path,
@@ -16,16 +18,21 @@ def attach_parametric_collisions(
     link_translations: list[list[float]],
     joint_names: list[str],
     joint_local_positions: list[list[float]],
+    mesh_deformations: list[dict | None] | None = None,
 ) -> None:
-    """Author one candidate's affine geometry and joint-frame overlay."""
+    """Author one candidate's exact geometry and joint-frame overlay."""
+    if candidate_usd.resolve() == template_usd.resolve():
+        raise ValueError("candidate overlays must not overwrite a prototype USD")
     template_stage = Usd.Stage.Open(str(template_usd))
     template_root = template_stage.GetDefaultPrim().GetPath()
     candidate_stage = Usd.Stage.Open(str(candidate_usd))
     candidate_root = candidate_stage.GetDefaultPrim().GetPath()
     if not (len(link_names) == len(transforms) == len(link_translations)):
         raise ValueError("parametric link/transform count mismatch")
-    for link_name, transform, translation in zip(
-        link_names, transforms, link_translations, strict=True
+    if mesh_deformations is not None and len(mesh_deformations) != len(link_names):
+        raise ValueError("parametric mesh-deformation count mismatch")
+    for index, (link_name, transform, translation) in enumerate(
+        zip(link_names, transforms, link_translations, strict=True)
     ):
         template_link = template_root.AppendChild(link_name)
         if not template_stage.GetPrimAtPath(template_link):
@@ -46,12 +53,18 @@ def attach_parametric_collisions(
         candidate_link.GetAttribute("xformOp:translate").Set(
             Gf.Vec3d(*translation)
         )
-        collision = candidate_stage.OverridePrim(candidate_path)
         matrix = np.asarray(transform, dtype=np.float64)
         if not np.allclose(matrix, np.eye(4), atol=1.0e-12):
-            xform = UsdGeom.Xformable(collision)
-            xform.ClearXformOpOrder()
-            xform.AddTransformOp().Set(Gf.Matrix4d(*matrix.reshape(-1).tolist()))
+            for scope_name in ("collisions", "visuals"):
+                geometry_path = candidate_link.GetPath().AppendChild(scope_name)
+                geometry = candidate_stage.GetPrimAtPath(geometry_path)
+                if not geometry.IsValid():
+                    continue
+                xform = UsdGeom.Xformable(geometry)
+                xform.ClearXformOpOrder()
+                xform.AddTransformOp().Set(Gf.Matrix4d(*matrix.reshape(-1).tolist()))
+        if mesh_deformations is not None and mesh_deformations[index] is not None:
+            deform_link_meshes(candidate_stage, candidate_link.GetPath(), mesh_deformations[index], matrix)
     if len(joint_names) != len(joint_local_positions):
         raise ValueError("parametric joint/position count mismatch")
     joint_scope = candidate_root.AppendChild("joints")
@@ -102,6 +115,11 @@ def attach_manifest(manifest: dict) -> float:
             manifest["parametric_link_translations"][index],
             manifest["parametric_joint_names"][index],
             manifest["parametric_joint_local_positions"][index],
+            (
+                manifest["parametric_mesh_deformations"][index]
+                if "parametric_mesh_deformations" in manifest
+                else None
+            ),
         )
     return time.perf_counter() - start
 

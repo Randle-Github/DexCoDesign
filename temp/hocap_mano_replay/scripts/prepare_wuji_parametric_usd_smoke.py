@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dexcodesign.morphology.parametric_mesh import connector_deformation_overlay
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REFERENCE_GRAPHS = (
     REPO_ROOT / "artifacts" / "hand_morphology" / "reference_graphs.json"
@@ -195,6 +197,7 @@ def main() -> int:
     references = []
     link_names = []
     relative_transforms = []
+    mesh_deformations = []
     link_translations = []
     joint_names = []
     joint_local_positions = []
@@ -215,11 +218,13 @@ def main() -> int:
             int(round(vector[0])): {
                 "candidate_id": str(candidate_id),
                 "usd": str(usd),
+                "urdf": str(urdf),
             }
-            for vector, candidate_id, usd in zip(
+            for vector, candidate_id, usd, urdf in zip(
                 bank_manifest["vectors"],
                 bank_manifest["candidate_ids"],
                 bank_manifest["hand_usd_paths"],
+                bank_manifest["hand_urdf_paths"],
                 strict=True,
             )
         }
@@ -248,6 +253,7 @@ def main() -> int:
             int(part["id"]): np.asarray(part["mesh_linear"], dtype=np.float64)
             for part in prototype["parts"]
         }
+        prototype_parts = {int(part["id"]): part for part in prototype["parts"]}
         template_usd = (
             args.template_usd.resolve()
             if prototype_row is None
@@ -275,7 +281,13 @@ def main() -> int:
                 wrist_position[index],
                 wrist_quaternion[index],
             )
-        urdfs.append("")
+        # The candidate is authored as runtime opinions on this discrete palm
+        # prototype. Keep its URDF so palm-geometry observations can reproduce
+        # the same link topology, source collision meshes and joint axes, then
+        # apply the exact continuous overlays recorded below.
+        urdfs.append(
+            "" if prototype_row is None else str(Path(prototype_row["urdf"]).resolve())
+        )
         candidate_usd = candidate_root / "asset" / "hand.usd"
         if not args.direct_template and args.direct_candidate_assets is None:
             if bank_rows is not None and not args.materialize_candidate_assets:
@@ -322,6 +334,7 @@ def main() -> int:
         ]
         link_names.append(ordered_links)
         transforms = []
+        deformations = []
         candidate_world_positions: dict[int, np.ndarray] = {}
         candidate_joint_names = []
         candidate_joint_positions = []
@@ -336,10 +349,13 @@ def main() -> int:
             current_export = current.T @ polar_linear
             relative = np.linalg.solve(baseline_export, current_export)
             matrix = np.eye(4, dtype=np.float64)
-            # ``relative`` acts on compiler/exporter row vectors. USD/Gf
-            # xform matrices act on column vectors, hence the transpose.
-            matrix[:3, :3] = relative.T
+            # USD/Gf uses row-vector transforms too: do not transpose this
+            # relative affine, or candidate rotations are applied backwards.
+            matrix[:3, :3] = relative
             transforms.append(matrix.tolist())
+            deformations.append(
+                connector_deformation_overlay(part, prototype_parts[part_id], polar_linear, source_scale)
+            )
             local_position = (
                 np.asarray(part["relative_pos"], dtype=np.float64)
                 @ polar_linear
@@ -353,6 +369,7 @@ def main() -> int:
                 candidate_joint_positions.append(local_position.tolist())
             candidate_world_positions[part_id] = world_position
         relative_transforms.append(transforms)
+        mesh_deformations.append(deformations)
         link_translations.append(
             [
                 candidate_world_positions[int(part["id"])].tolist()
@@ -363,7 +380,7 @@ def main() -> int:
         joint_local_positions.append(candidate_joint_positions)
 
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "candidate_ids": candidate_ids,
         "vectors": vectors.tolist(),
         "hand_urdf_paths": urdfs,
@@ -389,6 +406,7 @@ def main() -> int:
         "palm_prototype_indices": [int(round(vector[0])) for vector in vectors],
         "parametric_link_names": link_names,
         "parametric_relative_transforms": relative_transforms,
+        "parametric_mesh_deformations": mesh_deformations,
         "parametric_link_translations": link_translations,
         "parametric_joint_names": joint_names,
         "parametric_joint_local_positions": joint_local_positions,

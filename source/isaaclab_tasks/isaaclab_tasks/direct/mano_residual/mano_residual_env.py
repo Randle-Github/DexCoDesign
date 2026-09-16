@@ -22,6 +22,8 @@ import numpy as np
 import torch
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
+from dexcodesign.morphology.parametric_mesh import deform_link_meshes
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObjectCfg
@@ -34,6 +36,12 @@ from isaaclab.sim.utils import get_all_matching_child_prims
 from isaaclab.utils import configclass
 from isaaclab.utils.io import load_yaml
 from isaaclab.utils.math import quat_apply, quat_error_magnitude
+
+from .palm_geometry_observation import (
+    OBSERVATION_DIM as PALM_GEOMETRY_OBSERVATION_DIM,
+    FixedWujiGeometry,
+    build_observation,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -168,6 +176,29 @@ ROOT_ROTATION_EXPR = "left_rot_.*" if HAND_ID == "mano" else "root_rot_.*"
 FINGER_JOINT_EXPR = "left_j_.*" if HAND_ID == "mano" else "finger__.*"
 
 
+def _usd_collision_approximations(usd_path: Path) -> dict[str, str]:
+    """Read each link's authoritative collision approximation from a USD."""
+    stage = Usd.Stage.Open(str(usd_path))
+    if stage is None:
+        raise ValueError(f"cannot open hand USD to inspect collision geometry: {usd_path}")
+    root = stage.GetDefaultPrim()
+    if not root:
+        raise ValueError(f"hand USD has no default prim: {usd_path}")
+    approximations: dict[str, str] = {}
+    for link in root.GetChildren():
+        collision = link.GetChild("collisions")
+        if not collision or not collision.HasAPI(UsdPhysics.CollisionAPI):
+            continue
+        attribute = collision.GetAttribute("physics:approximation")
+        value = attribute.Get() if attribute else None
+        # An unauthored MeshCollisionAPI approximation has USD's raw-mesh
+        # semantics, represented by the token "none".
+        approximations[link.GetName()] = "none" if value is None else str(value)
+    if not approximations:
+        raise ValueError(f"hand USD contains no link collision prims: {usd_path}")
+    return approximations
+
+
 @configclass
 class ManoResidualEnvCfg(DirectRLEnvCfg):
     decimation = 4
@@ -185,6 +216,16 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # pose (7), goal thumb/index tip poses (14), goal q (N), goal object
     # pose (7): 2N + 34 values.
     observation_space = OBSERVATION_DIM
+    observation_mode: str = "legacy"
+    geometry_urdf_path: str = str(
+        ALL_HAND_ROOT / "prepared" / "wuji_hand_2" / "hand_rl.urdf"
+    )
+    # "auto" reads physics:approximation from the loaded hand USD. Explicit
+    # convexHull/none values are retained for controlled tests and custom assets.
+    geometry_collision_approximation: str = "auto"
+    # reference_object selects the sign of each kinematic surface normal from
+    # the reference trajectory. The two kinematic modes ignore object motion.
+    geometry_inward_direction_mode: str = "reference_object"
     # Opt-in morphology conditioning. The morphology search driver sets this
     # to the design-vector width and appends the matching normalized context.
     morphology_context_dim = 0
@@ -380,6 +421,26 @@ class ManoResidualEvalEnvCfg(ManoResidualEnvCfg):
     log_rollout_diagnostics = False
 
 
+@configclass
+class WujiPalmGeometryEnvCfg(ManoResidualEnvCfg):
+    """Original fixed-WUJI joint residuals with palm-frame geometry inputs."""
+
+    observation_mode: str = "palm_geometry"
+    observation_space = PALM_GEOMETRY_OBSERVATION_DIM
+
+
+@configclass
+class WujiPalmGeometryPlayEnvCfg(ManoResidualPlayEnvCfg):
+    observation_mode: str = "palm_geometry"
+    observation_space = PALM_GEOMETRY_OBSERVATION_DIM
+
+
+@configclass
+class WujiPalmGeometryEvalEnvCfg(ManoResidualEvalEnvCfg):
+    observation_mode: str = "palm_geometry"
+    observation_space = PALM_GEOMETRY_OBSERVATION_DIM
+
+
 class ManoResidualEnv(DirectRLEnv):
     cfg: ManoResidualEnvCfg
 
@@ -390,6 +451,16 @@ class ManoResidualEnv(DirectRLEnv):
         return self.scene.num_envs
 
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
+        if cfg.observation_mode not in ("legacy", "palm_geometry"):
+            raise ValueError(f"Unknown observation_mode: {cfg.observation_mode}")
+        if cfg.observation_mode == "palm_geometry":
+            if HAND_ID not in ("wuji_hand_2", "wuji_morphology_batch"):
+                raise ValueError("palm_geometry currently supports only WUJI topology")
+            if cfg.observation_space != PALM_GEOMETRY_OBSERVATION_DIM or cfg.morphology_context_dim:
+                raise ValueError(
+                    f"palm_geometry requires {PALM_GEOMETRY_OBSERVATION_DIM} "
+                    "observations and no morphology context"
+                )
         reference_paths = (
             _batch_reference_paths
             if MORPHOLOGY_BATCH_MANIFEST is not None
@@ -454,27 +525,126 @@ class ManoResidualEnv(DirectRLEnv):
         self._reference_object_pose_cpu = torch.from_numpy(
             stacked("object_pose_wxyz")
         )
-        required_fingertip_keys = (
-            "fingertip_pose_wxyz",
-            "fingertip_link_names",
-            "fingertip_offsets",
-        )
-        missing_fingertip_keys = [
-            key for key in required_fingertip_keys if key not in reference
-        ]
-        if missing_fingertip_keys:
-            raise RuntimeError(
-                f"{REFERENCE_PATH} is missing {missing_fingertip_keys}; regenerate "
-                "the EgoEngine-style reference before training"
-            )
-        self._reference_fingertip_pose_cpu = torch.from_numpy(
-            stacked("fingertip_pose_wxyz")
-        )
-        self._reference_fingertip_link_names = reference[
-            "fingertip_link_names"
-        ].tolist()
-        self._fingertip_offsets_cpu = torch.from_numpy(stacked("fingertip_offsets"))
         self._reference_length = int(reference["hand_q"].shape[0])
+
+        if cfg.observation_mode == "palm_geometry":
+            if self._morphology_batch:
+                assert MORPHOLOGY_BATCH_MANIFEST is not None
+                manifest = MORPHOLOGY_BATCH_MANIFEST
+                required = (
+                    "hand_urdf_paths",
+                    "parametric_link_names",
+                    "parametric_relative_transforms",
+                    "parametric_mesh_deformations",
+                    "parametric_joint_names",
+                    "parametric_joint_local_positions",
+                )
+                missing = [key for key in required if key not in manifest]
+                if missing:
+                    raise ValueError(
+                        f"palm_geometry morphology manifest lacks {missing}"
+                    )
+                self._geometries = []
+                point_values = []
+                palm_values = []
+                offset_values = []
+                for index, urdf_path in enumerate(manifest["hand_urdf_paths"]):
+                    if not urdf_path or not Path(urdf_path).is_file():
+                        raise FileNotFoundError(
+                            f"candidate {index} has no prototype URDF for "
+                            f"palm_geometry: {urdf_path!r}"
+                        )
+                    link_transforms = dict(zip(
+                        manifest["parametric_link_names"][index],
+                        manifest["parametric_relative_transforms"][index],
+                        strict=True,
+                    ))
+                    link_deformations = dict(zip(
+                        manifest["parametric_link_names"][index],
+                        manifest["parametric_mesh_deformations"][index],
+                        strict=True,
+                    ))
+                    joint_origins = dict(zip(
+                        manifest["parametric_joint_names"][index],
+                        manifest["parametric_joint_local_positions"][index],
+                        strict=True,
+                    ))
+                    approximation = cfg.geometry_collision_approximation
+                    if approximation == "auto":
+                        approximation = _usd_collision_approximations(
+                            Path(manifest["hand_usd_paths"][index])
+                        )
+                    geometry = FixedWujiGeometry(
+                        Path(urdf_path),
+                        self._reference_joint_names,
+                        PALM_BODY_NAME,
+                        reference_q=self._reference_hand_q_cpu[index],
+                        reference_object_positions=(
+                            self._reference_object_pose_cpu[index, :, :3]
+                        ),
+                        collision_approximation=approximation,
+                        inward_direction_mode=cfg.geometry_inward_direction_mode,
+                        joint_origin_overrides=joint_origins,
+                        collision_mesh_transforms=link_transforms,
+                        collision_mesh_deformations=link_deformations,
+                    )
+                    points, palm = geometry.forward(
+                        self._reference_hand_q_cpu[index]
+                    )
+                    self._geometries.append(geometry)
+                    point_values.append(points)
+                    palm_values.append(palm)
+                    offset_values.append(geometry.offsets)
+                geometry_points = torch.stack(point_values)
+                geometry_palm = torch.stack(palm_values)
+                geometry_offsets = torch.stack(offset_values)
+                first_body_names = self._geometries[0].body_names
+                if any(
+                    geometry.body_names != first_body_names
+                    for geometry in self._geometries[1:]
+                ):
+                    raise RuntimeError(
+                        "palm_geometry candidates disagree on WUJI body topology"
+                    )
+            else:
+                approximation = cfg.geometry_collision_approximation
+                if approximation == "auto":
+                    approximation = _usd_collision_approximations(HAND_USD_PATH)
+                self._geometry = FixedWujiGeometry(
+                    Path(cfg.geometry_urdf_path),
+                    self._reference_joint_names,
+                    PALM_BODY_NAME,
+                    reference_q=self._reference_hand_q_cpu,
+                    reference_object_positions=self._reference_object_pose_cpu[:, :3],
+                    collision_approximation=approximation,
+                    inward_direction_mode=cfg.geometry_inward_direction_mode,
+                )
+                self._geometries = [self._geometry]
+                geometry_points, geometry_palm = self._geometry.forward(
+                    self._reference_hand_q_cpu
+                )
+                geometry_offsets = self._geometry.offsets
+        else:
+            required_fingertip_keys = (
+                "fingertip_pose_wxyz",
+                "fingertip_link_names",
+                "fingertip_offsets",
+            )
+            missing_fingertip_keys = [
+                key for key in required_fingertip_keys if key not in reference
+            ]
+            if missing_fingertip_keys:
+                raise RuntimeError(
+                    f"{REFERENCE_PATH} is missing {missing_fingertip_keys}; regenerate "
+                    "the EgoEngine-style reference before training"
+                )
+            self._reference_fingertip_pose_cpu = torch.from_numpy(
+                stacked("fingertip_pose_wxyz")
+            )
+            self._reference_fingertip_link_names = reference[
+                "fingertip_link_names"
+            ].tolist()
+            self._fingertip_offsets_cpu = torch.from_numpy(stacked("fingertip_offsets"))
 
         super().__init__(cfg, render_mode, **kwargs)
 
@@ -516,10 +686,11 @@ class ManoResidualEnv(DirectRLEnv):
                 f"({self.hand.num_joints}, {self.action_dim})"
             )
         self.reference_object_pose = self._reference_object_pose_cpu.to(self.device)
-        self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
-            self.device
-        )
-        self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
+        if cfg.observation_mode == "legacy":
+            self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
+                self.device
+            )
+            self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
         self.morphology_context = (
             None
             if self._morphology_context_cpu is None
@@ -675,18 +846,31 @@ class ManoResidualEnv(DirectRLEnv):
         self._middle_tip_body_index = self.hand.body_names.index(
             MIDDLE_TIP_BODY_NAME
         )
-        missing_fingertip_links = sorted(
-            set(self._reference_fingertip_link_names) - set(self.hand.body_names)
-        )
-        if missing_fingertip_links:
-            raise RuntimeError(
-                f"Reference fingertip links missing from imported {HAND_ID} articulation: "
-                f"{missing_fingertip_links}"
+        if cfg.observation_mode == "palm_geometry":
+            geometry_body_names = self._geometries[0].body_names
+            self._geometry_body_indices = [
+                self.hand.body_names.index(name) for name in geometry_body_names
+            ]
+            self._geometry_offsets = geometry_offsets.to(self.device)
+            self.reference_geometry_points = geometry_points.to(self.device)
+            self.reference_geometry_palm = geometry_palm.to(self.device)
+            self._geometry_joint_indices = [
+                self.hand.joint_names.index(name) for name in self._reference_joint_names
+            ]
+            self._geometry_validated = False
+        else:
+            missing_fingertip_links = sorted(
+                set(self._reference_fingertip_link_names) - set(self.hand.body_names)
             )
-        self._fingertip_body_indices = [
-            self.hand.body_names.index(name)
-            for name in self._reference_fingertip_link_names
-        ]
+            if missing_fingertip_links:
+                raise RuntimeError(
+                    f"Reference fingertip links missing from imported {HAND_ID} articulation: "
+                    f"{missing_fingertip_links}"
+                )
+            self._fingertip_body_indices = [
+                self.hand.body_names.index(name)
+                for name in self._reference_fingertip_link_names
+            ]
 
     def _reference_at(
         self,
@@ -947,7 +1131,8 @@ class ManoResidualEnv(DirectRLEnv):
         """Author per-env continuous morphology before PhysX parses the stage.
 
         The discrete palm mesh comes from one of the canonical prototype USDs.
-        Only the affine link geometry and joint-frame opinions vary per env.
+        Affine transforms, connector-preserving mesh points and joint-frame
+        opinions vary per env.
         Keeping those opinions in the scene root lets the multi-asset spawner
         reuse 32 prototypes for thousands of candidates.
         """
@@ -975,6 +1160,9 @@ class ManoResidualEnv(DirectRLEnv):
         resolved_joints: list[list[str]] = []
         visual_overlay_sources: list[tuple[str, Sdf.Path] | None] = []
         visual_overlay_paths = manifest.get("visual_overlay_usd_paths")
+        mesh_deformations = manifest.get("parametric_mesh_deformations")
+        if mesh_deformations is not None and len(mesh_deformations) < count:
+            raise ValueError("runtime morphology mesh-deformation count mismatch")
         if visual_overlay_paths is not None and len(visual_overlay_paths) < count:
             raise ValueError("runtime morphology visual-overlay count mismatch")
         source_indices = (
@@ -1112,7 +1300,7 @@ class ManoResidualEnv(DirectRLEnv):
                 positions = manifest["parametric_joint_local_positions"][manifest_index]
                 if len(joint_names) != len(positions):
                     raise ValueError(
-                        f"runtime morphology joint overlay mismatch at env {index}"
+                        f"runtime morphology joint overlay mismatch at env {manifest_index}"
                     )
                 for joint_name, position in zip(
                     joint_names, positions, strict=True
@@ -1123,9 +1311,33 @@ class ManoResidualEnv(DirectRLEnv):
                     joint.GetAttribute("physics:localPos0").Set(
                         Gf.Vec3f(*position)
                     )
+        # Deinstancing/traversal must happen outside Sdf.ChangeBlock, after
+        # reference and affine opinions have composed. Bake both contact and
+        # render surfaces, in candidate-local scene opinions only.
+        deformed_mesh_count = 0
+        if mesh_deformations is not None:
+            for logical_index, manifest_index in enumerate(source_indices):
+                links = resolved_links[logical_index]
+                deformations = mesh_deformations[manifest_index]
+                if len(deformations) != len(links):
+                    raise ValueError(f"runtime morphology mesh overlay mismatch at env {manifest_index}")
+                for link_name, overlay, transform in zip(
+                    links,
+                    deformations,
+                    manifest["parametric_relative_transforms"][manifest_index],
+                    strict=True,
+                ):
+                    if overlay is not None:
+                        deformed_mesh_count += deform_link_meshes(
+                            stage,
+                            f"{self._environment_root(manifest_index)}/Hand/{link_name}",
+                            overlay,
+                            np.asarray(transform, dtype=np.float64),
+                        )
         print(
             "[MORPHOLOGY_RUNTIME_OVERLAYS] "
-            f"authored={count} prototypes={len(set(manifest['hand_usd_paths']))}",
+            f"authored={count} prototypes={len(set(manifest['hand_usd_paths']))} "
+            f"deformed_meshes={deformed_mesh_count}",
             flush=True,
         )
 
@@ -1269,26 +1481,6 @@ class ManoResidualEnv(DirectRLEnv):
     def _get_observations(self) -> dict[str, torch.Tensor]:
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
         object_pose = torch.cat((object_pos, self.object.data.root_quat_w), dim=-1)
-        fingertip_body_quat = self.hand.data.body_quat_w[
-            :, self._fingertip_body_indices
-        ]
-        fingertip_body_pos = (
-            self.hand.data.body_pos_w[:, self._fingertip_body_indices]
-            - self.scene.env_origins[:, None, :]
-        )
-        fingertip_offsets = (
-            self.fingertip_offsets
-            if self._morphology_batch
-            else self.fingertip_offsets[None, :, :].expand(self.num_envs, -1, -1)
-        )
-        fingertip_offset_w = quat_apply(
-            fingertip_body_quat.reshape(-1, 4),
-            fingertip_offsets.reshape(-1, 3),
-        ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
-        fingertip_pos = fingertip_body_pos + fingertip_offset_w
-        goal_fingertip_pose = self._reference_at(
-            self.reference_fingertip_pose, self.phase_buf
-        )
         goal_object_pose = self._reference_at(
             self.reference_object_pose, self.phase_buf
         )
@@ -1319,6 +1511,86 @@ class ManoResidualEnv(DirectRLEnv):
                     f"object_reference_pos={reference_object_pos.detach().cpu().tolist()}"
                 )
                 self._last_diagnostic_phase = phase_index
+        if self.cfg.observation_mode == "palm_geometry":
+            body_pos = self.hand.data.body_pos_w[:, self._geometry_body_indices]
+            body_quat = self.hand.data.body_quat_w[:, self._geometry_body_indices]
+            offsets = (
+                self._geometry_offsets
+                if self._morphology_batch
+                else self._geometry_offsets[None].expand(self.num_envs, -1, -1)
+            )
+            points = body_pos + quat_apply(
+                body_quat.reshape(-1, 4), offsets.reshape(-1, 3)
+            ).reshape(self.num_envs, -1, 3)
+            # Reference trajectories are environment-local world coordinates.
+            points = points - self.scene.env_origins[:, None, :]
+            palm_pose = torch.cat((
+                self.hand.data.body_pos_w[:, self._palm_body_index] - self.scene.env_origins,
+                self.hand.data.body_quat_w[:, self._palm_body_index],
+            ), dim=-1)
+            if not self._geometry_validated:
+                # Check every candidate's overlaid kinematic chain before
+                # training on its geometry-conditioned observations.
+                if self._morphology_batch:
+                    expected_points_values = []
+                    expected_palm_values = []
+                    joint_pos = self.hand.data.joint_pos[
+                        :, self._geometry_joint_indices
+                    ].detach().cpu()
+                    for index, geometry in enumerate(self._geometries):
+                        candidate_points, candidate_palm = geometry.forward(
+                            joint_pos[index : index + 1]
+                        )
+                        expected_points_values.append(candidate_points[0])
+                        expected_palm_values.append(candidate_palm[0])
+                    expected_points = torch.stack(expected_points_values)
+                    expected_palm = torch.stack(expected_palm_values)
+                else:
+                    expected_points, expected_palm = self._geometry.forward(
+                        self.hand.data.joint_pos[
+                            :1, self._geometry_joint_indices
+                        ].detach().cpu()
+                    )
+                error = (points.detach().cpu() - expected_points).norm(dim=-1).max()
+                palm_error = (
+                    palm_pose[:, :3].detach().cpu() - expected_palm[:, :3]
+                ).norm(dim=-1).max()
+                if not torch.isfinite(error) or error > 5.0e-5 or palm_error > 5.0e-5:
+                    raise RuntimeError(
+                        f"WUJI morphology URDF/simulator FK mismatch: landmarks={error.item():.6g} m, "
+                        f"palm={palm_error.item():.6g} m"
+                    )
+                self._geometry_validated = True
+            observation = build_observation(
+                points,
+                self._reference_at(self.reference_geometry_points, self.phase_buf),
+                palm_pose,
+                self._reference_at(self.reference_geometry_palm, self.phase_buf),
+                object_pose,
+                goal_object_pose,
+                self.phase_buf.to(torch.float32) / float(self._reference_length - 1),
+            )
+            return {"policy": observation}
+        fingertip_body_quat = self.hand.data.body_quat_w[
+            :, self._fingertip_body_indices
+        ]
+        fingertip_body_pos = (
+            self.hand.data.body_pos_w[:, self._fingertip_body_indices]
+            - self.scene.env_origins[:, None, :]
+        )
+        fingertip_offsets = (
+            self.fingertip_offsets
+            if self._morphology_batch
+            else self.fingertip_offsets[None, :, :].expand(self.num_envs, -1, -1)
+        )
+        fingertip_offset_w = quat_apply(
+            fingertip_body_quat.reshape(-1, 4),
+            fingertip_offsets.reshape(-1, 3),
+        ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
+        fingertip_pos = fingertip_body_pos + fingertip_offset_w
+        goal_fingertip_pose = self._reference_at(
+            self.reference_fingertip_pose, self.phase_buf
+        )
         observation = torch.cat(
             (
                 self.hand.data.joint_pos,

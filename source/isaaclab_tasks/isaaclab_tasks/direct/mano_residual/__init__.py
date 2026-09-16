@@ -8,6 +8,22 @@ import gymnasium as gym
 from . import agents
 
 
+for suffix, config in (
+    ("", "WujiPalmGeometryEnvCfg"),
+    ("-Play", "WujiPalmGeometryPlayEnvCfg"),
+    ("-Eval", "WujiPalmGeometryEvalEnvCfg"),
+):
+    gym.register(
+        id=f"DexCoDesign-WUJI-PalmGeometry-Residual-Direct{suffix}-v0",
+        entry_point=f"{__name__}.mano_residual_env:ManoResidualEnv",
+        disable_env_checker=True,
+        kwargs={
+            "env_cfg_entry_point": f"{__name__}.mano_residual_env:{config}",
+            "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+        },
+    )
+
+
 gym.register(
     id="DexCoDesign-MANO-Residual-Direct-v0",
     entry_point=f"{__name__}.mano_residual_env:ManoResidualEnv",

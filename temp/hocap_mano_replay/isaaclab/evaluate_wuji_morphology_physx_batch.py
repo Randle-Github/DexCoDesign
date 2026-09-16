@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -24,6 +26,12 @@ parser.add_argument("manifest", type=Path)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--task", default="DexCoDesign-Hand-Residual-Direct-v0")
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--video", action="store_true", help="save the selected environment's first rollout as MP4")
+parser.add_argument("--video-env-index", type=int, default=0)
+parser.add_argument("--video-length", type=int, default=445)
+parser.add_argument("--video-stride", type=int, default=2)
+parser.add_argument("--video-width", type=int, default=640)
+parser.add_argument("--video-height", type=int, default=480)
 parser.add_argument(
     "--no-seed",
     action="store_true",
@@ -38,6 +46,15 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 args_cli.manifest = args_cli.manifest.expanduser().resolve()
 args_cli.output = args_cli.output.expanduser().resolve()
+if args_cli.video:
+    if not shutil.which("ffmpeg"):
+        parser.error("--video requires ffmpeg on PATH")
+    if args_cli.video_env_index < 0 or min(args_cli.video_length, args_cli.video_stride,
+                                         args_cli.video_width, args_cli.video_height) < 1:
+        parser.error("video index must be nonnegative; length, stride and resolution must be positive")
+    if args_cli.video_width % 2 or args_cli.video_height % 2:
+        parser.error("video width and height must be even")
+    args_cli.enable_cameras = True
 os.environ["DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"] = str(args_cli.manifest)
 sys.argv = [sys.argv[0]] + hydra_args
 
@@ -49,9 +66,51 @@ import numpy as np
 import torch
 
 import isaaclab_tasks  # noqa: F401, E402
+import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg  # noqa: E402
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
 from pxr import Gf, Usd, UsdGeom  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from wuji_rollout_video import StreamedRolloutVideo, close_rgb_render_product, make_hand_visible  # noqa: E402
+
+
+@contextmanager
+def evaluation_video(env, spec: dict | None, records: list[dict]):
+    """Finalize streamed media and release RGB resources, even on rollout errors."""
+    if spec is None:
+        yield None
+        return
+    recorder = StreamedRolloutVideo(spec, env.unwrapped.step_dt, spec["candidate_index"])
+    try:
+        recorder.warm_up(env)
+        yield recorder
+    finally:
+        try:
+            result = recorder.finish()
+            records.append(result)
+            print(f"WUJI_EVALUATION_VIDEO {json.dumps(result)}", flush=True)
+        finally:
+            close_rgb_render_product(env)
+
+
+def prepare_gui_hand_visibility(env, count: int, headless: bool) -> list[int]:
+    """Display existing collision-only surfaces in the scene, never asset files."""
+    if headless:
+        return []
+    raw = env.unwrapped
+    stage = sim_utils.get_current_stage()
+    shown = []
+    for index in range(count):
+        hand_path = raw.cfg.hand_cfg.prim_path.replace("env_.*", f"env_{index}")
+        try:
+            shown.append(make_hand_visible(stage, hand_path))
+        except Exception as exc:
+            shown.append(0)
+            print(f"WARNING: cannot display hand at {hand_path}: {exc}", flush=True)
+    if any(shown):
+        raw.sim.render()  # Refresh graphics only; do not step or reset physics.
+    return shown
 
 
 def attach_parametric_collisions(
@@ -214,6 +273,11 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
                 manifest["parametric_link_translations"][index],
                 manifest["parametric_joint_names"][index],
                 manifest["parametric_joint_local_positions"][index],
+                (
+                    manifest["parametric_mesh_deformations"][index]
+                    if "parametric_mesh_deformations" in manifest
+                    else None
+                ),
             )
         print(
             "WUJI_PARAMETRIC_COLLISIONS_ATTACHED "
@@ -228,10 +292,33 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     env_cfg.episode_length_s = 15.0
     env_cfg.seed = None if args_cli.no_seed else args_cli.seed
 
+    video_spec = None
+    video_records = []
+    if args_cli.video:
+        if args_cli.video_env_index >= count:
+            raise ValueError(f"--video-env-index must be less than manifest environment count {count}")
+        env_cfg.viewer.env_index = args_cli.video_env_index
+        env_cfg.viewer.resolution = (args_cli.video_width, args_cli.video_height)
+        video_spec = {
+            "candidate_index": args_cli.video_env_index,
+            "candidate_id": manifest.get("candidate_ids", [f"candidate_{i:06d}" for i in range(count)])[
+                args_cli.video_env_index
+            ],
+            "max_steps": args_cli.video_length,
+            "stride": args_cli.video_stride,
+            "width": args_cli.video_width,
+            "height": args_cli.video_height,
+            "path": str(args_cli.output.with_name(f"{args_cli.output.stem}.rollout.mp4")),
+            "semantics": "first evaluation episode of selected manifest environment; no extra rollout",
+        }
+
     start = time.perf_counter()
-    env = gym.make(args_cli.task, cfg=env_cfg)
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     raw = env.unwrapped
     env.reset()
+    visible_surfaces = prepare_gui_hand_visibility(env, count, args_cli.headless)
+    if visible_surfaces:
+        print(f"WUJI_GUI_HAND_SURFACES counts={visible_surfaces}", flush=True)
     initialization_seconds = time.perf_counter() - start
     actions = torch.zeros(
         (count, raw.action_dim), dtype=torch.float32, device=raw.device
@@ -249,8 +336,10 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
     max_other_force = torch.zeros_like(pose_return)
 
     rollout_start = time.perf_counter()
-    with torch.inference_mode():
-        for _ in range(raw._reference_length + 2):
+    with torch.inference_mode(), evaluation_video(env, video_spec, video_records) as video:
+        for step in range(raw._reference_length + 2):
+            if video is not None and active[video.env_index].item():
+                video.capture(raw.render, step)
             _, _, terminated, truncated, _ = env.step(actions)
             pose_return[active] += raw._last_pose_tracking_reward[active]
             contact_return[active] += raw._last_contact_reward[active]
@@ -328,6 +417,7 @@ def main(env_cfg, _experiment_cfg: dict) -> None:
         ),
         "best": rows[0],
         "results": rows,
+        "video_records": video_records,
     }
     args_cli.output.parent.mkdir(parents=True, exist_ok=True)
     args_cli.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

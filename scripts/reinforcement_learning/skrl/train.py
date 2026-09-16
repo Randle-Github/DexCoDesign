@@ -14,6 +14,7 @@ a more user-friendly way.
 
 import argparse
 import sys
+from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
@@ -34,6 +35,10 @@ parser.add_argument(
     ),
 )
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+parser.add_argument(
+    "--agent_config", type=str, default=None,
+    help="Load an agent YAML directly, overriding the task's registered agent configuration.",
+)
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
@@ -61,6 +66,11 @@ parser.add_argument(
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.agent_config is not None:
+    agent_config_path = Path(args_cli.agent_config).expanduser().resolve()
+    if not agent_config_path.is_file() or agent_config_path.suffix != ".yaml":
+        parser.error("--agent_config must point to an existing .yaml file")
+    args_cli.agent_config = str(agent_config_path)
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -127,6 +137,10 @@ if args_cli.agent is None:
 else:
     agent_cfg_entry_point = args_cli.agent
     algorithm = agent_cfg_entry_point.split("_cfg")[0].split("skrl_")[-1].lower()
+
+if args_cli.agent_config is not None:
+    # Hydra resolves this registry entry when the decorated main is invoked.
+    gym.spec(args_cli.task.split(":")[-1]).kwargs[agent_cfg_entry_point] = args_cli.agent_config
 
 
 def enable_direct_wandb_logging(runner) -> None:

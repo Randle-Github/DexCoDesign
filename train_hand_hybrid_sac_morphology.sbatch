@@ -30,6 +30,8 @@ REWARD_SCALE="${REWARD_SCALE:-0.01}"
 OPTIMIZER_BACKEND="${OPTIMIZER_BACKEND:-skrl}"
 RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
 SHARED_PPO_ITERATIONS="${SHARED_PPO_ITERATIONS:-0}"
+PPO_OBSERVATION_MODE="${PPO_OBSERVATION_MODE:-legacy}"
+GEOMETRY_INWARD_DIRECTION_MODE="${GEOMETRY_INWARD_DIRECTION_MODE:-kinematic_normal}"
 MORPHOLOGY_REPLICAS="${MORPHOLOGY_REPLICAS:-1}"
 PPO_ROLLOUT_MULTIPLIER="${PPO_ROLLOUT_MULTIPLIER:-1}"
 GPU_COUNT="${GPU_COUNT:-1}"
@@ -41,12 +43,33 @@ PPO_CHECKPOINT="${PPO_CHECKPOINT:-}"
 TARGET_REWARD="${TARGET_REWARD:-inf}"
 KIT_ARGS="${KIT_ARGS:---/log/level=error}"
 CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-1}"
+ISOLATE_PHYSICS_PER_GENERATION="${ISOLATE_PHYSICS_PER_GENERATION:-1}"
 WANDB_ENABLED="${WANDB_ENABLED:-1}"
+VIDEO_ENABLED="${VIDEO_ENABLED:-0}"
+VIDEO_INTERVAL="${VIDEO_INTERVAL:-10}"
+VIDEO_CANDIDATE_INDEX="${VIDEO_CANDIDATE_INDEX:-0}"
+VIDEO_LENGTH="${VIDEO_LENGTH:-445}"
+VIDEO_STRIDE="${VIDEO_STRIDE:-2}"
+VIDEO_WIDTH="${VIDEO_WIDTH:-640}"
+VIDEO_HEIGHT="${VIDEO_HEIGHT:-480}"
 WANDB_ENTITY="${WANDB_ENTITY:-njyunhai-georgia-tech}"
 WANDB_PROJECT="${WANDB_PROJECT:-DexCoDesign}"
 WANDB_GROUP="${WANDB_GROUP:-wuji-hybrid-sac}"
 FIXED_PALM_PROTOTYPE="${FIXED_PALM_PROTOTYPE-0}"
 RETARGET_PER_PROPOSAL="${RETARGET_PER_PROPOSAL:-1}"
+if [[ "${PPO_OBSERVATION_MODE}" == "palm_geometry" ]]; then
+  if (( SHARED_PPO_ITERATIONS < 1 )); then
+    echo "ERROR: palm_geometry requires SHARED_PPO_ITERATIONS > 0" >&2
+    exit 1
+  fi
+  if [[ "${RETARGET_PER_PROPOSAL}" != "1" ]]; then
+    echo "ERROR: palm_geometry co-training requires RETARGET_PER_PROPOSAL=1" >&2
+    exit 1
+  fi
+  # The 60 points already expose morphology and the trained checkpoint has a
+  # fixed 385-value input. Do not append the legacy 23-value design context.
+  MORPHOLOGY_CONTEXT=0
+fi
 if [[ -n "${FIXED_PALM_PROTOTYPE}" ]]; then
   PALM_RUN_TAG="palm${FIXED_PALM_PROTOTYPE}"
 else
@@ -130,7 +153,10 @@ echo "Repository: ${REPO_ROOT}"
 echo "Output: ${OUTPUT_ROOT}"
 echo "Population: ${POPULATION}; PhysX batch: ${PHYSICS_BATCH_SIZE}; rollouts/proposal: ${ROLLOUTS_PER_PROPOSAL}; generations: ${GENERATIONS}"
 echo "Fixed palm prototype: ${FIXED_PALM_PROTOTYPE:-learned}; per-proposal retargeting: ${RETARGET_PER_PROPOSAL}"
+echo "PPO observation: ${PPO_OBSERVATION_MODE}; inward direction: ${GEOMETRY_INWARD_DIRECTION_MODE}"
+echo "Process-isolated PhysX per generation: ${ISOLATE_PHYSICS_PER_GENERATION}"
 echo "Weights & Biases mode: ${WANDB_MODE}"
+echo "Rollout video recording: ${VIDEO_ENABLED}; interval: ${VIDEO_INTERVAL}; candidate: ${VIDEO_CANDIDATE_INDEX}; replica: 0"
 echo "Weights & Biases run: ${WANDB_ENTITY}/${WANDB_PROJECT}/${WANDB_RUN_NAME}"
 nvidia-smi -L
 
@@ -145,6 +171,20 @@ if [[ "${WANDB_ENABLED}" == "1" ]]; then
 fi
 if [[ "${CONTINUE_AFTER_SUCCESS}" == "1" ]]; then
   EXTRA_ARGS+=(--continue-after-success)
+fi
+if [[ "${VIDEO_ENABLED}" == "1" ]]; then
+  EXTRA_ARGS+=(
+    --video
+    --video-interval "${VIDEO_INTERVAL}"
+    --video-candidate-index "${VIDEO_CANDIDATE_INDEX}"
+    --video-length "${VIDEO_LENGTH}"
+    --video-stride "${VIDEO_STRIDE}"
+    --video-width "${VIDEO_WIDTH}"
+    --video-height "${VIDEO_HEIGHT}"
+  )
+fi
+if [[ "${ISOLATE_PHYSICS_PER_GENERATION}" == "1" ]]; then
+  EXTRA_ARGS+=(--isolate-physics-per-generation)
 fi
 if [[ -n "${FIXED_REFERENCE}" ]]; then
   EXTRA_ARGS+=(--fixed-reference "${FIXED_REFERENCE}")
@@ -186,6 +226,8 @@ PROGRAM_ARGS=(
   --optimizer-backend "${OPTIMIZER_BACKEND}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
   --shared-ppo-iterations "${SHARED_PPO_ITERATIONS}" \
+  --ppo-observation-mode "${PPO_OBSERVATION_MODE}" \
+  --geometry-inward-direction-mode "${GEOMETRY_INWARD_DIRECTION_MODE}" \
   --morphology-replicas "${MORPHOLOGY_REPLICAS}" \
   --ppo-rollout-multiplier "${PPO_ROLLOUT_MULTIPLIER}" \
   --target-reward "${TARGET_REWARD}" \

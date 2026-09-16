@@ -70,6 +70,10 @@ _build
 /tests/*
 !/tests/test_general_grammar.py
 !/tests/test_midas_grammar.py
+!/tests/test_wuji_parametric_mesh.py
+!/tests/test_render_best_wuji_sac_hand.py
+!/tests/test_wuji_rollout_video.py
+!/tests/test_palm_geometry_observation.py
 
 # Docker history
 .isaac-lab-docker-history
