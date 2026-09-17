@@ -23,7 +23,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--output-root", type=Path, required=True)
 parser.add_argument("--prototype-bank-root", type=Path, required=True)
 parser.add_argument("--seed-trajectory", type=Path, required=True)
-parser.add_argument("--population", type=int, default=4096)
+parser.add_argument(
+    "--num-morphologies", "--population", dest="population", type=int, default=4096,
+    help="number of distinct hand designs proposed per morphology generation",
+)
 parser.add_argument(
     "--physics-batch-size",
     type=int,
@@ -110,11 +113,12 @@ parser.add_argument(
 )
 parser.add_argument("--retarget-iterations", type=int, default=4)
 parser.add_argument(
-    "--shared-ppo-iterations",
+    "--ppo-cycles-per-generation", "--shared-ppo-iterations",
+    dest="shared_ppo_iterations",
     type=int,
     default=0,
     help=(
-        "official SKRL PPO iterations trained on the complete morphology "
+        "PPO collection/update cycles trained on the complete morphology "
         "population before each outer SAC update; zero preserves morphology-only search"
     ),
 )
@@ -134,10 +138,21 @@ parser.add_argument(
     help="surface side used by the 60-point palm-geometry observation",
 )
 parser.add_argument(
-    "--morphology-replicas",
+    "--train-envs-per-morphology", "--morphology-replicas",
+    dest="morphology_replicas",
     type=int,
     default=1,
-    help="independent PPO environments per morphology on the global DDP job",
+    help="parallel PPO training environments per morphology across all ranks",
+)
+parser.add_argument(
+    "--eval-envs-per-morphology",
+    type=int,
+    default=None,
+    help=(
+        "environments per morphology scored during deterministic shared-PPO evaluation; "
+        "defaults to all training environments, must not exceed the training count; "
+        "reuses the first K replicas and still steps the full training scene"
+    ),
 )
 parser.add_argument(
     "--ppo-rollout-multiplier",
@@ -238,9 +253,16 @@ if (
 ):
     parser.error("--fixed-palm-prototype currently requires --optimizer-backend skrl")
 if args_cli.shared_ppo_iterations < 0:
-    parser.error("--shared-ppo-iterations must be non-negative")
+    parser.error("--ppo-cycles-per-generation must be non-negative")
 if args_cli.morphology_replicas < 1:
-    parser.error("--morphology-replicas must be positive")
+    parser.error("--train-envs-per-morphology must be positive")
+if args_cli.eval_envs_per_morphology is not None:
+    if args_cli.shared_ppo_iterations < 1:
+        parser.error("--eval-envs-per-morphology requires shared PPO training")
+    if not 1 <= args_cli.eval_envs_per_morphology <= args_cli.morphology_replicas:
+        parser.error("--eval-envs-per-morphology must be between 1 and --train-envs-per-morphology")
+else:
+    args_cli.eval_envs_per_morphology = args_cli.morphology_replicas
 if args_cli.ppo_rollout_multiplier < 1:
     parser.error("--ppo-rollout-multiplier must be positive")
 if args_cli.ppo_observation_mode == "palm_geometry":
@@ -318,6 +340,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
 REPO_ROOT = SCRIPT_ROOT.parents[2]
 sys.path.insert(0, str(SCRIPT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wuji_ppo_logging import enable_ppo_logging  # noqa: E402
 from gpu_wuji_retarget import (  # noqa: E402
     WujiBatchKinematics,
     joint_names_from_seed,
@@ -546,7 +569,19 @@ def log_generation_to_wandb(
             metrics.update(video_wandb_metrics(video_records or [], wandb))
         except Exception as exc:
             print(f"WARNING: failed to upload rollout video: {exc}", flush=True)
-        wandb.log(metrics, step=generation)
+        if args_cli.shared_ppo_iterations:
+            if generation == 0:
+                wandb.define_metric("Morphology/generation")
+                for name in metrics:
+                    if not name.startswith("Environment steps/"):
+                        wandb.define_metric(name, step_metric="Morphology/generation")
+                wandb.define_metric("Evaluation/*", step_metric="Morphology/generation")
+            metrics["Morphology/generation"] = generation
+            metrics["Evaluation/episode_return_mean"] = float(rewards.mean())
+            metrics["Evaluation/episode_return_max"] = float(rewards.max())
+            wandb.log(metrics)
+        else:
+            wandb.log(metrics, step=generation)
     except Exception as exc:
         print(
             f"WARNING: failed to log generation {generation} to W&B: {exc}",
@@ -1337,8 +1372,9 @@ def evaluate_shared_policy(
     raw_env,
     runner: Runner,
     manifest: dict,
+    eval_envs_per_morphology: int | None = None,
 ) -> tuple[list[dict], float]:
-    """Evaluate one deterministic shared policy and aggregate replicas."""
+    """Score the first K replicas per morphology; the full scene still steps."""
 
     if hasattr(runner.agent, "set_running_mode"):
         runner.agent.set_running_mode("eval")
@@ -1349,7 +1385,18 @@ def evaluate_shared_policy(
         runner.agent.act
     ).parameters
     count = raw_env.num_envs
-    active = torch.ones(count, dtype=torch.bool, device=raw_env.device)
+    if len(manifest["morphology_indices"]) != count:
+        raise ValueError("evaluation morphology mapping does not match environment count")
+    groups: dict[int, list[int]] = {}
+    for env_index, morphology_index in enumerate(manifest["morphology_indices"]):
+        groups.setdefault(morphology_index, []).append(env_index)
+    selected = torch.zeros(count, dtype=torch.bool, device=raw_env.device)
+    for ids in groups.values():
+        requested = len(ids) if eval_envs_per_morphology is None else eval_envs_per_morphology
+        if not 1 <= requested <= len(ids):
+            raise ValueError("evaluation count must be positive and not exceed replicas per morphology")
+        selected[ids[:requested]] = True
+    active = selected.clone()
     environment_steps = torch.zeros(
         count, dtype=torch.long, device=raw_env.device
     )
@@ -1415,7 +1462,7 @@ def evaluate_shared_policy(
     vectors = np.asarray(manifest["vectors"], dtype=np.float32)
     rows: list[dict] = []
     for morphology_index in sorted(set(manifest["morphology_indices"])):
-        ids = (morphology_indices == morphology_index).nonzero(
+        ids = ((morphology_indices == morphology_index) & selected).nonzero(
             as_tuple=False
         ).flatten()
         first = int(ids[0].item())
@@ -1476,12 +1523,10 @@ def train_and_evaluate_shared_ppo(
         f"{args_cli.wandb_run_name}_ppo_generation_{generation:03d}"
     )
     experiment["checkpoint_interval"] = 0
-    experiment["wandb"] = args_cli.wandb
-    experiment["wandb_kwargs"] = {
-        "project": args_cli.wandb_project,
-        "group": args_cli.wandb_group,
-        "tags": ["WUJI", "morphology", "PPO"],
-    }
+    # SAC initializes the persistent outer run; PPO must not initialize another.
+    experiment["wandb"] = False
+    if args_cli.wandb:
+        experiment["write_interval"] = rollouts
 
     start = time.perf_counter()
     raw_gym_env = gym.make(args_cli.task, cfg=cfg)
@@ -1489,6 +1534,13 @@ def train_and_evaluate_shared_ppo(
     raw_env = raw_gym_env.unwrapped
     env = SkrlVecEnvWrapper(raw_gym_env, ml_framework="torch")
     runner = Runner(env, ppo_cfg)
+    if args_cli.wandb and rank == 0:
+        import wandb
+        enable_ppo_logging(
+            runner.agent, wandb.run, generation=generation,
+            steps_per_generation=ppo_cfg["trainer"]["timesteps"],
+            global_envs=args_cli.population * args_cli.morphology_replicas,
+        )
     if checkpoint_to_load is not None:
         runner.agent.load(str(checkpoint_to_load))
     start = time.perf_counter()
@@ -1502,7 +1554,7 @@ def train_and_evaluate_shared_ppo(
         runner.agent.save(str(output / "shared_ppo_latest.pt"))
     distributed_barrier()
     rows, evaluation_seconds = evaluate_shared_policy(
-        env, raw_env, runner, manifest
+        env, raw_env, runner, manifest, args_cli.eval_envs_per_morphology
     )
     env.close()
     return rows, {
@@ -1610,6 +1662,8 @@ def shared_ppo_outer_search(
                     ),
                     "population": args_cli.population,
                     "morphology_replicas": args_cli.morphology_replicas,
+                    "eval_envs_per_morphology": args_cli.eval_envs_per_morphology,
+                    "global_eval_envs": args_cli.population * args_cli.eval_envs_per_morphology,
                     "global_envs": (
                         args_cli.population * args_cli.morphology_replicas
                     ),
@@ -1887,6 +1941,8 @@ def shared_ppo_outer_search(
                 ),
                 "population": args_cli.population,
                 "morphology_replicas": args_cli.morphology_replicas,
+                "eval_envs_per_morphology": args_cli.eval_envs_per_morphology,
+                "global_eval_envs": args_cli.population * args_cli.eval_envs_per_morphology,
                 "ppo_rollout_multiplier": args_cli.ppo_rollout_multiplier,
                 "effective_env_equivalent": (
                     args_cli.population
@@ -1976,7 +2032,7 @@ def main(env_cfg, agent_cfg) -> None:
     if skrl.config.torch.is_distributed:
         raise RuntimeError(
             "distributed execution is only supported with "
-            "--shared-ppo-iterations > 0"
+            "--ppo-cycles-per-generation > 0"
         )
     fixed_reference = args_cli.fixed_reference
     kinematics: WujiBatchKinematics | None = None

@@ -132,14 +132,14 @@ DEXCODESIGN_OBJECT_USD_PATH="$OBJECT_USD" \
   --prototype-bank-root "$BANK" \
   --seed-trajectory "$SEED" \
   --fixed-palm-prototype 0 \
-  --population 64 \
+  --num-morphologies 64 \
   --physics-batch-size 64 \
   --generations 100 \
   --sac-updates 64 \
   --sac-batch-size 64 \
   --retarget-iterations 4 \
-  --shared-ppo-iterations 4 \
-  --morphology-replicas 1 \
+  --ppo-cycles-per-generation 4 \
+  --train-envs-per-morphology 1 \
   --ppo-rollout-multiplier 1 \
   --ppo-observation-mode palm_geometry \
   --geometry-inward-direction-mode kinematic_normal \
@@ -155,8 +155,9 @@ DEXCODESIGN_OBJECT_USD_PATH="$OBJECT_USD" \
 
 There is intentionally no `--ppo-checkpoint` in this command.
 
-In shared-PPO co-training, `--morphology-replicas` controls independent physical
-evaluation replicas per proposal. `--rollouts-per-proposal` belongs to the
+In shared-PPO co-training, `--train-envs-per-morphology` controls parallel PPO training
+environments per morphology. Deterministic evaluation reuses a selectable subset of
+these environments and averages their episode returns per morphology. `--rollouts-per-proposal` belongs to the
 morphology-only zero-residual evaluation workflow and is not the robustness
 control for this shared-PPO path. Start with one morphology replica. Raising it
 to four creates `64 x 4 = 256` physical policy environments.
@@ -178,13 +179,13 @@ Before the 64 x 100 run, launch a new two-candidate/two-generation GPU smoke by
 changing only:
 
 ```bash
---population 2
+--num-morphologies 2
 --physics-batch-size 2
 --generations 2
 --sac-updates 1
 --sac-batch-size 2
 --retarget-iterations 1
---shared-ppo-iterations 1
+--ppo-cycles-per-generation 1
 --wandb-run-name wuji_385_cotrain_smoke
 --output-root "$PWD/artifacts/wuji_sac/wuji_385_cotrain_smoke"
 ```
@@ -209,3 +210,74 @@ Verify all of the following before scaling up:
   the current driver explicitly rejects that combination.
 - The old all-hands clone lacks the complete artifacts tree and must not be used
   as the launch directory for this experiment.
+
+## Clear CLI names and compatibility
+
+Use `--num-morphologies`, `--train-envs-per-morphology`, and
+`--ppo-cycles-per-generation`. The previous names `--population`,
+`--morphology-replicas`, and `--shared-ppo-iterations` remain accepted as aliases
+with identical defaults and behavior. Internal configuration destinations and
+saved JSON field names remain compatible with existing tools.
+
+For 32 designs, 128 training environments per design, and 64 PPO cycles:
+
+```bash
+--num-morphologies 32 --train-envs-per-morphology 128 --ppo-cycles-per-generation 64
+```
+
+The batch scripts also accept `NUM_MORPHOLOGIES`, `TRAIN_ENVS_PER_MORPHOLOGY`,
+and `PPO_CYCLES_PER_GENERATION`; these take precedence over the old environment
+variable names when both are set.
+
+`--eval-envs-per-morphology 32` scores 32 environments per morphology using
+mean deterministic episode return (failure counts as an episode end). It defaults
+to the training count and must be positive and no larger than that count.
+The evaluator selects the first K replicas of each morphology in manifest order,
+resets the scene, and stops when all selected replicas have finished their first
+episode. Unselected replicas and auto-reset episodes do not contribute to scores.
+The whole training scene is still stepped; this option does not reduce scene
+memory or create a smaller evaluation scene. Identical deterministic replicas
+may yield identical returns; no initial-state randomization is added.
+
+The batch-script equivalent is `EVAL_ENVS_PER_MORPHOLOGY=32`.
+PPO cycles each collect the YAML rollout horizon times
+`--ppo-rollout-multiplier`, then update PPO before collecting again.
+
+## Shared reference banks for replicas
+
+Grouped morphology replicas now store reference joint/control/object trajectories,
+collision landmark offsets, and reference landmark/palm trajectories once per
+unique morphology on CPU and GPU. Each environment holds a bank index and its
+own phase; lookup gathers only the current target for that environment. Geometry
+construction and reference FK run once per morphology. Startup FK validation
+still checks every physical replica, batching those checks by morphology.
+Replica metadata must agree on reference paths, assets and geometry overrides;
+inconsistent replicas are rejected before sharing data. Fixed-hand reference
+storage is unchanged, and ungrouped batches retain independent bank entries.
+
+For 32 designs and 128 replicas each, the float32 reference landmark tensor with
+446 frames and 60 XYZ landmarks shrinks from 1,254.4 MiB to 9.8 MiB per copy.
+This does not reduce independent simulator state, contact buffers, PPO rollout
+storage, or the expanded manifest; total memory savings must be measured.
+
+## PPO reward logging in co-training
+
+With `--wandb`, rank zero mirrors SKRL PPO tracking aggregates directly to the
+persistent outer W&B run once per rollout/update cycle. PPO no longer initializes
+an extra W&B run per generation. TensorBoard output is preserved.
+
+- `PPO/Reward / Episode return (mean)` (plus min/max) mirrors SKRL's recent
+  completed-episode return statistics, averaged over the logging interval. It
+  includes failures and appears after completed episodes become available.
+- `PPO/Reward / Instantaneous reward (mean)` reports training step rewards.
+- Other SKRL metrics, including losses and episode lengths, use the `PPO/` prefix.
+- `PPO/train_steps` is cumulative vector steps across generations;
+  `PPO/train_transitions` multiplies that by the global training environment count.
+- `Evaluation/episode_return_mean` and `Evaluation/episode_return_max` explicitly
+  name the deterministic morphology evaluation scores. Legacy evaluation metric
+  names are retained for existing dashboards.
+
+PPO charts use `PPO/train_steps`; evaluation charts use `Morphology/generation`.
+W&B's internal history step advances automatically so interleaved PPO and
+morphology logs do not move backward. This requires restarting training to load
+the code change; already-running processes keep their existing logging behavior.

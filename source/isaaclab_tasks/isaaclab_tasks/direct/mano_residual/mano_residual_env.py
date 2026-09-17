@@ -42,6 +42,7 @@ from .palm_geometry_observation import (
     FixedWujiGeometry,
     build_observation,
 )
+from .reference_loader import load_references, reference_layout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -466,7 +467,11 @@ class ManoResidualEnv(DirectRLEnv):
             if MORPHOLOGY_BATCH_MANIFEST is not None
             else [REFERENCE_PATH]
         )
-        references = [np.load(path) for path in reference_paths]
+        representatives, reference_indices = reference_layout(
+            MORPHOLOGY_BATCH_MANIFEST, len(reference_paths)
+        )
+        self._reference_indices_cpu = torch.tensor(reference_indices, dtype=torch.long)
+        references = load_references([reference_paths[index] for index in representatives])
         reference = references[0]
         self._morphology_batch = MORPHOLOGY_BATCH_MANIFEST is not None
         self._grouped_physics_replicas = bool(
@@ -548,7 +553,8 @@ class ManoResidualEnv(DirectRLEnv):
                 point_values = []
                 palm_values = []
                 offset_values = []
-                for index, urdf_path in enumerate(manifest["hand_urdf_paths"]):
+                for bank_index, index in enumerate(representatives):
+                    urdf_path = manifest["hand_urdf_paths"][index]
                     if not urdf_path or not Path(urdf_path).is_file():
                         raise FileNotFoundError(
                             f"candidate {index} has no prototype URDF for "
@@ -578,9 +584,9 @@ class ManoResidualEnv(DirectRLEnv):
                         Path(urdf_path),
                         self._reference_joint_names,
                         PALM_BODY_NAME,
-                        reference_q=self._reference_hand_q_cpu[index],
+                        reference_q=self._reference_hand_q_cpu[bank_index],
                         reference_object_positions=(
-                            self._reference_object_pose_cpu[index, :, :3]
+                            self._reference_object_pose_cpu[bank_index, :, :3]
                         ),
                         collision_approximation=approximation,
                         inward_direction_mode=cfg.geometry_inward_direction_mode,
@@ -589,7 +595,7 @@ class ManoResidualEnv(DirectRLEnv):
                         collision_mesh_deformations=link_deformations,
                     )
                     points, palm = geometry.forward(
-                        self._reference_hand_q_cpu[index]
+                        self._reference_hand_q_cpu[bank_index]
                     )
                     self._geometries.append(geometry)
                     point_values.append(points)
@@ -648,6 +654,7 @@ class ManoResidualEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
+        self._reference_indices = self._reference_indices_cpu.to(self.device)
         self.action_dim = gym.spaces.flatdim(self.single_action_space)
         if self.action_dim != len(self._action_joint_names):
             raise RuntimeError(
@@ -691,6 +698,8 @@ class ManoResidualEnv(DirectRLEnv):
                 self.device
             )
             self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
+            if self._morphology_batch:
+                self.fingertip_offsets = self.fingertip_offsets[self._reference_indices]
         self.morphology_context = (
             None
             if self._morphology_context_cpu is None
@@ -858,6 +867,12 @@ class ManoResidualEnv(DirectRLEnv):
                 self.hand.joint_names.index(name) for name in self._reference_joint_names
             ]
             self._geometry_validated = False
+            print(
+                f"[WUJI_REFERENCE_BANK] environments={self.num_envs} "
+                f"unique_geometries={len(self._geometries)} "
+                f"landmark_trajectory_mib={geometry_points.numel() * geometry_points.element_size() / 2**20:.2f}",
+                flush=True,
+            )
         else:
             missing_fingertip_links = sorted(
                 set(self._reference_fingertip_link_names) - set(self.hand.body_names)
@@ -888,7 +903,7 @@ class ManoResidualEnv(DirectRLEnv):
             ids = env_ids.to(device=self.device, dtype=torch.long)
         else:
             ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
-        return tensor[ids, phases]
+        return tensor[self._reference_indices[ids], phases]
 
     def _environment_root(self, index: int) -> str:
         if not self._grouped_physics_replicas:
@@ -1515,7 +1530,7 @@ class ManoResidualEnv(DirectRLEnv):
             body_pos = self.hand.data.body_pos_w[:, self._geometry_body_indices]
             body_quat = self.hand.data.body_quat_w[:, self._geometry_body_indices]
             offsets = (
-                self._geometry_offsets
+                self._geometry_offsets[self._reference_indices]
                 if self._morphology_batch
                 else self._geometry_offsets[None].expand(self.num_envs, -1, -1)
             )
@@ -1532,19 +1547,16 @@ class ManoResidualEnv(DirectRLEnv):
                 # Check every candidate's overlaid kinematic chain before
                 # training on its geometry-conditioned observations.
                 if self._morphology_batch:
-                    expected_points_values = []
-                    expected_palm_values = []
                     joint_pos = self.hand.data.joint_pos[
                         :, self._geometry_joint_indices
                     ].detach().cpu()
+                    expected_points = torch.empty_like(points, device="cpu")
+                    expected_palm = torch.empty_like(palm_pose, device="cpu")
                     for index, geometry in enumerate(self._geometries):
-                        candidate_points, candidate_palm = geometry.forward(
-                            joint_pos[index : index + 1]
-                        )
-                        expected_points_values.append(candidate_points[0])
-                        expected_palm_values.append(candidate_palm[0])
-                    expected_points = torch.stack(expected_points_values)
-                    expected_palm = torch.stack(expected_palm_values)
+                        ids = (self._reference_indices_cpu == index).nonzero(as_tuple=True)[0]
+                        candidate_points, candidate_palm = geometry.forward(joint_pos[ids])
+                        expected_points[ids] = candidate_points
+                        expected_palm[ids] = candidate_palm
                 else:
                     expected_points, expected_palm = self._geometry.forward(
                         self.hand.data.joint_pos[

@@ -74,6 +74,7 @@ _build
 !/tests/test_render_best_wuji_sac_hand.py
 !/tests/test_wuji_rollout_video.py
 !/tests/test_palm_geometry_observation.py
+!/tests/test_reference_loader.py
 
 # Docker history
 .isaac-lab-docker-history
@@ -81,3 +82,7 @@ _build
 # TacSL sensor
 **/tactile_record/*
 **/gelsight_r15_data/*
+
+!/tests/test_shared_ppo_evaluation.py
+
+!/tests/test_wuji_ppo_logging.py

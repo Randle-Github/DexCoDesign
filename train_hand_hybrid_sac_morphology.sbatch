@@ -16,7 +16,7 @@ echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-${SCRIPT_DIR}}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_sac/cluster_run_${SLURM_JOB_ID:-manual}}"
-POPULATION="${POPULATION:-64}"
+POPULATION="${NUM_MORPHOLOGIES:-${POPULATION:-64}}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4}"
 ROLLOUTS_PER_PROPOSAL="${ROLLOUTS_PER_PROPOSAL:-128}"
 GENERATIONS="${GENERATIONS:-100}"
@@ -29,10 +29,10 @@ ELITE_MUTATION_SIGMA="${ELITE_MUTATION_SIGMA:-0.12}"
 REWARD_SCALE="${REWARD_SCALE:-0.01}"
 OPTIMIZER_BACKEND="${OPTIMIZER_BACKEND:-skrl}"
 RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
-SHARED_PPO_ITERATIONS="${SHARED_PPO_ITERATIONS:-0}"
+SHARED_PPO_ITERATIONS="${PPO_CYCLES_PER_GENERATION:-${SHARED_PPO_ITERATIONS:-0}}"
 PPO_OBSERVATION_MODE="${PPO_OBSERVATION_MODE:-legacy}"
 GEOMETRY_INWARD_DIRECTION_MODE="${GEOMETRY_INWARD_DIRECTION_MODE:-kinematic_normal}"
-MORPHOLOGY_REPLICAS="${MORPHOLOGY_REPLICAS:-1}"
+MORPHOLOGY_REPLICAS="${TRAIN_ENVS_PER_MORPHOLOGY:-${MORPHOLOGY_REPLICAS:-1}}"
 PPO_ROLLOUT_MULTIPLIER="${PPO_ROLLOUT_MULTIPLIER:-1}"
 GPU_COUNT="${GPU_COUNT:-1}"
 GROUPED_ZERO_ACTION_VECTORS="${GROUPED_ZERO_ACTION_VECTORS:-}"
@@ -161,6 +161,9 @@ echo "Weights & Biases run: ${WANDB_ENTITY}/${WANDB_PROJECT}/${WANDB_RUN_NAME}"
 nvidia-smi -L
 
 EXTRA_ARGS=()
+if [[ -n "${EVAL_ENVS_PER_MORPHOLOGY:-}" ]]; then
+  EXTRA_ARGS+=(--eval-envs-per-morphology "${EVAL_ENVS_PER_MORPHOLOGY}")
+fi
 if [[ "${WANDB_ENABLED}" == "1" ]]; then
   EXTRA_ARGS+=(
     --wandb
@@ -212,7 +215,7 @@ PROGRAM_ARGS=(
   --output-root "${OUTPUT_ROOT}" \
   --prototype-bank-root "${BANK_ROOT}" \
   --seed-trajectory "${SEED_TRAJECTORY}" \
-  --population "${POPULATION}" \
+  --num-morphologies "${POPULATION}" \
   --physics-batch-size "${PHYSICS_BATCH_SIZE}" \
   --rollouts-per-proposal "${ROLLOUTS_PER_PROPOSAL}" \
   --generations "${GENERATIONS}" \
@@ -225,10 +228,10 @@ PROGRAM_ARGS=(
   --reward-scale "${REWARD_SCALE}" \
   --optimizer-backend "${OPTIMIZER_BACKEND}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
-  --shared-ppo-iterations "${SHARED_PPO_ITERATIONS}" \
+  --ppo-cycles-per-generation "${SHARED_PPO_ITERATIONS}" \
   --ppo-observation-mode "${PPO_OBSERVATION_MODE}" \
   --geometry-inward-direction-mode "${GEOMETRY_INWARD_DIRECTION_MODE}" \
-  --morphology-replicas "${MORPHOLOGY_REPLICAS}" \
+  --train-envs-per-morphology "${MORPHOLOGY_REPLICAS}" \
   --ppo-rollout-multiplier "${PPO_ROLLOUT_MULTIPLIER}" \
   --target-reward "${TARGET_REWARD}" \
   "${EXTRA_ARGS[@]}" \

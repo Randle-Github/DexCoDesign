@@ -15,7 +15,7 @@ echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/run}"
-POPULATION="${POPULATION:-4096}"
+POPULATION="${NUM_MORPHOLOGIES:-${POPULATION:-4096}}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4096}"
 GENERATIONS="${GENERATIONS:-20}"
 SAC_UPDATES="${SAC_UPDATES:-400}"
@@ -27,8 +27,8 @@ ELITE_MUTATION_SIGMA="${ELITE_MUTATION_SIGMA:-0.12}"
 REWARD_SCALE="${REWARD_SCALE:-0.01}"
 OPTIMIZER_BACKEND="${OPTIMIZER_BACKEND:-skrl}"
 RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
-SHARED_PPO_ITERATIONS="${SHARED_PPO_ITERATIONS:-0}"
-MORPHOLOGY_REPLICAS="${MORPHOLOGY_REPLICAS:-1}"
+SHARED_PPO_ITERATIONS="${PPO_CYCLES_PER_GENERATION:-${SHARED_PPO_ITERATIONS:-0}}"
+MORPHOLOGY_REPLICAS="${TRAIN_ENVS_PER_MORPHOLOGY:-${MORPHOLOGY_REPLICAS:-1}}"
 PPO_ROLLOUT_MULTIPLIER="${PPO_ROLLOUT_MULTIPLIER:-1}"
 GPU_COUNT="${GPU_COUNT:-1}"
 FIXED_REFERENCE="${FIXED_REFERENCE:-}"
@@ -59,6 +59,9 @@ export OMP_NUM_THREADS=1
 export PYTHONUNBUFFERED=1
 export OMNI_KIT_ACCEPT_EULA=YES
 EXTRA_ARGS=()
+if [[ -n "${EVAL_ENVS_PER_MORPHOLOGY:-}" ]]; then
+  EXTRA_ARGS+=(--eval-envs-per-morphology "${EVAL_ENVS_PER_MORPHOLOGY}")
+fi
 if [[ "${CONTINUE_AFTER_SUCCESS}" == "1" ]]; then
   EXTRA_ARGS+=(--continue-after-success)
 fi
@@ -85,7 +88,7 @@ PROGRAM_ARGS=(
   --output-root "${OUTPUT_ROOT}" \
   --prototype-bank-root "${BANK_ROOT}" \
   --seed-trajectory "${SEED_TRAJECTORY}" \
-  --population "${POPULATION}" \
+  --num-morphologies "${POPULATION}" \
   --physics-batch-size "${PHYSICS_BATCH_SIZE}" \
   --generations "${GENERATIONS}" \
   --sac-updates "${SAC_UPDATES}" \
@@ -97,8 +100,8 @@ PROGRAM_ARGS=(
   --reward-scale "${REWARD_SCALE}" \
   --optimizer-backend "${OPTIMIZER_BACKEND}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
-  --shared-ppo-iterations "${SHARED_PPO_ITERATIONS}" \
-  --morphology-replicas "${MORPHOLOGY_REPLICAS}" \
+  --ppo-cycles-per-generation "${SHARED_PPO_ITERATIONS}" \
+  --train-envs-per-morphology "${MORPHOLOGY_REPLICAS}" \
   --ppo-rollout-multiplier "${PPO_ROLLOUT_MULTIPLIER}" \
   --target-reward "${TARGET_REWARD}" \
   "${EXTRA_ARGS[@]}" \
