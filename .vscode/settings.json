@@ -1,0 +1,15 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+
+    "python.defaultInterpreterPath": "/home/yhan389/Downloads/ENTER/envs/DexCoDesign_sim4_5_lab_2_3_2/bin/python",
+
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/source/isaaclab",
+        "${workspaceFolder}/source/isaaclab_assets",
+        "${workspaceFolder}/source/isaaclab_tasks",
+        "${workspaceFolder}/source/isaaclab_rl",
+        "${workspaceFolder}/source/isaaclab_mimic",
+        "${workspaceFolder}/source/dexcodesign"
+    ]
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static validation for all registered robot-hand entry points."""
+"""Static validation for normalized design-pipeline hand assets."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "assets" / "robot_hands"
-REGISTRY = ASSETS / "registry.json"
+REGISTRY = ASSETS / "direct_motor" / "registry.json"
 
 
 class ValidationError(RuntimeError):

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+from pxr import Sdf
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, RigidObject
@@ -83,6 +84,14 @@ class InHandManipulationEnv(DirectRLEnv):
         self.object = RigidObject(self.cfg.object_cfg)
         # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
+
+        # Isaac Sim 4.5 can fail to populate nested visual prototypes when an instanceable hand USD is cloned.
+        # Disable USD instancing before cloning so every environment renders all finger links correctly.
+        # This may increase scene creation time and memory usage for large numbers of environments.
+        with Sdf.ChangeBlock():
+            for prim in self.scene.stage.Traverse():
+                prim.SetInstanceable(False)
+
         # clone and replicate (no need to filter for this environment)
         self.scene.clone_environments(copy_from_source=False)
         # add articulation to scene - we must register to scene to randomize with EventManager

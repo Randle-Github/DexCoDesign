@@ -1,7 +1,7 @@
 seed: 42
 
 models:
-  separate: False
+  separate: True
   policy:
     class: GaussianMixin
     # Keep the sampled/stored PPO action identical to the normalized residual

@@ -159,8 +159,8 @@ thresholds.
 Create the environment once:
 
 ```bash
-python3.12 -m venv .venv-morphology
-.venv-morphology/bin/pip install -r scripts/dexcodesign/morphology_requirements.txt
+python3.10 -m venv .venv-morphology
+.venv-morphology/bin/pip install -e './source/dexcodesign[test]'
 ```
 
 Generate 100 hands:

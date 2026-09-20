@@ -9,8 +9,9 @@ Script to print all the available environments in Isaac Lab.
 The script iterates over all registered environments and stores the details in a table.
 It prints the name of the environment, the entry point and the config file.
 
-All the environments are registered in the `isaaclab_tasks` extension. They start
-with `Isaac` in their name.
+All the environments are registered in the ``isaaclab_tasks`` extension. Most
+upstream tasks start with ``Isaac``, but downstream projects may use their own
+prefixes (for example, ``DexCoDesign``).
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -50,9 +51,12 @@ def main():
 
     # count of environments
     index = 0
-    # acquire all Isaac environments names
+    # Select Isaac Lab environments by their registration metadata rather than
+    # assuming that every downstream task ID contains the word "Isaac".
     for task_spec in gym.registry.values():
-        if "Isaac" in task_spec.id and (args_cli.keyword is None or args_cli.keyword in task_spec.id):
+        if "env_cfg_entry_point" not in task_spec.kwargs:
+            continue
+        if args_cli.keyword is None or args_cli.keyword in task_spec.id:
             # add details to table
             table.add_row([index + 1, task_spec.id, task_spec.entry_point, task_spec.kwargs["env_cfg_entry_point"]])
             # increment count

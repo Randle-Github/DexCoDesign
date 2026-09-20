@@ -1,7 +1,7 @@
 # DexCoDesign morphology pipeline
 
 The production pipeline lives in `dexcodesign.morphology` and has no
-dependency on `temp/`.
+dependency on a simulator or reinforcement-learning framework.
 
 ```text
 source URDF/MJCF/USD companion

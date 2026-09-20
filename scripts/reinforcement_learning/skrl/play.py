@@ -75,6 +75,7 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+import inspect
 import os
 import random
 import time
@@ -82,6 +83,8 @@ import time
 import gymnasium as gym
 import skrl
 import torch
+import yaml
+from omegaconf import OmegaConf
 from packaging import version
 
 # check for minimum supported skrl version
@@ -106,6 +109,7 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
+from isaaclab.utils.io import load_yaml
 
 from isaaclab_rl.skrl import SkrlVecEnvWrapper
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
@@ -123,6 +127,84 @@ if args_cli.agent is None:
 else:
     agent_cfg_entry_point = args_cli.agent
     algorithm = agent_cfg_entry_point.split("_cfg")[0].split("skrl_")[-1].lower()
+
+
+def restore_saved_env_scalars(env_cfg, path: str) -> set[str]:
+    """Safely restore scalar fields from an Isaac Lab environment YAML.
+
+    ``dump_yaml`` includes Python-specific tags for objects such as NumPy
+    dtypes and Gym spaces. Constructing the whole document would require an
+    unsafe YAML loader. Compose its node tree instead and restore only scalar
+    values whose types match the live configuration object.
+    """
+
+    with open(path, encoding="utf-8") as stream:
+        root = yaml.compose(stream)
+
+    restored_fields: set[str] = set()
+
+    def decode_scalar(node: yaml.ScalarNode):
+        if node.tag == "tag:yaml.org,2002:str":
+            return node.value
+        if node.tag in {
+            "tag:yaml.org,2002:null",
+            "tag:yaml.org,2002:bool",
+            "tag:yaml.org,2002:int",
+            "tag:yaml.org,2002:float",
+        }:
+            return yaml.safe_load(node.value)
+        return None
+
+    def restore(target, node, namespace: str = "") -> None:
+        if not isinstance(node, yaml.MappingNode):
+            return
+        for key_node, value_node in node.value:
+            key = key_node.value
+            field_path = f"{namespace}.{key}" if namespace else key
+            if isinstance(target, dict):
+                if key not in target:
+                    continue
+                current = target[key]
+            else:
+                if not hasattr(target, key):
+                    continue
+                current = getattr(target, key)
+
+            if isinstance(value_node, yaml.MappingNode):
+                restore(current, value_node, field_path)
+                continue
+            if not isinstance(value_node, yaml.ScalarNode):
+                continue
+
+            value = decode_scalar(value_node)
+            compatible = (
+                (current is None and value is None)
+                or (isinstance(current, bool) and isinstance(value, bool))
+                or (
+                    isinstance(current, int)
+                    and not isinstance(current, bool)
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                )
+                or (
+                    isinstance(current, float)
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                )
+                or (isinstance(current, str) and isinstance(value, str))
+            )
+            if not compatible:
+                continue
+            if isinstance(current, float):
+                value = float(value)
+            if isinstance(target, dict):
+                target[key] = value
+            else:
+                setattr(target, key, value)
+            restored_fields.add(field_path)
+
+    restore(env_cfg, root)
+    return restored_fields
 
 
 @hydra_task_config(args_cli.task, agent_cfg_entry_point)
@@ -147,11 +229,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     if args_cli.seed == -1:
         args_cli.seed = random.randint(0, 10000)
 
-    # set the agent and environment seed from command line
-    # note: certain randomization occur in the environment initialization so we set the seed here
-    experiment_cfg["seed"] = args_cli.seed if args_cli.seed is not None else experiment_cfg["seed"]
-    env_cfg.seed = experiment_cfg["seed"]
-
     # specify directory for logging experiments (load checkpoint)
     log_root_path = os.path.join("logs", "skrl", experiment_cfg["agent"]["experiment"]["directory"])
     log_root_path = os.path.abspath(log_root_path)
@@ -169,6 +246,91 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
             log_root_path, run_dir=f".*_{algorithm}_{args_cli.ml_framework}", other_dirs=["checkpoints"]
         )
     log_dir = os.path.dirname(os.path.dirname(resume_path))
+
+    # Restore the environment configuration saved alongside the checkpoint.
+    # Reapply Play-only behavior and explicit CLI/Hydra overrides afterwards so
+    # those choices take precedence over the training configuration.
+    saved_env_cfg_path = os.path.join(log_dir, "params", "env.yaml")
+    if os.path.isfile(saved_env_cfg_path):
+        restored_env_fields = restore_saved_env_scalars(env_cfg, saved_env_cfg_path)
+        if (
+            hasattr(env_cfg, "disable_hand_support_collisions")
+            and "disable_hand_support_collisions" not in restored_env_fields
+        ):
+            # Runs created before this option was introduced have no recorded
+            # collision choice. Preserve their historical intended behavior.
+            env_cfg.disable_hand_support_collisions = True
+            print(
+                "[INFO] Saved environment predates the hand-support collision "
+                "setting; defaulting disable_hand_support_collisions=True."
+            )
+        env_cfg.scene.num_envs = play_num_envs
+        for name, value in play_only_settings.items():
+            setattr(env_cfg, name, value)
+
+        env_override_args = [
+            override.removeprefix("env.")
+            for override in hydra_args
+            if override.startswith("env.")
+        ]
+        if env_override_args:
+            explicit_env_cfg = OmegaConf.to_container(
+                OmegaConf.from_dotlist(env_override_args), resolve=True
+            )
+            env_cfg.from_dict(explicit_env_cfg)
+        print(
+            "[INFO] Loaded saved environment configuration "
+            f"({len(restored_env_fields)} scalar fields) from: {saved_env_cfg_path}"
+        )
+    else:
+        print(
+            "[WARNING] No saved environment configuration found at "
+            f"{saved_env_cfg_path}. Using the registered default configuration."
+        )
+
+    # Non-Hydra command-line options have the final precedence.
+    if args_cli.num_envs is not None:
+        env_cfg.scene.num_envs = args_cli.num_envs
+    if args_cli.device is not None:
+        env_cfg.sim.device = args_cli.device
+    if args_cli.disable_fabric:
+        env_cfg.sim.use_fabric = False
+
+    # Restore the agent configuration saved alongside the checkpoint. The
+    # checkpoint contains parameters and preprocessor state, but the Runner
+    # still needs the matching model architecture to be constructed first.
+    saved_agent_cfg_path = os.path.join(log_dir, "params", "agent.yaml")
+    if os.path.isfile(saved_agent_cfg_path):
+        saved_experiment_cfg = load_yaml(saved_agent_cfg_path)
+
+        # Reapply explicit agent-side Hydra overrides on top of the saved
+        # configuration. Hydra's combined config prefixes these with
+        # ``agent.``, while Runner receives the inner agent configuration.
+        agent_override_args = [
+            override.removeprefix("agent.")
+            for override in hydra_args
+            if override.startswith("agent.")
+        ]
+        if agent_override_args:
+            saved_experiment_cfg = OmegaConf.to_container(
+                OmegaConf.merge(
+                    OmegaConf.create(saved_experiment_cfg),
+                    OmegaConf.from_dotlist(agent_override_args),
+                ),
+                resolve=True,
+            )
+        experiment_cfg = saved_experiment_cfg
+        print(f"[INFO] Loading saved agent configuration from: {saved_agent_cfg_path}")
+    else:
+        print(
+            "[WARNING] No saved agent configuration found at "
+            f"{saved_agent_cfg_path}. Using the registered default configuration."
+        )
+
+    # Set the agent and environment seed after restoring the run configuration.
+    # Command-line --seed takes precedence over the saved training seed.
+    experiment_cfg["seed"] = args_cli.seed if args_cli.seed is not None else experiment_cfg["seed"]
+    env_cfg.seed = experiment_cfg["seed"]
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
@@ -206,6 +368,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     experiment_cfg["trainer"]["close_environment_at_exit"] = False
     experiment_cfg["agent"]["experiment"]["write_interval"] = 0  # don't log to TensorBoard
     experiment_cfg["agent"]["experiment"]["checkpoint_interval"] = 0  # don't generate checkpoints
+    experiment_cfg["agent"]["experiment"]["wandb"] = False  # don't create a tracking run during playback
     runner = Runner(env, experiment_cfg)
 
     print(f"[INFO] Loading model checkpoint from: {resume_path}")
