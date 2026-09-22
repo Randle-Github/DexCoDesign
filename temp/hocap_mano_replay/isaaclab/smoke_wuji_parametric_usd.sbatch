@@ -43,7 +43,7 @@ if [[ -n "${PROTOTYPE_BANK_MANIFEST}" || -n "${PROTOTYPE_BANK_COMPILED}" ]]; the
   PREP_FLAGS+=(--prototype-bank-compiled "${PROTOTYPE_BANK_COMPILED}")
 fi
 
-python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_usd_smoke.py \
+python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_training_assets.py \
   "${RETARGET_BATCH}" "${COMPILED_HANDS}" \
   --template-usd "${TEMPLATE_USD}" \
   --template-reference "${TEMPLATE_REFERENCE}" \

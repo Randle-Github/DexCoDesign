@@ -22,6 +22,14 @@ parser = argparse.ArgumentParser(description="Play a checkpoint of an RL agent f
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument(
+    "--keep-playing", action="store_true",
+    help="Continue playback after the requested video clip has finished recording.",
+)
+parser.add_argument(
+    "--show-hand-geometry", action="store_true",
+    help="Display collision surfaces for hand links without visual meshes (MANO/WUJI tasks).",
+)
+parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
@@ -78,6 +86,7 @@ import inspect
 import os
 import random
 import time
+from pathlib import Path
 
 import gymnasium as gym
 import skrl
@@ -343,8 +352,34 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
 
-    # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    # Successful rollout capture must not exit a continuous playback session.
+    os.environ["HAND_EXIT_AFTER_SUCCESS_CAPTURE"] = "0"
+    # Expose collision surfaces before PhysX tensor views are initialized.
+    if args_cli.show_hand_geometry:
+        import isaaclab.sim as sim_utils
+        from isaaclab_tasks.direct.mano_residual.mano_residual_env import ManoResidualEnv
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "temp/hocap_mano_replay/scripts"))
+        from wuji_rollout_video import make_hand_visible
+
+        original_setup_scene = ManoResidualEnv._setup_scene
+
+        def setup_visible_scene(self):
+            original_setup_scene(self)
+            stage = sim_utils.get_current_stage()
+            hand_paths = sim_utils.find_matching_prim_paths(self.cfg.hand_cfg.prim_path, stage=stage)
+            if len(hand_paths) != env_cfg.scene.num_envs:
+                raise ValueError(f"Expected {env_cfg.scene.num_envs} hand prims, found {len(hand_paths)}")
+            for hand_path in hand_paths:
+                make_hand_visible(stage, hand_path)
+
+        ManoResidualEnv._setup_scene = setup_visible_scene
+        try:
+            env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        finally:
+            ManoResidualEnv._setup_scene = original_setup_scene
+    else:
+        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:
@@ -364,7 +399,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
             "video_length": args_cli.video_length,
             "disable_logger": True,
         }
-        print("[INFO] Recording videos during training.")
+        print("[INFO] Recording playback video.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
@@ -414,7 +449,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
         if args_cli.video:
             timestep += 1
             # exit the play loop after recording one video
-            if timestep == args_cli.video_length:
+            if timestep == args_cli.video_length and not args_cli.keep_playing:
                 break
 
         # time delay for real-time evaluation

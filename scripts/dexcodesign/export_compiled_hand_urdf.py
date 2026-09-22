@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
+from dexcodesign.morphology.wuji_palm_collision import split_wuji_palm
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_GRAPHS = (
@@ -256,6 +258,21 @@ def main() -> int:
         collision_source = compiled_root / compiled_mesh.get(
             "collision_file", compiled_mesh["file"]
         )
+        if source_hand == "wuji_hand_2" and part_id == 0:
+            # Two convex collision elements on ONE rigid link. Never cook a
+            # single hull across the mounting base and the editable shell.
+            pieces = split_wuji_palm(_mesh(trimesh.load(visual_source, process=False)))
+            for label, surface in pieces.items():
+                exported = trimesh.Trimesh(
+                    vertices=np.asarray(surface.vertices) @ polar_linear / scale,
+                    faces=np.asarray(surface.faces)[:, ::-1], process=False,
+                )
+                destination = mesh_root / f"part_00_{label}.obj"
+                exported.export(destination)
+                for kind in (("collision",) if args.physics_only else ("visual", "collision")):
+                    _add_geometry(link, kind, f"meshes/{destination.name}")
+                    link.findall(kind)[-1].set("name", "fixed_base" if label == "base" else "palm_shell")
+            continue
         exported_files: dict[str, str] = {}
         mesh_sources = (
             # Preserve the established generated-hand collision surface. The

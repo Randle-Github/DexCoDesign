@@ -21,8 +21,12 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output-root", type=Path, required=True)
-parser.add_argument("--prototype-bank-root", type=Path, required=True)
-parser.add_argument("--seed-trajectory", type=Path, required=True)
+parser.add_argument("--prototype-bank-root", type=Path, help="Required except with --original-source-hand")
+parser.add_argument(
+    "--original-source-hand", action="store_true",
+    help="One fixed original WUJI USD, fresh Torch retargeting, 385D PPO, no asset generation or SAC updates",
+)
+parser.add_argument("--seed-trajectory", type=Path, help="Legacy morphology-only retargeting seed; ignored by palm-geometry shared PPO")
 parser.add_argument(
     "--num-morphologies", "--population", dest="population", type=int, default=4096,
     help="number of distinct hand designs proposed per morphology generation",
@@ -68,6 +72,10 @@ parser.add_argument(
     action="store_true",
     help="log SKRL SAC/PPO metrics to Weights & Biases",
 )
+parser.add_argument(
+    "--ppo-episode-log-window-steps", type=int, default=1600,
+    help="Training-step window for episode-weighted W&B return/length means; persists across generations",
+)
 parser.add_argument("--wandb-project", default="DexCoDesign")
 parser.add_argument("--wandb-group", default="wuji-hybrid-sac")
 parser.add_argument("--wandb-run-name", default="conditional_morphology_sac")
@@ -111,7 +119,12 @@ parser.add_argument(
     default="skrl",
     help="mature SKRL SAC or the preserved custom experimental baseline",
 )
-parser.add_argument("--retarget-iterations", type=int, default=4)
+parser.add_argument("--retarget-iterations", type=int, default=14)
+parser.add_argument(
+    "--mano-rollout", type=Path,
+    default=Path(__file__).resolve().parents[3] / "artifacts/isaaclab_mano_residual/refined_mano/successful_rollout.npz",
+    help="Captured MANO hand states and actual object motion for direct palm-geometry co-training targets",
+)
 parser.add_argument(
     "--ppo-cycles-per-generation", "--shared-ppo-iterations",
     dest="shared_ppo_iterations",
@@ -214,35 +227,57 @@ AppLauncher.add_app_launcher_args(parser)
 original_cli_argv = list(sys.argv[1:])
 args_cli, hydra_args = parser.parse_known_args()
 args_cli.output_root = args_cli.output_root.resolve()
-args_cli.prototype_bank_root = args_cli.prototype_bank_root.resolve()
-args_cli.seed_trajectory = args_cli.seed_trajectory.resolve()
-bank_signature_path = args_cli.prototype_bank_root / "vectors.schema.json"
-if not bank_signature_path.is_file():
-    parser.error(
-        "prototype bank has no grammar signature; rebuild it with "
-        "build_wuji_palm_prototype_bank.sbatch instead of reusing the legacy bank: "
-        f"{bank_signature_path}"
-    )
-bank_signature = json.loads(bank_signature_path.read_text(encoding="utf-8"))
-expected_bank_signature = {
-    "grammar_id": "general-simulation-hand-v3",
-    "source_hand": "wuji_hand_2",
-    "vector_dimension": 23,
-    "palm_layout_mode": "source_star_fusion",
-    "palm_prototype_count": 32,
-    "palm_expansion_range": [0.0, 0.70],
-    "zero_prototype_is_exact_source": True,
-}
-signature_mismatch = {
-    key: {"expected": expected, "actual": bank_signature.get(key)}
-    for key, expected in expected_bank_signature.items()
-    if bank_signature.get(key) != expected
-}
-if signature_mismatch:
-    parser.error(
-        "prototype bank belongs to a different morphology grammar: "
-        + json.dumps(signature_mismatch, sort_keys=True)
-    )
+if args_cli.original_source_hand:
+    if args_cli.population != 1 or args_cli.shared_ppo_iterations < 1:
+        parser.error("--original-source-hand requires --num-morphologies 1 and positive --ppo-cycles-per-generation")
+    if args_cli.ppo_observation_mode != "palm_geometry":
+        parser.error("--original-source-hand requires --ppo-observation-mode palm_geometry")
+    if args_cli.fixed_ppo_vectors is not None or args_cli.grouped_zero_action_vectors is not None:
+        parser.error("--original-source-hand cannot use fixed-vector or grouped-zero-action modes")
+    if args_cli.fixed_palm_prototype not in (None, 0):
+        parser.error("--original-source-hand cannot select a different palm prototype")
+    args_cli.force_source_morphology = True
+    args_cli.fixed_palm_prototype = 0
+elif args_cli.prototype_bank_root is None:
+    parser.error("--prototype-bank-root is required without --original-source-hand")
+if args_cli.prototype_bank_root is not None:
+    args_cli.prototype_bank_root = args_cli.prototype_bank_root.resolve()
+if args_cli.seed_trajectory is not None:
+    args_cli.seed_trajectory = args_cli.seed_trajectory.resolve()
+if not args_cli.original_source_hand:
+    bank_signature_path = args_cli.prototype_bank_root / "vectors.schema.json"
+    if not bank_signature_path.is_file():
+        parser.error(
+            "prototype bank has no grammar signature; rebuild it with "
+            "build_wuji_palm_prototype_bank.sbatch instead of reusing the legacy bank: "
+            f"{bank_signature_path}"
+        )
+    bank_signature = json.loads(bank_signature_path.read_text(encoding="utf-8"))
+    if bank_signature.get("palm_collision_partition") != "source_base_and_palm_v1":
+        print(
+            "[WARNING] This cached prototype bank uses the legacy combined palm/base "
+            "collision hull. Use prepare_wuji_split_palm_bank.py to create a corrected "
+            "copy and pass its directory with --prototype-bank-root.", flush=True,
+        )
+    expected_bank_signature = {
+        "grammar_id": "general-simulation-hand-v3",
+        "source_hand": "wuji_hand_2",
+        "vector_dimension": 23,
+        "palm_layout_mode": "source_star_fusion",
+        "palm_prototype_count": 32,
+        "palm_expansion_range": [0.0, 0.70],
+        "zero_prototype_is_exact_source": True,
+    }
+    signature_mismatch = {
+        key: {"expected": expected, "actual": bank_signature.get(key)}
+        for key, expected in expected_bank_signature.items()
+        if bank_signature.get(key) != expected
+    }
+    if signature_mismatch:
+        parser.error(
+            "prototype bank belongs to a different morphology grammar: "
+            + json.dumps(signature_mismatch, sort_keys=True)
+        )
 if args_cli.physics_batch_size < 1:
     parser.error("--physics-batch-size must be positive")
 if args_cli.rollouts_per_proposal < 1:
@@ -263,6 +298,8 @@ if args_cli.eval_envs_per_morphology is not None:
         parser.error("--eval-envs-per-morphology must be between 1 and --train-envs-per-morphology")
 else:
     args_cli.eval_envs_per_morphology = args_cli.morphology_replicas
+if args_cli.ppo_episode_log_window_steps < 1:
+    parser.error("--ppo-episode-log-window-steps must be positive")
 if args_cli.ppo_rollout_multiplier < 1:
     parser.error("--ppo-rollout-multiplier must be positive")
 if args_cli.ppo_observation_mode == "palm_geometry":
@@ -306,10 +343,22 @@ if args_cli.physics_worker_manifest is not None:
     args_cli.physics_worker_manifest = args_cli.physics_worker_manifest.resolve()
 if args_cli.physics_worker_output is not None:
     args_cli.physics_worker_output = args_cli.physics_worker_output.resolve()
-bank_manifest_path = (
-    args_cli.prototype_bank_root / "prepared/physx_batch_manifest.json"
-)
-os.environ["DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"] = str(bank_manifest_path)
+if args_cli.original_source_hand:
+    bank_manifest_path = None
+    original_root = Path(__file__).resolve().parents[3] / "artifacts/isaaclab_all_hands_residual"
+    for original_path in (
+        original_root / "assets/wuji_hand_2/hand.usd",
+        original_root / "prepared/wuji_hand_2/hand_rl.urdf",
+        original_root / "prepared/wuji_hand_2/reference.npz",
+    ):
+        if not original_path.is_file():
+            parser.error(f"Missing original WUJI asset: {original_path}")
+    os.environ.pop("DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST", None)
+    os.environ["DEXCODESIGN_HAND_ID"] = "wuji_hand_2"
+    os.environ["DEXCODESIGN_REFERENCE_PATH"] = str(original_root / "prepared/wuji_hand_2/reference.npz")
+else:
+    bank_manifest_path = args_cli.prototype_bank_root / "prepared/physx_batch_manifest.json"
+    os.environ["DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"] = str(bank_manifest_path)
 sys.argv = [sys.argv[0]] + hydra_args
 # Keep the isolated coordinator and non-recording generations non-rendering.
 # A recording worker enables offscreen cameras, while remaining --headless.
@@ -340,7 +389,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
 REPO_ROOT = SCRIPT_ROOT.parents[2]
 sys.path.insert(0, str(SCRIPT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from wuji_ppo_logging import enable_ppo_logging  # noqa: E402
+from wuji_ppo_logging import CompletedEpisodeWindow, enable_ppo_logging, track_completed_episodes  # noqa: E402
 from gpu_wuji_retarget import (  # noqa: E402
     WujiBatchKinematics,
     joint_names_from_seed,
@@ -579,6 +628,19 @@ def log_generation_to_wandb(
             metrics["Morphology/generation"] = generation
             metrics["Evaluation/episode_return_mean"] = float(rewards.mean())
             metrics["Evaluation/episode_return_max"] = float(rewards.max())
+            episode_count = sum(row["replicas"] for row in rows)
+            metrics["Evaluation/episode_steps_mean"] = (
+                sum(row["environment_steps"] for row in rows) / episode_count
+            )
+            metrics["Evaluation/episode_steps_min"] = min(row["episode_steps_min"] for row in rows)
+            metrics["Evaluation/episode_steps_max"] = max(row["episode_steps_max"] for row in rows)
+            metrics["Evaluation/success_rate"] = sum(row["success_count"] for row in rows) / episode_count
+            metrics["Evaluation/start_phase"] = 0
+            for row in rows:
+                prefix = f"Evaluation/hand_{row['candidate_index']}"
+                metrics[f"{prefix}/episode_steps_mean"] = row["environment_steps"] / row["replicas"]
+                metrics[f"{prefix}/episode_return_mean"] = row["total_reward"]
+                metrics[f"{prefix}/success_rate"] = row["success_count"] / row["replicas"]
             wandb.log(metrics)
         else:
             wandb.log(metrics, step=generation)
@@ -711,12 +773,34 @@ def retarget(
     }
 
 
+def retarget_mano(vectors_path, output, kinematics, task_targets, iterations):
+    """Retarget each candidate from neutral to the captured MANO sequence."""
+    from wuji_sequential_retarget import solve_mano_sequence
+
+    start = time.perf_counter()
+    vectors = np.load(vectors_path).astype(np.float32)
+    solved, benchmark = solve_mano_sequence(
+        kinematics, resolve_design_vectors(vectors).astype(np.float32), task_targets, iterations
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output, vectors=vectors, joint_names=np.asarray(kinematics.joint_names),
+        frame_ids=task_targets["frame_ids"], **solved,
+        source_mano_rollout=task_targets["source_mano_rollout"],
+        source_mano_rollout_sha256=task_targets["source_mano_rollout_sha256"],
+        metadata_json=np.asarray(json.dumps({"benchmark": benchmark})),
+    )
+    return {"seconds": time.perf_counter()-start, "candidates": len(vectors),
+            "solver_seconds": benchmark["seconds"]}
+
+
 def prepare_assets(
     vectors_path: Path,
     retarget_path: Path | None,
     generation_root: Path,
     bank_manifest: dict,
     fixed_reference: Path | None = None,
+    task_targets_path: Path | None = None,
 ) -> tuple[dict, dict[str, float]]:
     timings: dict[str, float] = {}
     vectors = np.load(vectors_path)
@@ -750,7 +834,7 @@ def prepare_assets(
     start = time.perf_counter()
     prepare_command = [
         sys.executable,
-        str(SCRIPT_ROOT / "prepare_wuji_parametric_usd_smoke.py"),
+        str(SCRIPT_ROOT / "prepare_wuji_parametric_training_assets.py"),
         str(vectors_path if fixed_reference is not None else retarget_path),
         str(ir_root / "hand_ir.json"),
             "--template-usd",
@@ -766,6 +850,8 @@ def prepare_assets(
             "--limit",
             str(len(vectors)),
     ]
+    if task_targets_path is not None:
+        prepare_command.extend(("--task-targets", str(task_targets_path)))
     if fixed_reference is not None:
         prepare_command.extend(("--fixed-reference", str(fixed_reference)))
     elif retarget_path is None:
@@ -805,6 +891,21 @@ def prepare_assets(
 
 
 def configure_batch(cfg, manifest: dict) -> None:
+    if manifest.get("original_source_hand", False):
+        # Keep the standalone WUJI topology and ordinary physics cloning.
+        env_module.MORPHOLOGY_BATCH_MANIFEST = None
+        env_module.REFERENCE_PATH = Path(manifest["reference_paths"][0])
+        cfg.hand_cfg.spawn.usd_path = manifest["hand_usd_paths"][0]
+        cfg.geometry_urdf_path = manifest["hand_urdf_paths"][0]
+        cfg.scene.num_envs = len(manifest["vectors"])
+        cfg.scene.replicate_physics = True
+        cfg.scene.clone_in_fabric = False
+        cfg.randomize_start_phase = False
+        cfg.episode_length_s = 15.0
+        cfg.observation_mode = "palm_geometry"
+        cfg.observation_space = env_module.PALM_GEOMETRY_OBSERVATION_DIM
+        cfg.morphology_context_dim = 0
+        return
     usd_paths = [Path(value).resolve() for value in manifest["hand_usd_paths"]]
     reference_paths = [
         Path(value).resolve() for value in manifest["reference_paths"]
@@ -1254,7 +1355,7 @@ def replicate_manifest(
     ]
     result["morphology_replicas"] = replicas
     result["unique_morphology_count"] = morphology_count
-    result["grouped_physics_replication"] = replicas > 1
+    result["grouped_physics_replication"] = replicas > 1 and not manifest.get("original_source_hand", False)
     result["fixed_reference_shared_across_morphologies"] = bool(
         manifest.get("fixed_reference")
     )
@@ -1380,7 +1481,14 @@ def evaluate_shared_policy(
         runner.agent.set_running_mode("eval")
     else:
         runner.agent.enable_training_mode(False, apply_to_models=True)
-    observations, _ = env.reset()
+    # SKRL's IsaacLab wrapper caches reset() after the first call. Re-arm it
+    # so evaluation starts a new episode and refreshes wrapped observations.
+    if hasattr(env, "_reset_once"):
+        env._reset_once = True
+    with torch.inference_mode():
+        observations, _ = env.reset()
+    if hasattr(raw_env, "phase_buf") and torch.any(raw_env.phase_buf != 0):
+        raise RuntimeError("Shared PPO evaluation must start at reference phase zero")
     agent_act_requires_states = "states" in inspect.signature(
         runner.agent.act
     ).parameters
@@ -1482,6 +1590,11 @@ def evaluate_shared_policy(
                 "phase": int(group_phase.max().item()),
                 "mean_phase": float(group_phase.float().mean().item()),
                 "environment_steps": int(environment_steps[ids].sum().item()),
+                "episode_steps_min": int(environment_steps[ids].min().item()),
+                "episode_steps_max": int(environment_steps[ids].max().item()),
+                "episode_steps_mean": float(environment_steps[ids].float().mean().item()),
+                "evaluation_start_phase": 0,
+                "evaluation_action_mode": "deterministic",
                 "success": bool(group_success.any().item()),
                 "success_count": int(group_success.sum().item()),
                 "replicas": int(len(ids)),
@@ -1501,6 +1614,7 @@ def train_and_evaluate_shared_ppo(
     checkpoint_to_load: Path | None,
     rank: int,
     local_rank: int,
+    episode_window: CompletedEpisodeWindow | None = None,
 ) -> tuple[list[dict], dict[str, float | int | str]]:
     """Train the official shared SKRL PPO, then evaluate it deterministically."""
 
@@ -1534,6 +1648,8 @@ def train_and_evaluate_shared_ppo(
     raw_env = raw_gym_env.unwrapped
     env = SkrlVecEnvWrapper(raw_gym_env, ml_framework="torch")
     runner = Runner(env, ppo_cfg)
+    if episode_window is not None:
+        track_completed_episodes(runner.agent, episode_window)
     if args_cli.wandb and rank == 0:
         import wandb
         enable_ppo_logging(
@@ -1546,6 +1662,8 @@ def train_and_evaluate_shared_ppo(
     start = time.perf_counter()
     runner.run()
     training_seconds = time.perf_counter() - start
+    if episode_window is not None:
+        episode_window.finish_generation()
 
     checkpoint = output / "ppo_checkpoints" / f"generation_{generation:03d}.pt"
     if rank == 0:
@@ -1561,6 +1679,7 @@ def train_and_evaluate_shared_ppo(
         "local_envs": len(manifest["vectors"]),
         "ppo_iterations": args_cli.shared_ppo_iterations,
         "base_rollout_steps": base_rollouts,
+        "ppo_episode_log_window_steps": args_cli.ppo_episode_log_window_steps,
         "ppo_rollout_multiplier": args_cli.ppo_rollout_multiplier,
         "rollout_steps": rollouts,
         "initialization_seconds": initialization_seconds,
@@ -1589,6 +1708,8 @@ def shared_ppo_outer_search(
             f"{world_size}"
         )
     geometry_observations = args_cli.ppo_observation_mode == "palm_geometry"
+    task_targets = None
+    task_targets_path = None
     if geometry_observations:
         env_cfg.observation_mode = "palm_geometry"
         env_cfg.observation_space = env_module.PALM_GEOMETRY_OBSERVATION_DIM
@@ -1596,28 +1717,25 @@ def shared_ppo_outer_search(
         env_cfg.geometry_inward_direction_mode = (
             args_cli.geometry_inward_direction_mode
         )
-        with np.load(args_cli.seed_trajectory) as seed:
-            retarget_joint_names = joint_names_from_seed(seed)
-            retarget_seed_arrays = {
-                "qpos": seed["qpos"].astype(np.float32),
-                "wrist_position": seed["wrist_position"].astype(np.float32),
-                "wrist_quaternion_xyzw": seed[
-                    "wrist_quaternion_xyzw"
-                ].astype(np.float32),
-                "frame_ids": seed["frame_ids"].astype(np.int64),
-                "qpos_ids": seed["qpos_ids"].astype(np.int64),
-            }
+        from gpu_wuji_retarget import SOURCE_URDF, parse_urdf
+        retarget_joint_names = list(parse_urdf(SOURCE_URDF)[1])
+        if args_cli.seed_trajectory is not None:
+            print("[MANO_RETARGET] --seed-trajectory is ignored; using neutral candidate initialization", flush=True)
+        from wuji_mano_task_targets import build_mano_task_targets
+        task_targets_path = output / "mano_task_targets.npz"
+        if rank == 0:
+            output.mkdir(parents=True, exist_ok=True)
+            task_targets = build_mano_task_targets(args_cli.mano_rollout)
+            np.savez_compressed(task_targets_path, **task_targets)
+        distributed_barrier()
+        with np.load(task_targets_path, allow_pickle=False) as data:
+            task_targets = {key: data[key] for key in data.files}
         retarget_kinematics = WujiBatchKinematics(
             retarget_joint_names, torch.device(f"cuda:{local_rank}")
         )
-        retarget_seed_q = torch.from_numpy(
-            retarget_seed_arrays["qpos"]
-        ).to(retarget_kinematics.device)
         fixed_reference = None
     else:
         retarget_kinematics = None
-        retarget_seed_q = None
-        retarget_seed_arrays = None
         fixed_reference = args_cli.fixed_reference or Path(
             bank_manifest["reference_paths"][0]
         ).resolve()
@@ -1653,9 +1771,18 @@ def shared_ppo_outer_search(
                     "reference": (
                         None if fixed_reference is None else str(fixed_reference)
                     ),
+                    "mano_task_targets": None if task_targets_path is None else str(task_targets_path),
+                    "mano_rollout": None if task_targets is None else str(task_targets["source_mano_rollout"]),
+                    "mano_rollout_sha256": None if task_targets is None else str(task_targets["source_mano_rollout_sha256"]),
+                    "retarget_target_source": "captured_mano_fk" if geometry_observations else "fixed_reference",
+                    "retarget_initialization": "neutral_then_previous_candidate_frame" if geometry_observations else None,
+                    "retarget_wrist_orientation": "mano_with_candidate_neutral_alignment" if geometry_observations else None,
+                    "seed_trajectory_used": False,
                     "retarget_per_generation": geometry_observations,
                     "retarget_per_proposal": geometry_observations,
                     "candidate_collision_surface_landmarks": geometry_observations,
+                    "original_source_hand": args_cli.original_source_hand,
+                    "asset_generation_skipped": args_cli.original_source_hand,
                     "geometry_inward_direction_mode": (
                         args_cli.geometry_inward_direction_mode
                         if geometry_observations else None
@@ -1714,6 +1841,18 @@ def shared_ppo_outer_search(
             fixed_palm_prototype=args_cli.fixed_palm_prototype,
         )
 
+    episode_window = None
+    if args_cli.wandb:
+        import wandb
+        if rank == 0:
+            wandb.define_metric("PPO/train_steps")
+            wandb.define_metric("PPO/Completed episodes / *", step_metric="PPO/train_steps")
+        episode_window = CompletedEpisodeWindow(
+            window_steps=args_cli.ppo_episode_log_window_steps,
+            global_envs=args_cli.population * args_cli.morphology_replicas,
+            log=wandb.run.log if rank == 0 else None,
+            distributed=skrl.config.torch.is_distributed,
+        )
     history: list[dict] = []
     cumulative_environment_steps = 0
     for generation in range(args_cli.generations):
@@ -1781,15 +1920,10 @@ def shared_ppo_outer_search(
         local_retarget_path = rank_root / "gpu_retarget_all.npz"
         if geometry_observations:
             assert retarget_kinematics is not None
-            assert retarget_seed_q is not None
-            assert retarget_seed_arrays is not None
-            retarget_timings = retarget(
-                local_vectors_path,
-                local_retarget_path,
-                retarget_kinematics,
-                retarget_seed_q,
-                retarget_seed_arrays,
-                args_cli.retarget_iterations,
+            assert task_targets is not None
+            retarget_timings = retarget_mano(
+                local_vectors_path, local_retarget_path, retarget_kinematics,
+                task_targets, args_cli.retarget_iterations,
             )
         else:
             retarget_timings = {
@@ -1799,13 +1933,20 @@ def shared_ppo_outer_search(
                 "skipped": True,
                 "fixed_reference": str(fixed_reference),
             }
-        local_manifest, prepare_timings = prepare_assets(
-            local_vectors_path,
-            local_retarget_path if geometry_observations else None,
-            rank_root,
-            bank_manifest,
-            fixed_reference=fixed_reference,
-        )
+        if args_cli.original_source_hand:
+            from wuji_original_source_assets import prepare_original_source_hand
+            local_manifest, prepare_timings = prepare_original_source_hand(
+                local_retarget_path, task_targets_path, rank_root / "prepared", REPO_ROOT,
+            )
+        else:
+            local_manifest, prepare_timings = prepare_assets(
+                local_vectors_path,
+                local_retarget_path if geometry_observations else None,
+                rank_root,
+                bank_manifest,
+                fixed_reference=fixed_reference,
+                task_targets_path=task_targets_path,
+            )
         prepare_timings["retarget_seconds"] = float(retarget_timings["seconds"])
         prepare_timings["retarget_solver_seconds"] = float(
             retarget_timings["solver_seconds"]
@@ -1847,6 +1988,7 @@ def shared_ppo_outer_search(
             checkpoint_to_load,
             rank,
             local_rank,
+            episode_window=episode_window,
         )
         if skrl.config.torch.is_distributed:
             gathered: list[list[dict] | None] = [None] * world_size
@@ -1927,6 +2069,7 @@ def shared_ppo_outer_search(
                     else "fixed_reference_shared_ppo_outer_skrl_sac"
                 ),
                 "force_source_morphology": args_cli.force_source_morphology,
+                "original_source_hand": args_cli.original_source_hand,
                 "morphology_context": args_cli.morphology_context,
                 "morphology_context_dim": len(VECTOR_NAMES) if args_cli.morphology_context else 0,
                 "fixed_ppo_vectors": (
@@ -2005,6 +2148,8 @@ def shared_ppo_outer_search(
             break
         distributed_barrier()
 
+    if episode_window is not None:
+        episode_window.flush()
     if rank == 0:
         print("WUJI_SHARED_PPO_SAC_COMPLETE", flush=True)
 
@@ -2022,7 +2167,7 @@ def main(env_cfg, agent_cfg) -> None:
         return
     output = args_cli.output_root
     output.mkdir(parents=True, exist_ok=True)
-    bank_manifest = json.loads(bank_manifest_path.read_text())
+    bank_manifest = {} if bank_manifest_path is None else json.loads(bank_manifest_path.read_text())
     if args_cli.grouped_zero_action_vectors is not None:
         grouped_zero_action_debug(env_cfg, output, bank_manifest)
         return
@@ -2039,6 +2184,8 @@ def main(env_cfg, agent_cfg) -> None:
     seed_q: torch.Tensor | None = None
     seed_arrays: dict[str, np.ndarray] | None = None
     if fixed_reference is None:
+        if args_cli.seed_trajectory is None:
+            raise ValueError("Legacy morphology-only mode requires --seed-trajectory or --fixed-reference")
         with np.load(args_cli.seed_trajectory) as seed:
             joint_names = joint_names_from_seed(seed)
             seed_arrays = {

@@ -28,14 +28,38 @@ def encoder_environment(executable: str) -> dict[str, str]:
 
 
 def make_hand_visible(stage, hand_path: str) -> int:
-    """Display collision-only templates without adding/changing physical shapes."""
+    """Display collision surfaces on links without their own visual meshes."""
     from pxr import Usd, UsdGeom, UsdShade, Vt
 
     hand = stage.GetPrimAtPath(hand_path)
     if not hand:
         raise ValueError(f"Cannot locate recorded hand at {hand_path}")
     proxies = list(Usd.PrimRange(hand, Usd.TraverseInstanceProxies()))
-    if any(p.IsA(UsdGeom.Mesh) and "/visuals" in str(p.GetPath()) for p in proxies):
+
+    def geometry_owner(prim, scope_name):
+        current = prim.GetParent()
+        while current and current.GetPath().HasPrefix(hand.GetPath()):
+            if current.GetName() == scope_name:
+                return current.GetParent().GetPath()
+            current = current.GetParent()
+        return None
+
+    # Some generated hands have palm/base visuals but collision-only fingers.
+    # A visual on one link must not suppress the fallback for the entire hand.
+    visual_links = {
+        owner
+        for prim in proxies
+        if prim.IsA(UsdGeom.Mesh)
+        and (owner := geometry_owner(prim, "visuals")) is not None
+    }
+
+    def needs_collision_display(prim):
+        if not prim.IsA(UsdGeom.Mesh):
+            return False
+        owner = geometry_owner(prim, "collisions")
+        return owner is not None and owner not in visual_links
+
+    if visual_links and not any(needs_collision_display(p) for p in proxies):
         return 0
     # Instance-proxy attributes cannot be overridden. Deinstance only this
     # recorded hand's geometry in the current scene layer, never its asset file.
@@ -47,7 +71,7 @@ def make_hand_visible(stage, hand_path: str) -> int:
         pending.extend(prim.GetChildren())
     count = 0
     for prim in Usd.PrimRange(hand):
-        if not prim.IsA(UsdGeom.Mesh) or "/collisions" not in str(prim.GetPath()):
+        if not needs_collision_display(prim):
             continue
         current = prim
         while current and current.GetPath().HasPrefix(hand.GetPath()):

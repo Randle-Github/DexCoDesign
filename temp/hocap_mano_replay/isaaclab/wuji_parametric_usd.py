@@ -8,6 +8,7 @@ import numpy as np
 from pxr import Gf, Usd, UsdGeom
 
 from dexcodesign.morphology.parametric_mesh import deform_link_meshes
+from dexcodesign.morphology.wuji_palm_collision import preserve_fixed_base
 
 
 def attach_parametric_collisions(
@@ -63,6 +64,7 @@ def attach_parametric_collisions(
                 xform = UsdGeom.Xformable(geometry)
                 xform.ClearXformOpOrder()
                 xform.AddTransformOp().Set(Gf.Matrix4d(*matrix.reshape(-1).tolist()))
+                preserve_fixed_base(candidate_stage, geometry_path, matrix)
         if mesh_deformations is not None and mesh_deformations[index] is not None:
             deform_link_meshes(candidate_stage, candidate_link.GetPath(), mesh_deformations[index], matrix)
     if len(joint_names) != len(joint_local_positions):

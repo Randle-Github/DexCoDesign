@@ -20,6 +20,14 @@ parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--algorithm", default="PPO")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--num_envs", type=int, default=1)
+parser.add_argument(
+    "--stochastic", action="store_true",
+    help="Sample policy actions instead of using their mean; no policy updates",
+)
+parser.add_argument(
+    "--show-hand-geometry", action="store_true",
+    help="Display collision surfaces when hand assets have no visual meshes",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 if args_cli.output == Path(".") or (
@@ -202,7 +210,37 @@ def main(env_cfg, experiment_cfg: dict) -> None:
     # its first successful rollout. Evaluation must instead receive the final
     # transition so it can write a JSON summary matching the captured NPZ.
     os.environ["HAND_EXIT_AFTER_SUCCESS_CAPTURE"] = "0"
-    raw_env = gym.make(args_cli.task, cfg=env_cfg)
+    if args_cli.show_hand_geometry:
+        import isaaclab.sim as sim_utils
+        from isaaclab_tasks.direct.mano_residual.mano_residual_env import ManoResidualEnv
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from wuji_rollout_video import make_hand_visible
+
+        original_setup_scene = ManoResidualEnv._setup_scene
+
+        def setup_visible_scene(self):
+            original_setup_scene(self)
+            # Deinstancing collision geometry must precede sim.reset(), which
+            # creates the PhysX tensor views. Never change topology afterward.
+            stage = sim_utils.get_current_stage()
+            hand_paths = sim_utils.find_matching_prim_paths(
+                self.cfg.hand_cfg.prim_path, stage=stage
+            )
+            if len(hand_paths) != args_cli.num_envs:
+                raise ValueError(
+                    f"Expected {args_cli.num_envs} hand prims, found {len(hand_paths)}"
+                )
+            for hand_path in hand_paths:
+                make_hand_visible(stage, hand_path)
+
+        ManoResidualEnv._setup_scene = setup_visible_scene
+        try:
+            raw_env = gym.make(args_cli.task, cfg=env_cfg)
+        finally:
+            ManoResidualEnv._setup_scene = original_setup_scene
+    else:
+        raw_env = gym.make(args_cli.task, cfg=env_cfg)
     env = SkrlVecEnvWrapper(raw_env, ml_framework="torch")
     runner = Runner(env, experiment_cfg)
     runner.agent.load(str(checkpoint_path))
@@ -241,7 +279,10 @@ def main(env_cfg, experiment_cfg: dict) -> None:
                 outputs = runner.agent.act(obs, None, timestep=0, timesteps=0)
             else:
                 outputs = runner.agent.act(obs, timestep=0, timesteps=0)
-            actions = outputs[-1].get("mean_actions", outputs[0])
+            actions = (
+                outputs[0] if args_cli.stochastic
+                else outputs[-1].get("mean_actions", outputs[0])
+            )
             executed_actions = torch.clamp(actions, -1.0, 1.0)
             active = ~finished
             active_column = active[:, None]
@@ -336,6 +377,8 @@ def main(env_cfg, experiment_cfg: dict) -> None:
         for env_id in range(num_envs)
     ]
     result = {
+        "action_mode": "stochastic" if args_cli.stochastic else "deterministic",
+        "seed": args_cli.seed,
         "success": bool(successful.any().item()),
         "success_criterion": "at_least_one_environment",
         "num_envs": num_envs,

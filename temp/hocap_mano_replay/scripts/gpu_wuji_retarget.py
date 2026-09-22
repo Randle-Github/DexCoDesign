@@ -308,25 +308,43 @@ class WujiBatchKinematics:
         seed_q: torch.Tensor,
         iterations: int,
         candidate_chunk: int,
+        target_points: torch.Tensor | None = None,
+        target_directions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
         candidate_count = vectors.shape[0]
         frame_count = seed_q.shape[0]
-        identity_vector = torch.tensor(
-            resolve_design_vectors(SOURCE_VECTOR[None, :])[0],
-            device=self.device,
-            dtype=self.dtype,
-        ).reshape(1, 1, -1)
-        source_q = seed_q.unsqueeze(0)
-        target_points = []
-        target_directions = []
-        for finger_index in range(5):
-            point, direction, _, _, _ = self.forward_finger(
-                finger_index, identity_vector, source_q
-            )
-            target_points.append(point[0])
-            target_directions.append(direction[0])
-        target_points_tensor = torch.stack(target_points, dim=1)
-        target_directions_tensor = torch.stack(target_directions, dim=1)
+        if (target_points is None) != (target_directions is None):
+            raise ValueError("Provide both target positions and directions")
+        if target_points is not None:
+            expected = (frame_count, 5, 3)
+            if tuple(target_points.shape) != expected or tuple(target_directions.shape) != expected:
+                raise ValueError(f"Expected direct retarget targets of shape {expected}")
+            target_points_tensor = target_points.to(device=self.device, dtype=self.dtype)
+            target_directions_tensor = target_directions.to(device=self.device, dtype=self.dtype)
+            if not torch.isfinite(target_points_tensor).all() or not torch.isfinite(target_directions_tensor).all():
+                raise ValueError("Direct retarget targets must be finite")
+            norms = torch.linalg.vector_norm(target_directions_tensor, dim=-1, keepdim=True)
+            if torch.any(norms < 1e-8):
+                raise ValueError("Retarget directions must be nonzero")
+            target_directions_tensor = target_directions_tensor / norms
+        else:
+            # Legacy callers may still request source-WUJI FK targets.
+            identity_vector = torch.tensor(
+                resolve_design_vectors(SOURCE_VECTOR[None, :])[0],
+                device=self.device,
+                dtype=self.dtype,
+            ).reshape(1, 1, -1)
+            source_q = seed_q.unsqueeze(0)
+            target_points = []
+            target_directions = []
+            for finger_index in range(5):
+                point, direction, _, _, _ = self.forward_finger(
+                    finger_index, identity_vector, source_q
+                )
+                target_points.append(point[0])
+                target_directions.append(direction[0])
+            target_points_tensor = torch.stack(target_points, dim=1)
+            target_directions_tensor = torch.stack(target_directions, dim=1)
 
         all_q = torch.empty(
             candidate_count, frame_count, len(self.joint_names),
