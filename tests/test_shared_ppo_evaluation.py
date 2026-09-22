@@ -75,3 +75,34 @@ def test_default_scores_all_replicas():
 def test_invalid_counts(count):
     with pytest.raises(ValueError, match="evaluation count"):
         run(count)
+
+
+def test_evaluation_rearms_cached_skrl_reset():
+    class CachedEnv(Env):
+        def __init__(self):
+            self._reset_once = False
+            self.steps = 100
+            self.phase_buf = torch.full((6,), 100)
+
+        def reset(self):
+            if self._reset_once:
+                self._reset_once = False
+                self.phase_buf.zero_()
+                return super().reset()
+            return torch.ones(6, 1), {}
+
+    env = CachedEnv()
+    rows, _ = evaluate(env, env, SimpleNamespace(agent=Agent()),
+                       {'morphology_indices': [3, 7, 3, 7, 3, 7], 'vectors': [[0.]] * 6}, 2)
+    assert env.steps == 2
+    assert [r['environment_steps'] for r in rows] == [3, 3]
+
+
+def test_reports_actual_episode_steps():
+    _, rows = run(2)
+    for row in rows:
+        assert row["episode_steps_mean"] == 1.5
+        assert row["episode_steps_min"] == 1
+        assert row["episode_steps_max"] == 2
+        assert row["evaluation_start_phase"] == 0
+        assert row["evaluation_action_mode"] == "deterministic"

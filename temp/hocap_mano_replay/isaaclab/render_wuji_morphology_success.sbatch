@@ -63,7 +63,7 @@ if [[ "${RENDER_ONLY:-0}" != "1" ]]; then
       "${SEARCH_MANIFEST}" \
       --index "${CANDIDATE_INDEX}" \
       --output-root "${PREPARED}"
-    python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_usd_smoke.py \
+    python temp/hocap_mano_replay/scripts/prepare_wuji_parametric_training_assets.py \
       "${PREPARED}/vectors.npy" \
       "${PREPARED}/compiled/compiled_hands.json" \
       --fixed-reference "${SEARCH_ROOT}/${GENERATION_DIR}/prepared/fixed_reference.npz" \

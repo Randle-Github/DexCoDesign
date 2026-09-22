@@ -238,6 +238,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1.0 / 120.0,
         render_interval=decimation,
+        # 4096 synchronized WUJI evaluations exceeded the default 163840
+        # contact patches (observed >175000). Overflow drops contacts and
+        # invalidates returns; reserve headroom for the hand/object contacts.
+        physx=sim_utils.PhysxCfg(gpu_max_rigid_patch_count=2**19),
         log_dir=str(
             REPO_ROOT
             / "artifacts"
@@ -520,6 +524,29 @@ class ManoResidualEnv(DirectRLEnv):
         return self.scene.num_envs
 
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
+        if (
+            MORPHOLOGY_BATCH_MANIFEST is not None
+            and not MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
+            and cfg.scene.num_envs != len(_batch_reference_paths)
+        ):
+            raise ValueError(
+                f"Morphology manifest contains {len(_batch_reference_paths)} environment rows, "
+                f"but scene.num_envs={cfg.scene.num_envs}. --num_envs does not resize "
+                "the hand assets, references, or geometry metadata in a manifest. "
+                "Use a manifest with one row per requested environment, or set "
+                f"--num_envs {len(_batch_reference_paths)}. "
+                f"Manifest: {MORPHOLOGY_BATCH_MANIFEST_PATH}"
+            )
+        if cfg.observation_mode not in ("legacy", "palm_geometry"):
+            raise ValueError(f"Unknown observation_mode: {cfg.observation_mode}")
+        if cfg.observation_mode == "palm_geometry":
+            if HAND_ID not in ("wuji_hand_2", "wuji_morphology_batch"):
+                raise ValueError("palm_geometry currently supports only WUJI topology")
+            if cfg.observation_space != PALM_GEOMETRY_OBSERVATION_DIM or cfg.morphology_context_dim:
+                raise ValueError(
+                    f"palm_geometry requires {PALM_GEOMETRY_OBSERVATION_DIM} "
+                    "observations and no morphology context"
+                )
         reference_paths = (
             _batch_reference_paths
             if MORPHOLOGY_BATCH_MANIFEST is not None
@@ -1362,7 +1389,22 @@ class ManoResidualEnv(DirectRLEnv):
             manifest["hand_super_environment_origins"][:unique], dtype=np.float32
         )
         source_replica = "/World/envs/env_0/SuperEnvironment"
-        super_cfg = sim_utils.UsdFileCfg(usd_path=str(Path(super_usd).resolve()))
+        # The hands are already referenced inside this USD. Articulation below
+        # uses spawn=None, so its spawn overrides would otherwise never run.
+        # Apply the same physics configuration as ordinary hand spawning before
+        # PhysX parses/clones the source (the objects are spawned separately).
+        hand_spawn = self.cfg.hand_cfg.spawn
+        super_cfg = sim_utils.UsdFileCfg(
+            usd_path=str(Path(super_usd).resolve()),
+            rigid_props=hand_spawn.rigid_props,
+            collision_props=hand_spawn.collision_props,
+            mass_props=hand_spawn.mass_props,
+            articulation_props=hand_spawn.articulation_props,
+            fixed_tendons_props=hand_spawn.fixed_tendons_props,
+            spatial_tendons_props=hand_spawn.spatial_tendons_props,
+            joint_drive_props=hand_spawn.joint_drive_props,
+            activate_contact_sensors=hand_spawn.activate_contact_sensors,
+        )
         super_cfg.func(source_replica, super_cfg)
         source_parent_expression = (
             "/World/envs/env_0/SuperEnvironment/morph_.*"
@@ -1532,11 +1574,24 @@ class ManoResidualEnv(DirectRLEnv):
                         matrix_value = Gf.Matrix4d(
                             *matrix.reshape(-1).tolist()
                         )
-                        xform = UsdGeom.Xformable(collision)
-                        xform.ClearXformOpOrder()
-                        xform.AddTransformOp(opSuffix="morphology").Set(
-                            matrix_value
-                        )
+                        # Search assets contain only ``collisions`` while
+                        # inspection assets also contain ``visuals``. Apply
+                        # the identical morphology transform to both scopes so
+                        # adding render geometry cannot change the collision
+                        # geometry that was evaluated during optimization.
+                        for geometry_scope in ("collisions", "visuals"):
+                            geometry = stage.GetPrimAtPath(
+                                f"{link_path}/{geometry_scope}"
+                            )
+                            if not geometry.IsValid():
+                                continue
+                            xform = UsdGeom.Xformable(geometry)
+                            xform.ClearXformOpOrder()
+                            xform.AddTransformOp(opSuffix="morphology").Set(
+                                matrix_value
+                            )
+                            from dexcodesign.morphology.wuji_palm_collision import preserve_fixed_base
+                            preserve_fixed_base(stage, geometry.GetPath(), matrix)
                 joint_names = resolved_joints[logical_index]
                 positions = manifest["parametric_joint_local_positions"][manifest_index]
                 if len(joint_names) != len(positions):

@@ -36,6 +36,8 @@ def main() -> int:
         "palm_prototype_count": PALM_EXPANSION_LEVELS,
         "palm_expansion_range": [0.0, PALM_EXPANSION_MAX],
         "zero_prototype_is_exact_source": True,
+        "palm_collision_partition": "source_base_and_palm_v1",
+        "fixed_source_base": True,
     }
     args.output.with_suffix(".schema.json").write_text(
         json.dumps(signature, indent=2) + "\n", encoding="utf-8"

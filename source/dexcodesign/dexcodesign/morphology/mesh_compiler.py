@@ -22,6 +22,7 @@ from .palm_geometry import (
     infer_palm_params,
     patches_from_hand_ir,
 )
+from .wuji_palm_collision import lock_wuji_base
 
 
 HERE = Path(__file__).resolve().parent
@@ -389,6 +390,14 @@ def main() -> int:
                 except ValueError as error:
                     raise ValueError(f"{hand['hand_id']}: {error}") from error
                 mesh = palm_result.visual_mesh
+                if hand.get("seed_source") == "wuji_hand_2":
+                    mesh = lock_wuji_base(mesh)
+                    palm_result.visual_mesh = mesh
+                    # Legacy preview only: the physical exporter splits the
+                    # source topology into two collision elements below.
+                    palm_result.collision_mesh = mesh.convex_hull
+                    palm_result.metadata["fixed_source_base"] = True
+                    palm_result.metadata["collision_partition"] = "source_base_and_palm"
             suffix = ".ply" if binary_mesh_output else ".obj"
             path = MESH_ROOT / hand["hand_id"] / f"part_{int(node['id']):02d}{suffix}"
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -405,6 +414,9 @@ def main() -> int:
                 "candidate_id": node["candidate_id"],
                 "mechanism_bundle_id": node["mechanism_bundle_id"],
             }
+            if hand.get("seed_source") == "wuji_hand_2" and int(node["id"]) == 0:
+                result["compiled_mesh"]["collision_partition"] = "source_base_and_palm_v1"
+                result["compiled_mesh"]["fixed_source_base"] = True
             if palm_result is not None:
                 collision_path = MESH_ROOT / hand["hand_id"] / f"palm_collision{suffix}"
                 if binary_mesh_output:

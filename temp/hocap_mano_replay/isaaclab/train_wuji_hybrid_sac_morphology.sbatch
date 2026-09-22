@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #SBATCH --job-name=wuji-hybrid-sac
-#SBATCH --partition=rl2-lab
-#SBATCH --account=rl2-lab
+#SBATCH --partition=ravichandar-lab
+#SBATCH --account=ravichandar-lab
 #SBATCH --qos=short
 #SBATCH --gpus=a40:1
 #SBATCH --cpus-per-task=32
@@ -10,11 +10,12 @@
 #SBATCH --exclude=hk47,spd-13,voltron,ig-88,sonny
 #SBATCH --output=slurm-wuji-hybrid-sac-%j.out
 
-set -euo pipefail
+echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac/run}"
-POPULATION="${POPULATION:-4096}"
+POPULATION="${NUM_MORPHOLOGIES:-${POPULATION:-4096}}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4096}"
 GENERATIONS="${GENERATIONS:-20}"
 SAC_UPDATES="${SAC_UPDATES:-400}"
@@ -25,9 +26,9 @@ ELITE_REPLAY_FRACTION="${ELITE_REPLAY_FRACTION:-0.05}"
 ELITE_MUTATION_SIGMA="${ELITE_MUTATION_SIGMA:-0.12}"
 REWARD_SCALE="${REWARD_SCALE:-0.01}"
 OPTIMIZER_BACKEND="${OPTIMIZER_BACKEND:-skrl}"
-RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-4}"
-SHARED_PPO_ITERATIONS="${SHARED_PPO_ITERATIONS:-0}"
-MORPHOLOGY_REPLICAS="${MORPHOLOGY_REPLICAS:-1}"
+RETARGET_ITERATIONS="${RETARGET_ITERATIONS:-14}"
+SHARED_PPO_ITERATIONS="${PPO_CYCLES_PER_GENERATION:-${SHARED_PPO_ITERATIONS:-0}}"
+MORPHOLOGY_REPLICAS="${TRAIN_ENVS_PER_MORPHOLOGY:-${MORPHOLOGY_REPLICAS:-1}}"
 PPO_ROLLOUT_MULTIPLIER="${PPO_ROLLOUT_MULTIPLIER:-1}"
 GPU_COUNT="${GPU_COUNT:-1}"
 FIXED_REFERENCE="${FIXED_REFERENCE:-}"
@@ -42,15 +43,25 @@ CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-0}"
 BANK_ROOT="${BANK_ROOT:-${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70}"
 SEED_TRAJECTORY="${SEED_TRAJECTORY:-${REPO_ROOT}/artifacts/wuji_morphology_search/wuji_v2_cem_rl_reward/source/retarget_physics/ik/cache/wuji_source_ik.npz}"
 
-CONDA_SH="${CONDA_SH:?launch through scripts/dexcodesign/launch_hand_learning.sh or export CONDA_SH}"
-CONDA_ENV="${CONDA_ENV:-codesign}"
-source "${CONDA_SH}"
-conda activate "${CONDA_ENV}"
+CONDA_SH="${CONDA_SH:-/coc/flash5/yhan389/miniconda3/etc/profile.d/conda.sh}"
+CONDA_ENV="${CONDA_ENV:-DexCoDesign_sim4_5_lab_2_3_2}"
+if ! source "${CONDA_SH}"; then
+  echo "ERROR: failed to initialize conda from ${CONDA_SH}" >&2
+  exit 1
+fi
+if ! conda activate "${CONDA_ENV}"; then
+  echo "ERROR: failed to activate conda environment ${CONDA_ENV}" >&2
+  exit 1
+fi
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
 export OMP_NUM_THREADS=1
+export PYTHONUNBUFFERED=1
 export OMNI_KIT_ACCEPT_EULA=YES
 EXTRA_ARGS=()
+if [[ -n "${EVAL_ENVS_PER_MORPHOLOGY:-}" ]]; then
+  EXTRA_ARGS+=(--eval-envs-per-morphology "${EVAL_ENVS_PER_MORPHOLOGY}")
+fi
 if [[ "${CONTINUE_AFTER_SUCCESS}" == "1" ]]; then
   EXTRA_ARGS+=(--continue-after-success)
 fi
@@ -77,7 +88,7 @@ PROGRAM_ARGS=(
   --output-root "${OUTPUT_ROOT}" \
   --prototype-bank-root "${BANK_ROOT}" \
   --seed-trajectory "${SEED_TRAJECTORY}" \
-  --population "${POPULATION}" \
+  --num-morphologies "${POPULATION}" \
   --physics-batch-size "${PHYSICS_BATCH_SIZE}" \
   --generations "${GENERATIONS}" \
   --sac-updates "${SAC_UPDATES}" \
@@ -89,8 +100,8 @@ PROGRAM_ARGS=(
   --reward-scale "${REWARD_SCALE}" \
   --optimizer-backend "${OPTIMIZER_BACKEND}" \
   --retarget-iterations "${RETARGET_ITERATIONS}" \
-  --shared-ppo-iterations "${SHARED_PPO_ITERATIONS}" \
-  --morphology-replicas "${MORPHOLOGY_REPLICAS}" \
+  --ppo-cycles-per-generation "${SHARED_PPO_ITERATIONS}" \
+  --train-envs-per-morphology "${MORPHOLOGY_REPLICAS}" \
   --ppo-rollout-multiplier "${PPO_ROLLOUT_MULTIPLIER}" \
   --target-reward "${TARGET_REWARD}" \
   "${EXTRA_ARGS[@]}" \

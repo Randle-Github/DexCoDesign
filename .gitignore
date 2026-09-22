@@ -87,3 +87,8 @@ _build
 !/tests/test_shared_ppo_evaluation.py
 
 !/tests/test_wuji_ppo_logging.py
+
+!/tests/test_wuji_mano_task_targets.py
+
+!/tests/test_wuji_sequential_retarget.py
+!/tests/test_wuji_grouped_spawn.py

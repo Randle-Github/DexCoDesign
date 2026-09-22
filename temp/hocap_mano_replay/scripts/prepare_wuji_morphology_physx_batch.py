@@ -181,6 +181,8 @@ def main() -> int:
 
     manifest = {
         "schema_version": 1,
+        "palm_collision_partition": "source_base_and_palm_v1",
+        "fixed_source_base": True,
         "candidate_ids": candidate_ids,
         "vectors": vectors.tolist(),
         "hand_urdf_paths": [
