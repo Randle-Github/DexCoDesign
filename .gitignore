@@ -91,3 +91,4 @@ _build
 
 !/tests/test_wuji_sequential_retarget.py
 !/tests/test_wuji_grouped_spawn.py
+!/tests/test_submit_wuji_training.py

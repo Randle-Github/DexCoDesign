@@ -1,0 +1,59 @@
+# Submit from the Skynet login node:
+# python3 scripts/tools/submit_wuji_training.py configs/wuji/fixed8_palm0_ppo_skynet.yaml
+# Add --dry-run to preview without submitting. Paths are relative to this checkout,
+# through ${REPO_ROOT}; ${RUN_NAME} receives the prefix plus a UTC timestamp.
+run_name_prefix: wuji_fixed8_palm0_ppo_skynet
+
+slurm:
+  partition: overcap
+  account: overcap
+  qos: scavenger_qos
+  gpus: "a40:1"  # Use "l40s:1" for L40S; optionally add nodelist: dynamics.
+  cpus-per-task: 16
+  mem: 128G
+  time: "24:00:00"
+  # overcap can preempt jobs. For a short lab test use partition/account:
+  # ravichandar-lab, qos: short, time: "04:00:00", and GENERATIONS: 3 below.
+
+# These names map directly to the existing .sbatch overrides; no trainer changes.
+env:
+  BANK_ROOT: "${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70_split_base_v1"
+  FIXED_PPO_VECTORS: "${REPO_ROOT}/artifacts/wuji_sac/fixed_populations/wuji_random8_palm0_seed42.npy"
+  DEXCODESIGN_OBJECT_USD_PATH: "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/g04_1.usd"
+  OUTPUT_ROOT: "${REPO_ROOT}/artifacts/wuji_sac/${RUN_NAME}"
+
+  NUM_MORPHOLOGIES: 8
+  TRAIN_ENVS_PER_MORPHOLOGY: 512
+  EVAL_ENVS_PER_MORPHOLOGY: 32
+  PPO_CYCLES_PER_GENERATION: 64
+  PPO_ROLLOUT_MULTIPLIER: 1
+  PPO_OBSERVATION_MODE: palm_geometry
+  GEOMETRY_INWARD_DIRECTION_MODE: kinematic_normal
+  MORPHOLOGY_CONTEXT: false
+
+  FIXED_PALM_PROTOTYPE: 0
+  RETARGET_PER_PROPOSAL: true
+  RETARGET_ITERATIONS: 14
+  SAC_UPDATES: 0
+  GENERATIONS: 100
+  GPU_COUNT: 1
+  CONTINUE_AFTER_SUCCESS: true
+  ISOLATE_PHYSICS_PER_GENERATION: true
+  FORCE_SOURCE_MORPHOLOGY: false
+  PPO_CHECKPOINT: null  # null clears the override: train a fresh policy.
+  FIXED_REFERENCE: null
+  GROUPED_ZERO_ACTION_VECTORS: null
+
+  WANDB_ENABLED: true
+  WANDB_MODE: online
+  WANDB_ENTITY: njyunhai-georgia-tech
+  WANDB_PROJECT: DexCoDesign
+  WANDB_GROUP: wuji-fixed8-skynet
+  WANDB_RUN_NAME: "${RUN_NAME}"
+
+# Forwarded unchanged to the training script by the existing batch launcher.
+args:
+  - --seed
+  - "42"
+  - --ppo-episode-log-window-steps
+  - "1600"

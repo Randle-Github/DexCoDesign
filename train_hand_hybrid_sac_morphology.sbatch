@@ -6,15 +6,23 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=a40:1
+# September 22 probe: bishop's allocated L40S reported uncorrectable ECC.
+# Remove this exclusion after cluster admins restore/verify GPU health.
+#SBATCH --exclude=bishop
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_logs/slurm-wuji-hybrid-sac-%j.out
 
+# Submit from the repository (create slurm_logs before sbatch). GPU type alone
+# does not validate a node: see docs/wuji_skynet_runtime.md for tested nodes.
+set -eo pipefail
+
 echo "WUJI batch script started: job=${SLURM_JOB_ID:-none} host=$(hostname)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-${SLURM_SUBMIT_DIR:-${SCRIPT_DIR}}}"
+REPO_ROOT="$(cd -- "${REPO_ROOT}" && pwd -P)"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/artifacts/wuji_sac/cluster_run_${SLURM_JOB_ID:-manual}}"
 POPULATION="${NUM_MORPHOLOGIES:-${POPULATION:-64}}"
 PHYSICS_BATCH_SIZE="${PHYSICS_BATCH_SIZE:-4}"
@@ -42,6 +50,10 @@ FIXED_PPO_VECTORS="${FIXED_PPO_VECTORS:-}"
 PPO_CHECKPOINT="${PPO_CHECKPOINT:-}"
 TARGET_REWARD="${TARGET_REWARD:-inf}"
 KIT_ARGS="${KIT_ARGS:---/log/level=error}"
+# Skynet's shared UJITSO datastore has returned missing cooked convex blocks
+# while the job still exits successfully. Cook meshes directly without that
+# cache; this does not change collision approximations or physics parameters.
+PHYSX_DISABLE_MESH_CACHE="${PHYSX_DISABLE_MESH_CACHE:-1}"
 CONTINUE_AFTER_SUCCESS="${CONTINUE_AFTER_SUCCESS:-1}"
 ISOLATE_PHYSICS_PER_GENERATION="${ISOLATE_PHYSICS_PER_GENERATION:-1}"
 WANDB_ENABLED="${WANDB_ENABLED:-1}"
@@ -138,6 +150,20 @@ fi
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${CONDA_PREFIX}/lib"
 cd "${REPO_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${REPO_ROOT}/artifacts/wuji_morphology_hybrid_sac"
+# Keep per-job Kit preferences separate from interactive/shared settings.
+RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wuji-${SLURM_JOB_ID:-manual}.XXXXXX")"
+KIT_ARGS+=" --/app/userConfigPath=${RUNTIME_DIR}/user.config.json"
+if [[ "${PHYSX_DISABLE_MESH_CACHE}" == "1" ]]; then
+  KIT_ARGS+=" --/physics/cooking/ujitsoCollisionCooking=false --/persistent/physics/useLocalMeshCache=false"
+fi
+# A native crash must not fill shared storage with multi-GB core dumps.
+ulimit -c 0
+NOFILE_HARD="$(ulimit -Hn)"
+if [[ "${NOFILE_HARD}" == unlimited ]] || (( NOFILE_HARD >= 65536 )); then
+  ulimit -Sn 65536
+else
+  ulimit -Sn "${NOFILE_HARD}"
+fi
 export OMP_NUM_THREADS=1
 export PYTHONUNBUFFERED=1
 export OMNI_KIT_ACCEPT_EULA=YES
@@ -152,6 +178,8 @@ fi
 echo "Job ID: ${SLURM_JOB_ID:-none}"
 echo "Host: $(hostname)"
 echo "Repository: ${REPO_ROOT}"
+echo "Git commit: $(git rev-parse --short HEAD); Conda: ${CONDA_PREFIX}"
+echo "Kit runtime directory: ${RUNTIME_DIR}; bypass shared collision cache: ${PHYSX_DISABLE_MESH_CACHE}"
 echo "Output: ${OUTPUT_ROOT}"
 echo "Population: ${POPULATION}; PhysX batch: ${PHYSICS_BATCH_SIZE}; rollouts/proposal: ${ROLLOUTS_PER_PROPOSAL}; generations: ${GENERATIONS}"
 echo "Fixed palm prototype: ${FIXED_PALM_PROTOTYPE:-learned}; per-proposal retargeting: ${RETARGET_PER_PROPOSAL}"
@@ -161,6 +189,26 @@ echo "Weights & Biases mode: ${WANDB_MODE}"
 echo "Rollout video recording: ${VIDEO_ENABLED}; interval: ${VIDEO_INTERVAL}; candidate: ${VIDEO_CANDIDATE_INDEX}; replica: 0"
 echo "Weights & Biases run: ${WANDB_ENTITY}/${WANDB_PROJECT}/${WANDB_RUN_NAME}"
 nvidia-smi -L
+# Fail clearly on a node whose graphics runtime cannot load the GLU dependency.
+python - <<'PY'
+import ctypes
+import sys
+from importlib import metadata
+
+ctypes.CDLL("libGLU.so.1")
+print("Python:", sys.version.split()[0])
+for package in ("torch", "skrl", "gymnasium", "numpy", "wandb"):
+    print(f"{package}: {metadata.version(package)}")
+
+import torch
+
+if not torch.cuda.is_available():
+    raise RuntimeError("No usable CUDA GPU in this Slurm allocation")
+sample = torch.ones((32, 32), device="cuda:0")
+assert torch.isfinite(sample @ sample).all().item()
+torch.cuda.synchronize()
+print("CUDA preflight passed:", torch.cuda.get_device_name(0))
+PY
 
 EXTRA_ARGS=()
 if [[ -n "${EVAL_ENVS_PER_MORPHOLOGY:-}" ]]; then
@@ -239,12 +287,23 @@ PROGRAM_ARGS=(
   "${EXTRA_ARGS[@]}" \
   --kit_args="${KIT_ARGS}" \
   --headless
+  "$@"
 )
+# Kit's native fast exit bypasses Python atexit and can truncate the W&B file.
+# Finish logging before SimulationApp.close(), without editing the trainer or
+# disabling fast shutdown (normal plugin teardown also crashed in node tests).
+if [[ "${WANDB_ENABLED}" == "1" ]]; then
+  PROGRAM_ARGS=(scripts/tools/run_isaac_with_wandb.py "${PROGRAM_ARGS[@]}")
+fi
+RESOURCE_WRAPPER=()
+if [[ -x /usr/bin/time ]]; then
+  RESOURCE_WRAPPER=(/usr/bin/time -v)
+fi
 if (( GPU_COUNT == 1 )); then
-  ./isaaclab.sh -p "${PROGRAM_ARGS[@]}"
+  "${RESOURCE_WRAPPER[@]}" ./isaaclab.sh -p "${PROGRAM_ARGS[@]}"
 else
   export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
-  ./isaaclab.sh -p -m torch.distributed.run \
+  "${RESOURCE_WRAPPER[@]}" ./isaaclab.sh -p -m torch.distributed.run \
     --standalone \
     --nnodes=1 \
     --nproc_per_node="${GPU_COUNT}" \
