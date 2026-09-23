@@ -1,0 +1,52 @@
+# Submit on Skynet:
+# python3 scripts/tools/submit_wuji_training.py configs/wuji/fixed32_palm0_joint_space_ppo_skynet.yaml
+# Joint-space counterpart of fixed32_palm0_ppo_skynet.yaml: 86D, no appended design vector.
+# Routing matches the current Skynet YAMLs (overcap/short, A40, 24 hours).
+# The retarget flag keeps direct MANO retargeting for every hand every generation.
+# GEOMETRY_INWARD_DIRECTION_MODE is unused by the joint-space observation.
+run_name_prefix: wuji_fixed32_palm0_joint_space_ppo_skynet
+slurm:
+  partition: overcap
+  account: overcap
+  qos: short
+  gpus: a40:1
+  cpus-per-task: 16
+  mem: 128G
+  time: 1-00:00:00
+env:
+  BANK_ROOT: ${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70_split_base_v1
+  FIXED_PPO_VECTORS: ${REPO_ROOT}/artifacts/wuji_sac/fixed_populations/wuji_random32_palm0_seed42.npy
+  DEXCODESIGN_OBJECT_USD_PATH: ${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/g04_1.usd
+  OUTPUT_ROOT: ${REPO_ROOT}/artifacts/wuji_sac/${RUN_NAME}
+  NUM_MORPHOLOGIES: 32
+  TRAIN_ENVS_PER_MORPHOLOGY: 128
+  EVAL_ENVS_PER_MORPHOLOGY: 32
+  PPO_CYCLES_PER_GENERATION: 64
+  PPO_ROLLOUT_MULTIPLIER: 1
+  PPO_OBSERVATION_MODE: legacy  # 86D existing joint-space observation.
+  GEOMETRY_INWARD_DIRECTION_MODE: kinematic_normal
+  MORPHOLOGY_CONTEXT: false  # Do not append the 23D design vector.
+  FIXED_PALM_PROTOTYPE: 0
+  RETARGET_PER_PROPOSAL: true
+  RETARGET_ITERATIONS: 14
+  SAC_UPDATES: 0
+  GENERATIONS: 100
+  GPU_COUNT: 1
+  CONTINUE_AFTER_SUCCESS: true
+  ISOLATE_PHYSICS_PER_GENERATION: true
+  FORCE_SOURCE_MORPHOLOGY: false
+  PPO_CHECKPOINT: null
+  FIXED_REFERENCE: null
+  GROUPED_ZERO_ACTION_VECTORS: null
+  WANDB_ENABLED: true
+  WANDB_MODE: online
+  WANDB_ENTITY: njyunhai-georgia-tech
+  WANDB_PROJECT: DexCoDesign
+  WANDB_GROUP: wuji-fixed32-palm0-joint-space-ppo-skynet
+  WANDB_RUN_NAME: ${RUN_NAME}
+args:
+- --seed
+- '42'
+- --ppo-episode-log-window-steps
+- '1600'
+- --retarget-per-generation

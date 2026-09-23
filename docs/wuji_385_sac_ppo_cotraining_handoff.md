@@ -1,5 +1,30 @@
 # WUJI 385-D SAC + PPO co-training handoff
 
+## Joint-space observation baseline with matched retargeting (2026-09-22)
+
+To compare legacy joint-space inputs against the 385D palm-geometry inputs on
+the same fixed population, pass both:
+
+```bash
+--ppo-observation-mode legacy --retarget-per-generation
+```
+
+This runs the same candidate-specific sequential MANO retargeting, captured
+object references, per-generation generated USD preparation, scene recreation,
+and checkpoint continuation. Legacy WUJI observations have 86 values: current
+joint positions (26), current thumb/index positions (6), object pose (7),
+demonstration thumb/index goal poses (14), reference joint positions (26), and
+reference object pose (7). The shared actor and critic use this input; residual
+actions and reward definitions are unchanged. Omit `--morphology-context` for
+this baseline. Train a fresh policy rather than loading a 385D checkpoint.
+
+Without `--retarget-per-generation`, legacy mode preserves its historical
+shared-fixed-reference behavior, which is not an observation-only comparison.
+The new flag requires shared PPO and cannot be combined with `--fixed-reference`.
+Palm-geometry mode still retargets automatically. Use the same
+`--fixed-ppo-vectors` file, corrected prototype bank, environment counts, PPO
+cycles, and seed for paired experiments; fixed vectors disable SAC updates.
+
 For changes since `fd73d0c`, including physics, evaluation, retargeting, collision
 geometry, logging, playback, and remaining limitations, see
 [the September 22 update note](../source/README_WUJI_UPDATES.md).

@@ -1,0 +1,65 @@
+# Submit on Skynet:
+# python3 scripts/tools/submit_wuji_training.py configs/wuji/codesign32_palm0_sac_ppo_skynet.yaml
+# Same settings as codesign8, with more designs and fewer replicas per design.
+run_name_prefix: wuji_codesign32_palm0_sac_ppo_skynet
+
+slurm:
+  partition: ravichandar-lab
+  account: ravichandar-lab
+  qos: short
+  gpus: "a40:1"
+  cpus-per-task: 16
+  mem: 128G
+  time: "1-00:00:00"
+
+env:
+  BANK_ROOT: "${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70_split_base_v1"
+  DEXCODESIGN_OBJECT_USD_PATH: "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/g04_1.usd"
+  OUTPUT_ROOT: "${REPO_ROOT}/artifacts/wuji_sac/${RUN_NAME}"
+
+  # 32 designs x 128 training environments = 4096 environments.
+  NUM_MORPHOLOGIES: 32
+  TRAIN_ENVS_PER_MORPHOLOGY: 128
+  EVAL_ENVS_PER_MORPHOLOGY: 32
+  PPO_CYCLES_PER_GENERATION: 64
+  PPO_ROLLOUT_MULTIPLIER: 1
+  PPO_OBSERVATION_MODE: palm_geometry
+  GEOMETRY_INWARD_DIRECTION_MODE: kinematic_normal
+  MORPHOLOGY_CONTEXT: false  # Keep the existing 385D controller input.
+
+  # Fix the discrete palm prototype, while SAC varies the remaining design coordinates.
+  # Continuous palm affine parameters remain editable in this design space.
+  FIXED_PALM_PROTOTYPE: 0
+  RETARGET_PER_PROPOSAL: true
+  RETARGET_ITERATIONS: 14
+  OPTIMIZER_BACKEND: skrl
+  SAC_UPDATES: 64  # SAC gradient steps after each generation's policy evaluation.
+  SAC_BATCH_SIZE: 64  # Up to 64 design/reward replay samples; smaller while replay fills.
+  REWARD_SCALE: 0.01
+  UNIFORM_FRACTION: 0.15
+  ELITE_MUTATION_FRACTION: 0.30
+  ELITE_REPLAY_FRACTION: 0.05
+  ELITE_MUTATION_SIGMA: 0.12
+
+  GENERATIONS: 100
+  GPU_COUNT: 1
+  CONTINUE_AFTER_SUCCESS: true
+  ISOLATE_PHYSICS_PER_GENERATION: true
+  FIXED_PPO_VECTORS: null
+  FORCE_SOURCE_MORPHOLOGY: false
+  PPO_CHECKPOINT: null
+  FIXED_REFERENCE: null
+  GROUPED_ZERO_ACTION_VECTORS: null
+
+  WANDB_ENABLED: true
+  WANDB_MODE: online
+  WANDB_ENTITY: njyunhai-georgia-tech
+  WANDB_PROJECT: DexCoDesign
+  WANDB_GROUP: wuji-codesign32-palm0-sac-ppo-skynet
+  WANDB_RUN_NAME: "${RUN_NAME}"
+
+args:
+  - --seed
+  - "42"
+  - --ppo-episode-log-window-steps
+  - "1600"

@@ -1,9 +1,9 @@
 # Submit from the Skynet login node:
-# python3 scripts/tools/submit_wuji_training.py configs/wuji/fixed8_palm0_ppo_skynet.yaml
+# python3 scripts/tools/submit_wuji_training.py configs/wuji/fixed32_palm0_ppo_skynet.yaml
 # Add --dry-run to preview without submitting. Paths are relative to this checkout,
 # through ${REPO_ROOT}; ${RUN_NAME} receives the prefix plus a UTC timestamp.
-# 8 fixed designs x 512 training environments = 4096 environments.
-run_name_prefix: wuji_fixed8_palm0_ppo_skynet
+# 32 fixed designs x 128 training environments = 4096 environments.
+run_name_prefix: wuji_fixed32_palm0_ppo_skynet
 
 slurm:
   partition: ravichandar-lab
@@ -20,12 +20,12 @@ slurm:
 # These names map directly to the existing .sbatch overrides; no trainer changes.
 env:
   BANK_ROOT: "${REPO_ROOT}/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70_split_base_v1"
-  FIXED_PPO_VECTORS: "${REPO_ROOT}/artifacts/wuji_sac/fixed_populations/wuji_random8_palm0_seed42.npy"
+  FIXED_PPO_VECTORS: "${REPO_ROOT}/artifacts/wuji_sac/fixed_populations/wuji_random32_palm0_seed42.npy"
   DEXCODESIGN_OBJECT_USD_PATH: "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/g04_1.usd"
   OUTPUT_ROOT: "${REPO_ROOT}/artifacts/wuji_sac/${RUN_NAME}"
 
-  NUM_MORPHOLOGIES: 8
-  TRAIN_ENVS_PER_MORPHOLOGY: 512
+  NUM_MORPHOLOGIES: 32
+  TRAIN_ENVS_PER_MORPHOLOGY: 128
   EVAL_ENVS_PER_MORPHOLOGY: 32
   PPO_CYCLES_PER_GENERATION: 64
   PPO_ROLLOUT_MULTIPLIER: 1
@@ -50,7 +50,7 @@ env:
   WANDB_MODE: online
   WANDB_ENTITY: njyunhai-georgia-tech
   WANDB_PROJECT: DexCoDesign
-  WANDB_GROUP: wuji-fixed8-skynet
+  WANDB_GROUP: wuji-fixed32-skynet
   WANDB_RUN_NAME: "${RUN_NAME}"
 
 # Forwarded unchanged to the training script by the existing batch launcher.

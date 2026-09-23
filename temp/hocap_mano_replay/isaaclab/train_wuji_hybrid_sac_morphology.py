@@ -26,7 +26,7 @@ parser.add_argument(
     "--original-source-hand", action="store_true",
     help="One fixed original WUJI USD, fresh Torch retargeting, 385D PPO, no asset generation or SAC updates",
 )
-parser.add_argument("--seed-trajectory", type=Path, help="Legacy morphology-only retargeting seed; ignored by palm-geometry shared PPO")
+parser.add_argument("--seed-trajectory", type=Path, help="Legacy morphology-only retargeting seed; ignored by MANO-retargeted shared PPO")
 parser.add_argument(
     "--num-morphologies", "--population", dest="population", type=int, default=4096,
     help="number of distinct hand designs proposed per morphology generation",
@@ -123,7 +123,7 @@ parser.add_argument("--retarget-iterations", type=int, default=14)
 parser.add_argument(
     "--mano-rollout", type=Path,
     default=Path(__file__).resolve().parents[3] / "artifacts/isaaclab_mano_residual/refined_mano/successful_rollout.npz",
-    help="Captured MANO hand states and actual object motion for direct palm-geometry co-training targets",
+    help="Captured MANO hand states and actual object motion for direct shared-PPO retargeting targets",
 )
 parser.add_argument(
     "--ppo-cycles-per-generation", "--shared-ppo-iterations",
@@ -143,6 +143,10 @@ parser.add_argument(
         "shared-PPO observation: palm_geometry uses 60 candidate-specific "
         "collision-surface landmarks (385 values) and retargets every proposal"
     ),
+)
+parser.add_argument(
+    "--retarget-per-generation", action="store_true",
+    help="Retarget each hand directly from MANO every shared-PPO generation, including with legacy observations",
 )
 parser.add_argument(
     "--geometry-inward-direction-mode",
@@ -181,7 +185,7 @@ parser.add_argument(
     type=Path,
     help=(
         "one canonical WUJI reference reused unchanged by every morphology and "
-        "every outer generation; required implicitly by shared PPO"
+        "every outer generation; default for legacy shared PPO unless --retarget-per-generation is set"
     ),
 )
 parser.add_argument(
@@ -302,6 +306,11 @@ if args_cli.ppo_episode_log_window_steps < 1:
     parser.error("--ppo-episode-log-window-steps must be positive")
 if args_cli.ppo_rollout_multiplier < 1:
     parser.error("--ppo-rollout-multiplier must be positive")
+if args_cli.retarget_per_generation:
+    if not args_cli.shared_ppo_iterations:
+        parser.error("--retarget-per-generation requires shared PPO training")
+    if args_cli.fixed_reference is not None:
+        parser.error("--retarget-per-generation cannot be combined with --fixed-reference")
 if args_cli.ppo_observation_mode == "palm_geometry":
     if not args_cli.shared_ppo_iterations:
         parser.error("--ppo-observation-mode palm_geometry requires shared PPO")
@@ -1708,6 +1717,12 @@ def shared_ppo_outer_search(
             f"{world_size}"
         )
     geometry_observations = args_cli.ppo_observation_mode == "palm_geometry"
+    retarget_per_generation = geometry_observations or args_cli.retarget_per_generation
+    env_cfg.observation_mode = args_cli.ppo_observation_mode
+    env_cfg.observation_space = (
+        env_module.PALM_GEOMETRY_OBSERVATION_DIM if geometry_observations
+        else env_module.OBSERVATION_DIM + (len(VECTOR_NAMES) if args_cli.morphology_context else 0)
+    )
     task_targets = None
     task_targets_path = None
     if geometry_observations:
@@ -1717,6 +1732,7 @@ def shared_ppo_outer_search(
         env_cfg.geometry_inward_direction_mode = (
             args_cli.geometry_inward_direction_mode
         )
+    if retarget_per_generation:
         from gpu_wuji_retarget import SOURCE_URDF, parse_urdf
         retarget_joint_names = list(parse_urdf(SOURCE_URDF)[1])
         if args_cli.seed_trajectory is not None:
@@ -1774,12 +1790,12 @@ def shared_ppo_outer_search(
                     "mano_task_targets": None if task_targets_path is None else str(task_targets_path),
                     "mano_rollout": None if task_targets is None else str(task_targets["source_mano_rollout"]),
                     "mano_rollout_sha256": None if task_targets is None else str(task_targets["source_mano_rollout_sha256"]),
-                    "retarget_target_source": "captured_mano_fk" if geometry_observations else "fixed_reference",
-                    "retarget_initialization": "neutral_then_previous_candidate_frame" if geometry_observations else None,
-                    "retarget_wrist_orientation": "mano_with_candidate_neutral_alignment" if geometry_observations else None,
+                    "retarget_target_source": "captured_mano_fk" if retarget_per_generation else "fixed_reference",
+                    "retarget_initialization": "neutral_then_previous_candidate_frame" if retarget_per_generation else None,
+                    "retarget_wrist_orientation": "mano_with_candidate_neutral_alignment" if retarget_per_generation else None,
                     "seed_trajectory_used": False,
-                    "retarget_per_generation": geometry_observations,
-                    "retarget_per_proposal": geometry_observations,
+                    "retarget_per_generation": retarget_per_generation,
+                    "retarget_per_proposal": retarget_per_generation,
                     "candidate_collision_surface_landmarks": geometry_observations,
                     "original_source_hand": args_cli.original_source_hand,
                     "asset_generation_skipped": args_cli.original_source_hand,
@@ -1918,7 +1934,7 @@ def shared_ppo_outer_search(
         local_vectors_path = rank_root / "vectors.npy"
         np.save(local_vectors_path, global_vectors[begin:end])
         local_retarget_path = rank_root / "gpu_retarget_all.npz"
-        if geometry_observations:
+        if retarget_per_generation:
             assert retarget_kinematics is not None
             assert task_targets is not None
             retarget_timings = retarget_mano(
@@ -1941,7 +1957,7 @@ def shared_ppo_outer_search(
         else:
             local_manifest, prepare_timings = prepare_assets(
                 local_vectors_path,
-                local_retarget_path if geometry_observations else None,
+                local_retarget_path if retarget_per_generation else None,
                 rank_root,
                 bank_manifest,
                 fixed_reference=fixed_reference,
@@ -2066,7 +2082,8 @@ def shared_ppo_outer_search(
                 "algorithm": (
                     "retargeted_palm_geometry_shared_ppo_outer_skrl_sac"
                     if geometry_observations
-                    else "fixed_reference_shared_ppo_outer_skrl_sac"
+                    else ("retargeted_joint_space_shared_ppo_outer_skrl_sac"
+                          if retarget_per_generation else "fixed_reference_shared_ppo_outer_skrl_sac")
                 ),
                 "force_source_morphology": args_cli.force_source_morphology,
                 "original_source_hand": args_cli.original_source_hand,
@@ -2077,8 +2094,8 @@ def shared_ppo_outer_search(
                 ),
                 "observation_mode": args_cli.ppo_observation_mode,
                 "observation_dimension": int(env_cfg.observation_space),
-                "retarget_performed": geometry_observations,
-                "retarget_per_proposal": geometry_observations,
+                "retarget_performed": retarget_per_generation,
+                "retarget_per_proposal": retarget_per_generation,
                 "fixed_reference": (
                     None if fixed_reference is None else str(fixed_reference)
                 ),

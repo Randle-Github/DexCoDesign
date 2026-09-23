@@ -16,10 +16,14 @@ size/duration and explicitly selected experiment arguments.
 - Isaac Sim: `/coc/flash5/yhan389/apps/isaacsim-4.5.0` via `_isaac_sim`.
 - Core packages match the desktop: Torch `2.7.0+cu128`, SKRL `2.1.0`,
   Gymnasium `1.2.1`, NumPy `1.26.4`. Cluster W&B is `0.29.0`.
-- The desktop's uncommitted `--retarget-per-generation` joint-space change is
-  **not in this cluster commit**. It was deliberately not copied during this
-  runtime-only task. Legacy shared PPO on this commit is not an observation-only
-  baseline for the retargeted palm-geometry experiment.
+- The desktop's `--retarget-per-generation` joint-space change was deliberately
+  not copied during the original runtime-only task. On September 23, the user
+  requested joint-space variants of the three Skynet experiments, so this
+  existing trainer change was synced separately with the new YAMLs. Those
+  variants explicitly pass the flag to retain per-generation MANO retargeting
+  with the existing 86D legacy observation. The palm-geometry branch continues
+  to retarget automatically. The joint-space configurations and trainer support
+  are included together in this update.
 
 ## Failures reproduced
 
@@ -92,6 +96,28 @@ This bare command keeps the launcher's existing experiment defaults; export
 your intended experiment first. Overcap is preemptible. It is useful for these
 bounded tests but does not guarantee uninterrupted long training. Do not assume
 the outer training driver automatically resumes an interrupted Slurm job.
+
+### Lab QOS, wall time, and GPU quota (verified September 22)
+
+The partition reports `MaxTime=04:00:00`, but this is **not** the effective
+maximum when using the lab's `short` or `long` QOS. Both have the
+`PartitionTimeLimit` flag, which allows overriding the partition time limit
+([Slurm documentation](https://slurm.schedmd.com/sacctmgr.html)). `short` permits
+up to two days, and `long` up to seven days. The account association allows both.
+Earlier advice that lab jobs must finish in four hours missed this QOS override.
+
+The default YAML now requests `ravichandar-lab`, `short`, one A40, and
+`time: "1-00:00:00"` (24 hours). A matching `sbatch --test-only` request was
+accepted with an estimated placement on `clippy`; no actual job was submitted.
+The batch script itself still defaults to four hours when used without an
+explicit time override. Requesting 24 hours is a runtime allowance, not a
+minimum runtime: completed training exits earlier.
+
+The lab partition's QOS currently grants eight A40 GPUs in aggregate and zero
+L40S GPUs. Node membership alone does not establish GPU entitlement. Use A40
+for the lab allocation; the L40S runtime test used overcap. No `nodelist` is
+required: let Slurm select a compatible node, retaining the temporary `bishop`
+exclusion. Pinning `dave` can reproduce the tested A40 node, but may wait longer.
 
 ## W&B
 
@@ -194,7 +220,9 @@ used the training code from `36ec10d`; these updates do not change that trainer.
 ### Submit from YAML (no terminal exports required)
 
 The configuration `configs/wuji/fixed8_palm0_ppo_skynet.yaml` contains the same
-fixed-eight-hand experiment, with 100 generations and a 24-hour overcap request.
+fixed-eight-hand experiment, with 100 generations and a 24-hour
+`ravichandar-lab` / `short` request. Changing the allocation does not change
+the training budget.
 Edit `env` for experiment settings, `slurm` for resource requests, and `args`
 for the seed and completed-episode logging window. For example, change
 `GENERATIONS: 100` to `GENERATIONS: 3` for the bounded test below.
@@ -227,9 +255,10 @@ directory; secrets from the inherited environment are not included in those
 records. Reusing an output directory with an existing submission record fails
 instead of overwriting it. This helper does not modify or import training code.
 
-For a lab test, set `partition` and `account` to `ravichandar-lab`, `qos` to
-`short`, `time` to `"04:00:00"`, and reduce `GENERATIONS` to fit the limit.
-For L40S, set `gpus: "l40s:1"`; optionally add `nodelist: dynamics` to request
+For a short lab test, keep the supplied allocation and reduce `GENERATIONS`
+to fit the limit. For overcap, set `partition` and `account` to `overcap`,
+`qos` to `scavenger_qos`, and `time` to `"24:00:00"` (preemptible).
+With overcap, set `gpus: "l40s:1"` for L40S; optionally add `nodelist: dynamics` to request
 the tested node explicitly (which may increase queue time). The batch script's
 temporary `bishop` exclusion applies unless explicitly overridden.
 
@@ -266,8 +295,8 @@ start estimates. GPU/node suitability and current scheduler availability are
 separate checks.
 
 For a later 100-generation experiment, retain the same experiment exports and
-set `GENERATIONS=100` plus a unique run name/group. The lab partition's maximum
-wall time is four hours; the measured preparation/training overhead means that
-100 generations should not be assumed to fit. Overcap accepts a longer request
-(for example `--time=24:00:00`) but remains preemptible. No 100-generation job
-was launched during this investigation.
+set `GENERATIONS=100` plus a unique run name/group and pass `--time=1-00:00:00`
+for a 24-hour allocation. The lab's `short` QOS permits this through its
+`PartitionTimeLimit` flag, despite the partition's displayed four-hour limit.
+Overcap also accepts a 24-hour request but remains preemptible. No 100-generation
+job was launched during this investigation.

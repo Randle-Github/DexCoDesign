@@ -53,7 +53,7 @@ def submission(tmp_path):
 
 
 def test_yaml_submission_preserves_experiment_and_ignores_stale_overrides(submission):
-    repo, _, _, run = submission
+    repo, _, config, run = submission
     result = run()
     assert result.returncode == 0, result.stderr
     received = json.loads((repo / "received.json").read_text())
@@ -64,7 +64,7 @@ def test_yaml_submission_preserves_experiment_and_ignores_stale_overrides(submis
                 "DEXCODESIGN_MORPHOLOGY_BATCH_MANIFEST"):
         assert received["env"][key] is None
     assert received["env"]["WANDB_API_KEY"] == "test-only-not-a-real-key"
-    assert "--partition=overcap" in received["args"]
+    assert f"--partition={config['slurm']['partition']}" in received["args"]
     assert "--export=ALL" in received["args"]
     assert received["args"][-5:] == [str(repo / "train_hand_hybrid_sac_morphology.sbatch"),
                                     "--seed", "42", "--ppo-episode-log-window-steps", "1600"]
