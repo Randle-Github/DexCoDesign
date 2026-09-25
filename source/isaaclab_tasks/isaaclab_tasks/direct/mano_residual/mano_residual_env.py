@@ -243,6 +243,9 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # Opt-in morphology conditioning. The morphology search driver sets this
     # to the design-vector width and appends the matching normalized context.
     morphology_context_dim = 0
+    # Keep the legacy MANO/object observation layout unless a WUJI run
+    # explicitly opts into the palm-geometry representation.
+    observation_mode = "legacy"
     state_space = 0
 
     # Rigid mode keeps the original 7D object pose. Articulate mode changes
