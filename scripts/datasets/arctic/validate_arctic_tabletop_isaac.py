@@ -99,6 +99,11 @@ def main() -> None:
                 spawn=sim_utils.UrdfFileCfg(
                     asset_path=str((root / "assets" / "object_urdf" / f"{oid}.urdf").resolve()),
                     fix_base=False, merge_fixed_joints=False, self_collision=False,
+                    # The validator drives the articulation through the
+                    # explicit IsaacLab actuator below.  Do not ask the URDF
+                    # converter to synthesize a second drive (newer IsaacLab
+                    # versions otherwise require converter-side PD gains).
+                    joint_drive=None,
                     force_usd_conversion=False,
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(
                         disable_gravity=False, max_depenetration_velocity=1.0,
@@ -152,6 +157,13 @@ def main() -> None:
                 "horizontal_drift_m": drift, "vertical_change_m": dz,
                 "rotation_change_deg": float(np.rad2deg(angle)),
                 "stable_pose_probability": candidate["probability"],
+                # Persist the actually settled PhysX pose.  The analytical
+                # support pose can still move a few degrees because the URDF
+                # collision geometry is not identical to the visual mesh.
+                # Tabletop references should start from this pose, not from
+                # the pre-release approximation.
+                "settled_position_m": (final_pos - origin).tolist(),
+                "settled_quaternion_wxyz": final_quat.detach().cpu().numpy().tolist(),
             })
         passing = [item for item in tested if item["pass"]]
         selected = max(passing, key=lambda item: item["stable_pose_probability"]) if passing else min(
@@ -177,5 +189,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-    app.close()
+    try:
+        main()
+    finally:
+        app.close()

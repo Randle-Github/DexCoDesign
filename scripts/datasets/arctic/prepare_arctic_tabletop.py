@@ -64,7 +64,10 @@ def stable_table_poses(bottom_path: Path, top_path: Path, joint_q: float, maximu
     for index in np.argsort(-probabilities)[:maximum]:
         rotation = transforms[index, :3, :3]
         vertices = (rotation @ mesh.vertices.T).T
-        position = np.array([0.0, 0.0, -float(vertices[:, 2].min()) + 5.0e-4])
+        # Match the Isaac/PhysX validator.  Two millimetres avoids starting
+        # inside the support plane while remaining close enough to settle in a
+        # few simulation steps.
+        position = np.array([0.0, 0.0, -float(vertices[:, 2].min()) + 2.0e-3])
         candidates.append((rotation, position, float(probabilities[index])))
     if not candidates:
         raise RuntimeError(f"No stable pose found for {bottom_path}")
@@ -79,6 +82,120 @@ def quat_wxyz(rotation: np.ndarray) -> np.ndarray:
 def quat_angle(q0: np.ndarray, q1: np.ndarray) -> float:
     dot = float(np.clip(abs(np.dot(q0, q1)), 0.0, 1.0))
     return float(2.0 * np.arccos(dot))
+
+
+def source_up_priors(root: Path) -> dict[str, dict]:
+    """Return one object-local semantic up direction per benchmark object.
+
+    ARCTIC's Vicon world is Z-up.  The lowest-index sequence for each object
+    is the same deterministic ``use`` sample used to seed the compact
+    benchmark, so its frame-zero root rotation provides a semantic orientation
+    prior without inventing an object-specific axis by hand.
+    """
+    priors: dict[str, dict] = {}
+    for source_path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+        with np.load(source_path, allow_pickle=False) as source:
+            oid = object_id(source)
+            if oid in priors:
+                continue
+            root_pose = np.asarray(source["object_root_pose_wxyz"][0, 0], dtype=np.float64)
+        root_rotation = Rotation.from_quat(root_pose[[4, 5, 6, 3]]).as_matrix()
+        local_up = root_rotation.T @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        priors[oid] = {
+            "local_up": local_up,
+            "source_sequence": source_path.parent.name,
+        }
+    return priors
+
+
+def isaac_validated_semantic_poses(
+    root: Path,
+    audit_path: Path,
+    maximum_semantic_tilt_deg: float,
+) -> dict[str, dict]:
+    """Select stable poses that preserve each object's demonstrated up axis.
+
+    Stability alone has a 90/180-degree ambiguity: an appliance can be stable
+    on its side or upside down.  We first require the candidate to pass the
+    Isaac/PhysX release audit, then minimize the angle between its object-local
+    up direction and the original ARCTIC demonstration's up direction.
+    """
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    priors = source_up_priors(root)
+    poses: dict[str, dict] = {}
+    failures: list[str] = []
+    for oid, result in sorted(audit["objects"].items()):
+        if oid not in priors:
+            continue
+        tested = result["tested_candidates"]
+        q = float(result["audit_joint_position_rad"])
+        asset = root / "assets" / "object_vtemplates" / oid
+        candidates = stable_table_poses(
+            asset / "bottom.obj", asset / "top.obj", q, maximum=len(tested)
+        )
+        source_up = np.asarray(priors[oid]["local_up"], dtype=np.float64)
+        ranked = []
+        for rank, ((rotation, position, probability), metrics) in enumerate(
+            zip(candidates, tested, strict=True)
+        ):
+            # Use the post-release PhysX pose when available.  This removes
+            # the immediate reset-time settling error while retaining the
+            # candidate's semantic side (for example, screen-up for a phone).
+            settled_quat = metrics.get("settled_quaternion_wxyz")
+            settled_position = metrics.get("settled_position_m")
+            if settled_quat is not None and settled_position is not None:
+                settled_quat = np.asarray(settled_quat, dtype=np.float64)
+                evaluated_rotation = Rotation.from_quat(
+                    settled_quat[[1, 2, 3, 0]]
+                ).as_matrix()
+                evaluated_position = np.asarray(settled_position, dtype=np.float64)
+            else:
+                evaluated_rotation = rotation
+                evaluated_position = position
+            candidate_up = evaluated_rotation.T @ np.array(
+                [0.0, 0.0, 1.0], dtype=np.float64
+            )
+            tilt_deg = float(
+                np.rad2deg(
+                    np.arccos(np.clip(np.dot(source_up, candidate_up), -1.0, 1.0))
+                )
+            )
+            if bool(metrics["pass"]):
+                ranked.append(
+                    (
+                        tilt_deg,
+                        -float(probability),
+                        rank,
+                        evaluated_rotation,
+                        evaluated_position,
+                        probability,
+                        metrics,
+                    )
+                )
+        if not ranked:
+            failures.append(f"{oid}: no Isaac-stable candidate")
+            continue
+        tilt_deg, _, rank, rotation, position, probability, metrics = min(ranked)
+        if tilt_deg > maximum_semantic_tilt_deg:
+            failures.append(
+                f"{oid}: nearest Isaac-stable candidate tilts semantic up by {tilt_deg:.2f} deg"
+            )
+            continue
+        poses[oid] = {
+            "rotation_matrix": rotation.tolist(),
+            "quaternion_wxyz": quat_wxyz(rotation).tolist(),
+            "position_m": position.tolist(),
+            "stable_pose_probability": float(probability),
+            "stable_pose_rank": int(rank),
+            "audit_joint_position_rad": q,
+            "semantic_tilt_deg": tilt_deg,
+            "semantic_up_local": source_up.tolist(),
+            "semantic_prior_source": priors[oid]["source_sequence"],
+            "isaac_release": metrics,
+        }
+    if failures:
+        raise RuntimeError("Refusing tabletop conversion: " + "; ".join(failures))
+    return poses
 
 
 def free_release_audit(
@@ -170,15 +287,19 @@ def write_table_dynamic(
     root: Path,
     poses: dict[str, dict],
     object_ids: set[str] | None = None,
+    sequence_ids: set[str] | None = None,
+    output_tag: str = "",
 ) -> dict:
     """Rigidly align full trajectories to stable table poses without freezing roots."""
-    canonical_out = root / "canonical_100_tabletop"
-    benchmark_out = root / "benchmark_100_tabletop"
+    canonical_out = root / f"canonical_100_tabletop{output_tag}"
+    benchmark_out = root / f"benchmark_100_tabletop{output_tag}"
     canonical_records = []
     raw_records = []
     max_relative_error = 0.0
 
     for source_path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+        if sequence_ids is not None and source_path.parent.name not in sequence_ids:
+            continue
         with np.load(source_path, allow_pickle=False) as source:
             oid = object_id(source)
             if object_ids is not None and oid not in object_ids:
@@ -221,6 +342,8 @@ def write_table_dynamic(
             canonical_records.append({"sequence_id": source_path.parent.name, "path": str(destination.relative_to(root))})
 
     for source_path in sorted((root / "benchmark_100").glob("*.npz")):
+        if sequence_ids is not None and source_path.stem not in sequence_ids:
+            continue
         with np.load(source_path, allow_pickle=False) as source:
             oid = object_id(source)
             if object_ids is not None and oid not in object_ids:
@@ -355,8 +478,70 @@ def main() -> None:
         help="Write best-candidate tabletop trajectories even when the release audit fails.",
     )
     parser.add_argument("--seconds", type=float, default=1.5)
+    parser.add_argument(
+        "--isaac-audit",
+        type=Path,
+        default=None,
+        help=(
+            "Isaac/PhysX candidate audit. When supplied, select only passing "
+            "poses and preserve the original ARCTIC semantic up direction."
+        ),
+    )
+    parser.add_argument("--maximum-semantic-tilt-deg", type=float, default=15.0)
+    parser.add_argument(
+        "--sequence-ids",
+        nargs="*",
+        default=None,
+        help="Optional exact benchmark sequence IDs to convert.",
+    )
+    parser.add_argument(
+        "--output-tag",
+        default="",
+        help="Suffix for tabletop output directories, for example _semantic_v2.",
+    )
     args = parser.parse_args()
     root = args.root.resolve()
+    if args.isaac_audit is not None:
+        audit_path = args.isaac_audit.expanduser().resolve()
+        poses = isaac_validated_semantic_poses(
+            root, audit_path, args.maximum_semantic_tilt_deg
+        )
+        manifest = {
+            "schema": "dexcodesign.arctic_tabletop.v2",
+            "method": (
+                "Isaac/PhysX free-release pass, then minimum tilt from the "
+                "original ARCTIC object-local semantic up direction"
+            ),
+            "world_up": [0.0, 0.0, 1.0],
+            "support_plane_z_m": 0.0,
+            "maximum_semantic_tilt_deg": args.maximum_semantic_tilt_deg,
+            "isaac_audit": str(audit_path),
+            "objects": poses,
+            "failed_objects": [],
+        }
+        if args.write_trajectories:
+            manifest["trajectory_conversion"] = write_table_dynamic(
+                root,
+                poses,
+                sequence_ids=(set(args.sequence_ids) if args.sequence_ids else None),
+                output_tag=args.output_tag,
+            )
+        output = root / "manifests" / f"tabletop_audit{args.output_tag}.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        for oid, pose in sorted(poses.items()):
+            metrics = pose["isaac_release"]
+            print(
+                f"TABLE_AUDIT {oid:16s} pass=True rank={pose['stable_pose_rank']} "
+                f"semantic_tilt={pose['semantic_tilt_deg']:.2f}deg "
+                f"drift={metrics['horizontal_drift_m']:.4f}m "
+                f"rot={metrics['rotation_change_deg']:.2f}deg"
+            )
+        print(
+            f"ARCTIC_TABLETOP_READY objects={len(poses)} failed=0 manifest={output}"
+        )
+        return
+
     q_by_object: dict[str, list[float]] = {}
     for path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
         with np.load(path, allow_pickle=False) as source:

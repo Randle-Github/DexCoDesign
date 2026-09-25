@@ -15,11 +15,18 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--rollout", type=Path, required=True)
+parser.add_argument(
+    "--second-rollout",
+    type=Path,
+    default=None,
+    help="Optional synchronized single-hand reference for bimanual playback.",
+)
 parser.add_argument("--hand-usd", type=Path, required=True)
 parser.add_argument("--second-hand-usd", type=Path, default=None)
 parser.add_argument("--object-usd", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--fps", type=int, default=30)
+parser.add_argument("--max-frames", type=int, default=None)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 app = AppLauncher(args).app
@@ -64,7 +71,8 @@ def capture_rgb(camera: Camera, sim: SimulationContext) -> np.ndarray:
     last_error: Exception | None = None
     for _ in range(120):
         try:
-            app.update()
+            # SimulationContext.render disables physics while updating Kit.
+            # A bare app.update here advances dynamics and corrupts replay poses.
             sim.render()
             camera.update(0.0)
             rgb = camera.data.output["rgb"]
@@ -82,6 +90,11 @@ def main() -> None:
     carb.settings.get_settings().set_bool("/isaaclab/cameras_enabled", True)
     with np.load(args.rollout.resolve()) as source:
         hand_q = source["hand_q"].astype(np.float32)
+        primary_joint_names = (
+            source["joint_names"].astype(str).tolist()
+            if "joint_names" in source.files
+            else None
+        )
         second_hand_q = (
             source["second_hand_q"].astype(np.float32)
             if "second_hand_q" in source.files
@@ -94,7 +107,32 @@ def main() -> None:
         )
         object_pose = source["object_pose_wxyz"].astype(np.float32)
         object_q = source["object_joint_position_rad"].astype(np.float32)
-        metadata = json.loads(str(source["metadata_json"]))
+        primary_fingertips = (
+            source["fingertip_pose_wxyz"][..., :3].astype(np.float32)
+            if "fingertip_pose_wxyz" in source.files
+            else None
+        )
+        metadata = (
+            json.loads(str(source["metadata_json"]))
+            if "metadata_json" in source.files
+            else {}
+        )
+    second_fingertips = None
+    if args.second_rollout is not None:
+        with np.load(args.second_rollout.resolve()) as second_source:
+            second_hand_q = second_source["hand_q"].astype(np.float32)
+            second_joint_names = second_source["joint_names"].astype(str).tolist()
+            second_object_pose = second_source["object_pose_wxyz"].astype(np.float32)
+            second_object_q = second_source["object_joint_position_rad"].astype(np.float32)
+            second_fingertips = (
+                second_source["fingertip_pose_wxyz"][..., :3].astype(np.float32)
+                if "fingertip_pose_wxyz" in second_source.files
+                else None
+            )
+        if not np.allclose(second_object_pose, object_pose, atol=1.0e-6) or not np.allclose(
+            second_object_q, object_q, atol=1.0e-6
+        ):
+            raise ValueError("Primary and second rollouts disagree on object trajectory")
     object_q = object_q.reshape(len(hand_q), -1)
     if object_pose.shape != (len(hand_q), 7) or object_q.shape[0] != len(hand_q):
         raise ValueError(
@@ -145,7 +183,7 @@ def main() -> None:
             width=960,
             data_types=["rgb"],
             spawn=sim_utils.PinholeCameraCfg(
-                focal_length=42.0,
+                focal_length=28.0,
                 focus_distance=1.0,
                 horizontal_aperture=24.0,
                 clipping_range=(0.01, 12.0),
@@ -156,7 +194,7 @@ def main() -> None:
     sim.reset()
     print("ARCTIC_POLICY_RENDER_STAGE simulation_reset", flush=True)
 
-    saved_names = metadata.get("joint_names")
+    saved_names = metadata.get("joint_names", primary_joint_names)
     if saved_names is None:
         raise ValueError("Captured rollout does not contain joint_names metadata")
     order = [saved_names.index(name) for name in hand.joint_names]
@@ -164,12 +202,35 @@ def main() -> None:
     if second_hand is not None:
         second_order = [second_joint_names.index(name) for name in second_hand.joint_names]
         second_hand_q = second_hand_q[:, second_order]
-    center = object_pose[:, :3].mean(axis=0)
-    camera_offset = (
-        np.array([0.46, 0.44, 0.34])
-        if second_hand is not None
-        else np.array([0.36, 0.34, 0.28])
-    )
+    # Frame the complete interaction rather than only the object's mean root.
+    # ARCTIC's minimal pose release does not include calibrated RGB cameras, so
+    # use the full wrist/fingertip/object trajectory to choose one static view.
+    def wrist_positions(values, names):
+        side = "right" if "right_pos_x" in names else "left"
+        indices = [names.index(f"{side}_pos_{axis}") for axis in "xyz"]
+        local = values[:, indices]
+        # The URDF's first prismatic joint has a fixed +/-90 degree Y rotation.
+        x, y, z = local.T
+        return np.column_stack((z, y, -x)) if side == "right" else np.column_stack((-z, y, x))
+
+    points = [object_pose[:, :3], wrist_positions(hand_q, hand.joint_names)]
+    if primary_fingertips is not None:
+        points.append(primary_fingertips.reshape(-1, 3))
+    if second_hand_q is not None:
+        points.append(wrist_positions(second_hand_q, second_hand.joint_names))
+        if second_fingertips is not None:
+            points.append(second_fingertips.reshape(-1, 3))
+    scene_points = np.concatenate(points, axis=0)
+    lower = np.quantile(scene_points, 0.01, axis=0)
+    upper = np.quantile(scene_points, 0.99, axis=0)
+    center = 0.5 * (lower + upper)
+    center[2] = max(center[2], 0.10)
+    radius = max(float(np.linalg.norm(scene_points - center, axis=1).max()), 0.20)
+    # Extra radius accounts for object volume because the rollout stores its
+    # root pose, not object surface vertices.
+    distance = 2.7 * (radius + 0.16)
+    view_direction = np.array([1.0, 1.0, 0.72], dtype=np.float32)
+    camera_offset = distance * view_direction / np.linalg.norm(view_direction)
     camera.set_world_poses_from_view(
         torch.tensor(
             [center + camera_offset],
@@ -201,7 +262,14 @@ def main() -> None:
         macro_block_size=None,
     )
     try:
-        for frame_index in range(len(hand_q)):
+        for frame_index in range(min(len(hand_q), args.max_frames or len(hand_q))):
+            # The six wrist joints already encode all hand motion. Restore the
+            # virtual world base, including any drift during simulator startup.
+            for replay_hand in (hand, second_hand):
+                if replay_hand is not None:
+                    base_pose = torch.tensor([[0., 0., 0., 1., 0., 0., 0.]], device=sim.device)
+                    replay_hand.write_root_pose_to_sim(base_pose)
+                    replay_hand.write_root_velocity_to_sim(torch.zeros((1, 6), device=sim.device))
             q = hand_q_t[frame_index : frame_index + 1]
             hand.write_joint_state_to_sim(q, torch.zeros_like(q))
             if second_hand is not None:
@@ -216,6 +284,15 @@ def main() -> None:
             obj.write_joint_state_to_sim(q_obj, torch.zeros_like(q_obj))
             sim.forward()
             frame = capture_rgb(camera, sim)
+            if frame_index in (0, 30, 100):
+                for label, asset, values in (("primary", hand, q), ("second", second_hand, second_q if second_hand is not None else None)):
+                    if asset is not None:
+                        asset.update(sim.get_physics_dt())
+                        palm_id = next(i for i, name in enumerate(asset.body_names) if name.endswith("_palm"))
+                        print("REPLAY_POSE_CHECK", label, frame_index,
+                              "palm", asset.data.body_pos_w[0, palm_id].cpu().tolist(),
+                              "root", asset.data.root_state_w[0, :7].cpu().tolist(),
+                              "q_error", float((asset.data.joint_pos-values).abs().max()), flush=True)
             if frame_index == 0:
                 imageio.imwrite(args.output.with_suffix(".png"), frame)
                 print(
