@@ -30,6 +30,9 @@ mkdir -p "${OUTPUT_ROOT}"
 
 export OMNI_KIT_ACCEPT_EULA=YES
 export WANDB_MODE=disabled
+# Prefer the explicitly selected checkout over any editable install that may
+# point at another branch.  This keeps isolated validation worktrees honest.
+export PYTHONPATH="${REPO_ROOT}/source/isaaclab_tasks:${REPO_ROOT}/source/isaaclab_assets:${REPO_ROOT}/source/isaaclab:${PYTHONPATH:-}"
 export DEXCODESIGN_REFERENCE_PATH="${REFERENCE_PATH:-${REPO_ROOT}/artifacts/arctic_mano_dynamic/00_scissors/isaaclab_reference_right_fixedtip_dynamic_tabletop_30hz.npz}"
 export DEXCODESIGN_OBJECT_USD_PATH="${OBJECT_USD_PATH:-${REPO_ROOT}/artifacts/arctic_mano_preview/assets/objects/scissors_vhacd.usd}"
 export DEXCODESIGN_MANO_SIDE="${MANO_SIDE:-right}"
