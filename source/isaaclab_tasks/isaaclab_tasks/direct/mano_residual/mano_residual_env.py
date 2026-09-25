@@ -592,7 +592,7 @@ class ManoResidualEnv(DirectRLEnv):
         return self.scene.num_envs
 
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
-        self._bimanual_mode = bool(cfg.bimanual_mode)
+        self._bimanual_mode = bool(getattr(cfg, "bimanual_mode", False))
         if self._bimanual_mode:
             if HAND_ID != "mano" or MORPHOLOGY_BATCH_MANIFEST is not None:
                 raise ValueError(
@@ -1698,7 +1698,7 @@ class ManoResidualEnv(DirectRLEnv):
         )
         object_spawn = copy.deepcopy(
             self.cfg.articulated_object_cfg.spawn
-            if self.cfg.articulate_mode
+            if getattr(self.cfg, "articulate_mode", False)
             else self.cfg.object_cfg.spawn
         )
         object_spawn.func(
