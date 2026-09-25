@@ -134,12 +134,13 @@ so rigid-object and articulated-object metrics cannot be accidentally mixed.
 ## Bimanual residual mode
 
 ARCTIC records both hands.  `env.bimanual_mode=true` therefore spawns both
-physical MANO articulations.  The selected primary side (normally `right`) is
-controlled by residual PPO, while the opposite support hand tracks its own
-reference trajectory and participates in PhysX contacts.  The policy observes
-the support hand's current and goal state, but its action dimension remains
-unchanged; existing single-hand checkpoints and training configurations are
-not silently reinterpreted.
+physical MANO articulations and controls both with one residual PPO policy.
+The action is the concatenation of the selected primary side (normally
+`right`) and the opposite side, so the canonical MANO pair has 56 learned
+residual actions. The observation contains current and goal state for both
+hands plus one shared object state. Both hands participate in PhysX contacts.
+Single-hand mode remains unchanged; single-hand checkpoints are not loaded as
+bimanual checkpoints.
 
 Prepare a synchronized pair:
 
@@ -156,10 +157,9 @@ SAMPLE_ID=000_box_s08 OBJECT_ID=box \
   sbatch scripts/datasets/arctic/train_arctic_bimanual.sbatch
 ```
 
-The mode is intentionally an asymmetric first implementation: it tests whether
-the missing physical support hand explains single-hand failures without first
-doubling the learned action space.  A fully learned two-hand residual policy
-can be added later as a separate ablation.
+Both sides receive independently learned residual corrections around their own
+synchronized references. Neither hand is a fixed or reference-only support
+hand.
 
 ## Files
 

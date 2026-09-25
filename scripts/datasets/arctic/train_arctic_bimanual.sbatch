@@ -38,7 +38,7 @@ export SCISSORS_HANDLE_CONTACT_GATE=false
 export OBJECT_FAILURE_DISTANCE="${OBJECT_FAILURE_DISTANCE:-0.25}"
 export OBJECT_FAILURE_ORIENTATION="${OBJECT_FAILURE_ORIENTATION:-3.14}"
 export OBJECT_FAILURE_ARTICULATION="${OBJECT_FAILURE_ARTICULATION:-3.14}"
-export HAND_BEST_ROLLOUT_PATH="${ROOT}/artifacts/arctic_bimanual/rollouts/${SAMPLE_ID}.npz"
+export HAND_BEST_ROLLOUT_PATH="${ROOT}/artifacts/arctic_bimanual/rollouts/${SAMPLE_ID}_joint_ppo.npz"
 
 cd "${ROOT}"
 bash scripts/datasets/arctic/train_arctic_scissors.sbatch

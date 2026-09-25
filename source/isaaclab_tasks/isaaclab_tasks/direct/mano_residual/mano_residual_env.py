@@ -261,10 +261,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     require_free_object_root = False
     require_dynamic_object_root = False
 
-    # Bimanual mode keeps the selected MANO side as the residual-policy hand
-    # and adds the opposite hand as a physical, reference-tracking support
-    # hand.  This is deliberately opt-in so existing single-hand checkpoints,
-    # observations, and action dimensions remain unchanged.
+    # Bimanual mode jointly controls both MANO hands. The policy action is the
+    # concatenation [primary residual, opposite-hand residual]. It remains
+    # opt-in so existing single-hand checkpoints and action dimensions do not
+    # change.
     bimanual_mode = False
 
     sim: SimulationCfg = SimulationCfg(
@@ -753,6 +753,38 @@ class ManoResidualEnv(DirectRLEnv):
             if "action_to_control_matrix" in reference
             else np.eye(len(self._reference_joint_names), dtype=np.float32)
         )
+        self._primary_action_dim = len(self._action_joint_names)
+        if self._bimanual_mode:
+            self._auxiliary_reference_joint_names = self._auxiliary_reference[
+                "joint_names"
+            ].tolist()
+            self._auxiliary_action_joint_names = (
+                self._auxiliary_reference["action_joint_names"].tolist()
+                if "action_joint_names" in self._auxiliary_reference
+                else list(self._auxiliary_reference_joint_names)
+            )
+            self._auxiliary_action_to_control_cpu = torch.from_numpy(
+                self._auxiliary_reference["action_to_control_matrix"]
+                if "action_to_control_matrix" in self._auxiliary_reference
+                else np.eye(
+                    len(self._auxiliary_reference_joint_names), dtype=np.float32
+                )
+            )
+        else:
+            self._auxiliary_reference_joint_names = []
+            self._auxiliary_action_joint_names = []
+            self._auxiliary_action_to_control_cpu = None
+        self._auxiliary_action_dim = len(self._auxiliary_action_joint_names)
+        self._all_action_joint_names = [
+            *self._action_joint_names,
+            *self._auxiliary_action_joint_names,
+        ]
+        cfg.action_space = gym.spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(len(self._all_action_joint_names),),
+            dtype=np.float32,
+        )
         def stacked(key: str) -> np.ndarray:
             values = [entry[key] for entry in references]
             if self._morphology_batch:
@@ -875,10 +907,10 @@ class ManoResidualEnv(DirectRLEnv):
             )
 
         self.action_dim = gym.spaces.flatdim(self.single_action_space)
-        if self.action_dim != len(self._action_joint_names):
+        if self.action_dim != len(self._all_action_joint_names):
             raise RuntimeError(
                 f"Action space has {self.action_dim} dimensions but {HAND_ID} "
-                f"defines {len(self._action_joint_names)} active joints"
+                f"defines {len(self._all_action_joint_names)} active joints"
             )
         if self.hand.num_joints != len(self._reference_joint_names):
             raise RuntimeError(
@@ -911,12 +943,12 @@ class ManoResidualEnv(DirectRLEnv):
         )
         if self.action_to_control.shape != (
             self.hand.num_joints,
-            self.action_dim,
+            self._primary_action_dim,
         ):
             raise RuntimeError(
                 f"{HAND_ID} action-to-control map has shape "
                 f"{tuple(self.action_to_control.shape)}, expected "
-                f"({self.hand.num_joints}, {self.action_dim})"
+                f"({self.hand.num_joints}, {self._primary_action_dim})"
             )
         self.reference_object_pose = self._reference_object_pose_cpu.to(self.device)
         if self.cfg.articulate_mode:
@@ -956,9 +988,7 @@ class ManoResidualEnv(DirectRLEnv):
         )
         self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
         if self._bimanual_mode:
-            auxiliary_joint_names = self._auxiliary_reference[
-                "joint_names"
-            ].tolist()
+            auxiliary_joint_names = self._auxiliary_reference_joint_names
             if self.auxiliary_hand.num_joints != len(auxiliary_joint_names):
                 raise RuntimeError(
                     "Auxiliary MANO joint count does not match its reference: "
@@ -984,6 +1014,20 @@ class ManoResidualEnv(DirectRLEnv):
             self.auxiliary_reference_hand_ctrl = torch.from_numpy(
                 self._auxiliary_reference["hand_ctrl"]
             ).index_select(1, auxiliary_order_tensor).to(self.device)
+            self.auxiliary_action_to_control = (
+                self._auxiliary_action_to_control_cpu[auxiliary_order]
+                .to(self.device)
+            )
+            if self.auxiliary_action_to_control.shape != (
+                self.auxiliary_hand.num_joints,
+                self._auxiliary_action_dim,
+            ):
+                raise RuntimeError(
+                    "Auxiliary MANO action-to-control map has shape "
+                    f"{tuple(self.auxiliary_action_to_control.shape)}, expected "
+                    f"({self.auxiliary_hand.num_joints}, "
+                    f"{self._auxiliary_action_dim})"
+                )
             self.auxiliary_reference_fingertip_pose = torch.from_numpy(
                 self._auxiliary_reference["fingertip_pose_wxyz"]
             ).to(self.device)
@@ -1030,18 +1074,34 @@ class ManoResidualEnv(DirectRLEnv):
         self.residual_scale = torch.full(
             (self.action_dim,), self.cfg.residual_finger_scale, device=self.device
         )
+        root_position_action_names = [
+            *ROOT_POSITION_JOINT_NAMES,
+            *(
+                tuple(f"{AUXILIARY_MANO_SIDE}_pos_{axis}" for axis in "xyz")
+                if self._bimanual_mode
+                else ()
+            ),
+        ]
+        root_rotation_action_names = [
+            *ROOT_ROTATION_JOINT_NAMES,
+            *(
+                tuple(f"{AUXILIARY_MANO_SIDE}_rot_{axis}" for axis in "xyz")
+                if self._bimanual_mode
+                else ()
+            ),
+        ]
         self._root_position_action_indices = torch.tensor(
             [
-                self._action_joint_names.index(name)
-                for name in ROOT_POSITION_JOINT_NAMES
+                self._all_action_joint_names.index(name)
+                for name in root_position_action_names
             ],
             dtype=torch.long,
             device=self.device,
         )
         self._root_rotation_action_indices = torch.tensor(
             [
-                self._action_joint_names.index(name)
-                for name in ROOT_ROTATION_JOINT_NAMES
+                self._all_action_joint_names.index(name)
+                for name in root_rotation_action_names
             ],
             dtype=torch.long,
             device=self.device,
@@ -1049,9 +1109,9 @@ class ManoResidualEnv(DirectRLEnv):
         self._finger_action_indices = torch.tensor(
             [
                 index
-                for index, name in enumerate(self._action_joint_names)
+                for index, name in enumerate(self._all_action_joint_names)
                 if name
-                not in set(ROOT_POSITION_JOINT_NAMES + ROOT_ROTATION_JOINT_NAMES)
+                not in set(root_position_action_names + root_rotation_action_names)
             ],
             dtype=torch.long,
             device=self.device,
@@ -1143,6 +1203,11 @@ class ManoResidualEnv(DirectRLEnv):
             )
             if self._bimanual_mode:
                 self._capture_auxiliary_hand_q = torch.zeros(
+                    (*capture_shape, self.auxiliary_hand.num_joints),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+                self._capture_auxiliary_joint_targets = torch.zeros(
                     (*capture_shape, self.auxiliary_hand.num_joints),
                     dtype=torch.float32,
                     device=self.device,
@@ -2037,7 +2102,10 @@ class ManoResidualEnv(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = torch.clamp(actions, -1.0, 1.0)
         base_targets = self._reference_at(self.reference_hand_ctrl, self.phase_buf)
-        active_residual = self.residual_scale * self.actions
+        primary_actions = self.actions[:, : self._primary_action_dim]
+        active_residual = (
+            self.residual_scale[: self._primary_action_dim] * primary_actions
+        )
         control_residual = active_residual @ self.action_to_control.T
         targets = base_targets + control_residual
         self.joint_targets = torch.clamp(
@@ -2046,9 +2114,20 @@ class ManoResidualEnv(DirectRLEnv):
             self.joint_upper_limits,
         )
         if self._bimanual_mode:
-            auxiliary_targets = self._reference_at(
+            auxiliary_base_targets = self._reference_at(
                 self.auxiliary_reference_hand_ctrl,
                 self.phase_buf,
+            )
+            auxiliary_actions = self.actions[:, self._primary_action_dim :]
+            auxiliary_residual = (
+                self.residual_scale[self._primary_action_dim :]
+                * auxiliary_actions
+            )
+            auxiliary_control_residual = (
+                auxiliary_residual @ self.auxiliary_action_to_control.T
+            )
+            auxiliary_targets = (
+                auxiliary_base_targets + auxiliary_control_residual
             )
             self.auxiliary_joint_targets = torch.clamp(
                 auxiliary_targets,
@@ -2059,6 +2138,10 @@ class ManoResidualEnv(DirectRLEnv):
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_actions[env_ids, self.phase_buf] = self.actions
             self._capture_joint_targets[env_ids, self.phase_buf] = self.joint_targets
+            if self._bimanual_mode:
+                self._capture_auxiliary_joint_targets[
+                    env_ids, self.phase_buf
+                ] = self.auxiliary_joint_targets
 
     def _apply_action(self) -> None:
         self.hand.set_joint_position_target(self.joint_targets)
@@ -2696,7 +2779,11 @@ class ManoResidualEnv(DirectRLEnv):
                 ].amax().item()
             ),
             "joint_names": list(self.hand.joint_names),
-            "action_joint_names": list(self._action_joint_names),
+            "action_joint_names": list(self._all_action_joint_names),
+            "primary_action_joint_names": list(self._action_joint_names),
+            "auxiliary_action_joint_names": list(
+                self._auxiliary_action_joint_names
+            ),
             "residual_root_position_scale": self.cfg.residual_root_position_scale,
             "residual_root_rotation_scale": self.cfg.residual_root_rotation_scale,
             "residual_finger_scale": self.cfg.residual_finger_scale,
@@ -2736,6 +2823,11 @@ class ManoResidualEnv(DirectRLEnv):
             payload["auxiliary_hand_q"] = self._capture_auxiliary_hand_q[
                 env_id, : last_phase + 1
             ].detach().cpu().numpy()
+            payload["auxiliary_joint_targets"] = (
+                self._capture_auxiliary_joint_targets[
+                    env_id, : last_phase + 1
+                ].detach().cpu().numpy()
+            )
             payload["auxiliary_joint_names"] = np.asarray(
                 self.auxiliary_hand.joint_names
             )
@@ -2985,6 +3077,9 @@ class ManoResidualEnv(DirectRLEnv):
         self._pose_episode_return[env_ids] = 0.0
         if self._capture_enabled:
             self._capture_hand_q[env_ids] = 0.0
+            if self._bimanual_mode:
+                self._capture_auxiliary_hand_q[env_ids] = 0.0
+                self._capture_auxiliary_joint_targets[env_ids] = 0.0
             self._capture_object_pose[env_ids] = 0.0
             if self.cfg.articulate_mode:
                 self._capture_object_joint[env_ids] = 0.0
@@ -3012,5 +3107,10 @@ class ManoResidualEnv(DirectRLEnv):
                 )
             self._capture_actions[env_ids, 0] = 0.0
             self._capture_joint_targets[env_ids, 0] = ctrl
+            if self._bimanual_mode:
+                self._capture_auxiliary_hand_q[env_ids, 0] = auxiliary_joint_pos
+                self._capture_auxiliary_joint_targets[
+                    env_ids, 0
+                ] = auxiliary_ctrl
             self._capture_pose_reward[env_ids, 0] = 0.0
             self._capture_contact_reward[env_ids, 0] = 0.0
