@@ -195,6 +195,9 @@ def log_environment_config_to_wandb(env_cfg, env_yaml_path: str, log_dir: str) -
                 "residual_root_rotation_scale",
                 "residual_finger_scale",
                 "disable_hand_support_collisions",
+                "articulate_mode",
+                "object_articulation_reward_weight",
+                "object_failure_articulation",
             )
             if hasattr(env_cfg, name)
         }

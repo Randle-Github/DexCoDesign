@@ -1,0 +1,30 @@
+{
+  "source": "Isaac parallel CEM with physical warm-up, job 3919264",
+  "start_phase": 240,
+  "validated_steps": 160,
+  "residual_finger_scale": 0.5,
+  "mean_position_error_m": 0.019232681021094322,
+  "mean_rotation_error_rad": 0.3674345314502716,
+  "mean_articulation_error_rad": 0.12995029985904694,
+  "pinch_fraction": 1.0,
+  "maximum_lift_m": 0.03136906772851944,
+  "reference_lift_m": 0.015577077865600586,
+  "finger_action_names": [
+    "right_j_index1y", "right_j_index1z", "right_j_index2", "right_j_index3",
+    "right_j_middle1y", "right_j_middle1z", "right_j_middle2", "right_j_middle3",
+    "right_j_pinky1y", "right_j_pinky1z", "right_j_pinky2", "right_j_pinky3",
+    "right_j_ring1y", "right_j_ring1z", "right_j_ring2", "right_j_ring3",
+    "right_j_thumb1x", "right_j_thumb1y", "right_j_thumb1z", "right_j_thumb2y",
+    "right_j_thumb2z", "right_j_thumb3"
+  ],
+  "finger_actions": [
+    -0.012031055986881256, -0.17054541409015656, -0.1382361501455307,
+    -0.22532695531845093, 0.21809783577919006, -0.021320737898349762,
+    -0.3379451036453247, -0.4517670273780823, 0.21122433245182037,
+    -0.4045007824897766, 0.25120556354522705, 0.05005454272031784,
+    0.2768935263156891, 0.3781716525554657, 0.1761089265346527,
+    0.14063967764377594, -0.26587972044944763, 0.13680508732795715,
+    -0.0014111697673797607, 0.8835102319717407, 0.022985972464084625,
+    0.3969891667366028
+  ]
+}

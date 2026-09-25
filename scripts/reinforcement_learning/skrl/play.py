@@ -23,6 +23,12 @@ parser = argparse.ArgumentParser(description="Play a checkpoint of an RL agent f
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument(
+    "--max_steps",
+    type=int,
+    default=None,
+    help="Stop playback after this many environment steps, including when video recording is disabled.",
+)
+parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
@@ -221,6 +227,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     if args_cli.disable_fabric:
         env_cfg.scene.clone_in_fabric = False
 
+    # The checkpoint's environment YAML contains training-time values. Keep
+    # the registered Play configuration for fields that control evaluation
+    # length, termination, diagnostics, and the requested environment count.
+    play_num_envs = env_cfg.scene.num_envs
+    play_only_settings = {
+        name: getattr(env_cfg, name)
+        for name in (
+            "episode_length_s",
+            "object_failure_distance",
+            "object_failure_orientation",
+            "object_failure_articulation",
+            "disable_object_failure_termination",
+            "randomize_start_phase",
+            "log_rollout_diagnostics",
+        )
+        if hasattr(env_cfg, name)
+    }
+
     # configure the ML framework into the global skrl variable
     if args_cli.ml_framework.startswith("jax"):
         skrl.config.jax.backend = "jax" if args_cli.ml_framework == "jax" else "numpy"
@@ -402,11 +426,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
                 actions = outputs[-1].get("mean_actions", outputs[0])
             # env stepping
             obs, _, _, _, _ = env.step(actions)
-        if args_cli.video:
-            timestep += 1
-            # exit the play loop after recording one video
-            if timestep == args_cli.video_length:
-                break
+        timestep += 1
+        # Exit after recording one video, or after an explicitly requested
+        # camera-free evaluation horizon. The latter is useful for capturing
+        # simulator state on compute nodes without a working graphics stack.
+        if args_cli.video and timestep >= args_cli.video_length:
+            break
+        if args_cli.max_steps is not None and timestep >= args_cli.max_steps:
+            break
 
         # time delay for real-time evaluation
         sleep_time = dt - (time.time() - start_time)

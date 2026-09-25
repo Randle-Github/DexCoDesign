@@ -1,0 +1,28 @@
+{
+  "source": "Isaac parallel CEM search, job 3919241",
+  "start_phase": 30,
+  "validated_steps": 150,
+  "residual_finger_scale": 0.5,
+  "mean_position_error_m": 0.014238741248846054,
+  "pinch_fraction": 0.6399999856948853,
+  "maximum_lift_m": 0.133423313498497,
+  "reference_lift_m": 0.12744474411010742,
+  "finger_action_names": [
+    "right_j_index1y", "right_j_index1z", "right_j_index2", "right_j_index3",
+    "right_j_middle1y", "right_j_middle1z", "right_j_middle2", "right_j_middle3",
+    "right_j_pinky1y", "right_j_pinky1z", "right_j_pinky2", "right_j_pinky3",
+    "right_j_ring1y", "right_j_ring1z", "right_j_ring2", "right_j_ring3",
+    "right_j_thumb1x", "right_j_thumb1y", "right_j_thumb1z", "right_j_thumb2y",
+    "right_j_thumb2z", "right_j_thumb3"
+  ],
+  "finger_actions": [
+    -0.04175350069999695, -0.8141437768936157, -0.18901583552360535,
+    0.24384132027626038, -0.5187627077102661, 0.1758318692445755,
+    -0.18953412771224976, -0.001995757222175598, 0.6611436605453491,
+    -0.43232494592666626, 0.32755085825920105, -0.09836918115615845,
+    -0.3485950231552124, 0.2469298094511032, 0.5324671268463135,
+    -0.38953810930252075, -0.19034576416015625, 0.8334548473358154,
+    0.49343520402908325, -0.23086799681186676, -0.4173148274421692,
+    -0.46866875886917114
+  ]
+}

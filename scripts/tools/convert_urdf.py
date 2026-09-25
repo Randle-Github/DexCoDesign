@@ -65,6 +65,13 @@ parser.add_argument(
     choices=["position", "velocity", "none"],
     help="The type of control to use for the joint drive.",
 )
+parser.add_argument(
+    "--collider-type",
+    type=str,
+    default="convex_hull",
+    choices=["convex_hull", "convex_decomposition"],
+    help="Mesh collision approximation used by the URDF importer.",
+)
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -108,6 +115,7 @@ def main():
         usd_file_name=os.path.basename(dest_path),
         fix_base=args_cli.fix_base,
         merge_fixed_joints=args_cli.merge_joints,
+        collider_type=args_cli.collider_type,
         force_usd_conversion=True,
         joint_drive=UrdfConverterCfg.JointDriveCfg(
             gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
