@@ -21,13 +21,12 @@ mkdir -p "${ROOT}/artifacts/arctic_bimanual/logs" "${ROOT}/artifacts/arctic_bima
 export BIMANUAL_MODE=true
 export MANO_SIDE=right
 export REFERENCE_PATH="${REFERENCE_ROOT}/isaaclab_reference_right.npz"
-export AUXILIARY_REFERENCE_PATH="${REFERENCE_ROOT}/isaaclab_reference_left.npz"
+export BIMANUAL_REFERENCE_PATH="${REFERENCE_ROOT}/isaaclab_reference_left.npz"
 export OBJECT_USD_PATH="${ROOT}/artifacts/arctic_mano_preview/assets/objects/${OBJECT_ID}_vhacd.usd"
 export RUN_NAME="${RUN_NAME:-arctic_bimanual_${SAMPLE_ID}}"
 export RUN_SEED="${RUN_SEED:-2026}"
 export TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-300}"
 export NUM_ENVS="${NUM_ENVS:-256}"
-export OBJECT_DISABLE_GRAVITY=false
 export OBJECT_Z_REWARD_MULTIPLIER="${OBJECT_Z_REWARD_MULTIPLIER:-1.0}"
 export OBJECT_AIRBORNE_REWARD_WEIGHT=0.0
 export REQUIRE_CROSS_LINK_PINCH=false
@@ -38,7 +37,7 @@ export SCISSORS_HANDLE_CONTACT_GATE=false
 export OBJECT_FAILURE_DISTANCE="${OBJECT_FAILURE_DISTANCE:-0.25}"
 export OBJECT_FAILURE_ORIENTATION="${OBJECT_FAILURE_ORIENTATION:-3.14}"
 export OBJECT_FAILURE_ARTICULATION="${OBJECT_FAILURE_ARTICULATION:-3.14}"
-export HAND_BEST_ROLLOUT_PATH="${ROOT}/artifacts/arctic_bimanual/rollouts/${SAMPLE_ID}_joint_ppo.npz"
+export HAND_BEST_ROLLOUT_PATH="${ROOT}/artifacts/arctic_bimanual/rollouts/${SAMPLE_ID}_bimanual_ppo.npz"
 
 cd "${ROOT}"
 bash scripts/datasets/arctic/train_arctic_scissors.sbatch

@@ -54,8 +54,8 @@ MANO_REFERENCE_PATH = (
     / "isaaclab_reference.npz"
 )
 REFERENCE_PATH_OVERRIDE = os.environ.get("DEXCODESIGN_REFERENCE_PATH")
-AUXILIARY_REFERENCE_PATH_OVERRIDE = os.environ.get(
-    "DEXCODESIGN_AUXILIARY_REFERENCE_PATH"
+BIMANUAL_REFERENCE_PATH_OVERRIDE = os.environ.get(
+    "DEXCODESIGN_BIMANUAL_REFERENCE_PATH"
 )
 OBJECT_USD_PATH = Path(
     os.environ.get(
@@ -190,24 +190,24 @@ ROOT_ROTATION_EXPR = f"{MANO_SIDE}_rot_.*" if HAND_ID == "mano" else "root_rot_.
 FINGER_JOINT_EXPR = f"{MANO_SIDE}_j_.*" if HAND_ID == "mano" else "finger__.*"
 
 if HAND_ID == "mano":
-    AUXILIARY_MANO_SIDE = "left" if MANO_SIDE == "right" else "right"
-    AUXILIARY_HAND_USD_PATH = ASSET_ROOT / f"mano_{AUXILIARY_MANO_SIDE}.usd"
-    AUXILIARY_CONTACT_LINK_NAMES = (
-        f"{AUXILIARY_MANO_SIDE}_palm",
+    SECOND_MANO_SIDE = "left" if MANO_SIDE == "right" else "right"
+    SECOND_HAND_USD_PATH = ASSET_ROOT / f"mano_{SECOND_MANO_SIDE}.usd"
+    SECOND_CONTACT_LINK_NAMES = (
+        f"{SECOND_MANO_SIDE}_palm",
         *(
-            f"{AUXILIARY_MANO_SIDE}_{finger}{segment}"
+            f"{SECOND_MANO_SIDE}_{finger}{segment}"
             for finger in ("index", "middle", "ring", "pinky")
             for segment in ("1z", "2", "3")
         ),
         *(
-            f"{AUXILIARY_MANO_SIDE}_{name}"
+            f"{SECOND_MANO_SIDE}_{name}"
             for name in ("thumb1z", "thumb2z", "thumb3")
         ),
     )
 else:
-    AUXILIARY_MANO_SIDE = "left"
-    AUXILIARY_HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
-    AUXILIARY_CONTACT_LINK_NAMES = ()
+    SECOND_MANO_SIDE = "left"
+    SECOND_HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
+    SECOND_CONTACT_LINK_NAMES = ()
 
 
 def _points_in_elliptical_prism(
@@ -254,7 +254,6 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # current and goal object pose.
     articulate_mode = False
     articulated_object_fix_root_link = False
-    object_disable_gravity = False
     # Formal manipulation runs must use a free object and a reference that
     # retains the demonstrated world-space root motion.  These guards prevent
     # fixed-base collision diagnostics from being mistaken for grasp training.
@@ -364,10 +363,10 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         },
     )
 
-    auxiliary_hand_cfg: ArticulationCfg = ArticulationCfg(
-        prim_path="/World/envs/env_.*/AuxiliaryHand",
+    second_hand_cfg: ArticulationCfg = ArticulationCfg(
+        prim_path="/World/envs/env_.*/SecondHand",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=str(AUXILIARY_HAND_USD_PATH),
+            usd_path=str(SECOND_HAND_USD_PATH),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=1.0,
@@ -383,8 +382,8 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
         actuators={
             "wrist": ImplicitActuatorCfg(
                 joint_names_expr=[
-                    f"{AUXILIARY_MANO_SIDE}_pos_.*",
-                    f"{AUXILIARY_MANO_SIDE}_rot_.*",
+                    f"{SECOND_MANO_SIDE}_pos_.*",
+                    f"{SECOND_MANO_SIDE}_rot_.*",
                 ],
                 stiffness=1000.0,
                 damping=63.2455532,
@@ -393,7 +392,7 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
                 armature=1.0,
             ),
             "fingers": ImplicitActuatorCfg(
-                joint_names_expr=[f"{AUXILIARY_MANO_SIDE}_j_.*"],
+                joint_names_expr=[f"{SECOND_MANO_SIDE}_j_.*"],
                 stiffness=300.0,
                 damping=34.6410162,
                 effort_limit_sim=1000.0,
@@ -601,23 +600,23 @@ class ManoResidualEnv(DirectRLEnv):
                 raise ValueError(
                     "bimanual_mode currently supports one canonical MANO pair only"
                 )
-            if not AUXILIARY_REFERENCE_PATH_OVERRIDE:
+            if not BIMANUAL_REFERENCE_PATH_OVERRIDE:
                 raise ValueError(
-                    "bimanual_mode requires DEXCODESIGN_AUXILIARY_REFERENCE_PATH"
+                    "bimanual_mode requires DEXCODESIGN_BIMANUAL_REFERENCE_PATH"
                 )
-            auxiliary_reference_path = Path(
-                AUXILIARY_REFERENCE_PATH_OVERRIDE
+            second_reference_path = Path(
+                BIMANUAL_REFERENCE_PATH_OVERRIDE
             ).expanduser().resolve()
-            if not auxiliary_reference_path.is_file():
+            if not second_reference_path.is_file():
                 raise FileNotFoundError(
-                    f"Missing auxiliary MANO reference: {auxiliary_reference_path}"
+                    f"Missing second MANO reference: {second_reference_path}"
                 )
-            with np.load(auxiliary_reference_path) as auxiliary_reference_file:
-                self._auxiliary_reference = {
-                    key: auxiliary_reference_file[key].copy()
-                    for key in auxiliary_reference_file.files
+            with np.load(second_reference_path) as second_reference_file:
+                self._second_reference = {
+                    key: second_reference_file[key].copy()
+                    for key in second_reference_file.files
                 }
-            cfg.auxiliary_hand_cfg.spawn.activate_contact_sensors = bool(
+            cfg.second_hand_cfg.spawn.activate_contact_sensors = bool(
                 cfg.articulate_mode
             )
         if (
@@ -651,7 +650,7 @@ class ManoResidualEnv(DirectRLEnv):
         references = [np.load(path) for path in reference_paths]
         reference = references[0]
         if self._bimanual_mode:
-            required_auxiliary_keys = (
+            required_second_keys = (
                 "joint_names",
                 "hand_q",
                 "hand_ctrl",
@@ -662,24 +661,24 @@ class ManoResidualEnv(DirectRLEnv):
             )
             missing = [
                 key
-                for key in required_auxiliary_keys
-                if key not in self._auxiliary_reference
+                for key in required_second_keys
+                if key not in self._second_reference
             ]
             if missing:
                 raise RuntimeError(
-                    f"Auxiliary MANO reference is missing required fields: {missing}"
+                    f"Second MANO reference is missing required fields: {missing}"
                 )
-            if len(self._auxiliary_reference["hand_q"]) != len(reference["hand_q"]):
+            if len(self._second_reference["hand_q"]) != len(reference["hand_q"]):
                 raise RuntimeError(
-                    "Primary and auxiliary MANO references have different lengths"
+                    "Primary and second MANO references have different lengths"
                 )
             if not np.allclose(
-                self._auxiliary_reference["object_pose_wxyz"],
+                self._second_reference["object_pose_wxyz"],
                 reference["object_pose_wxyz"],
                 atol=1.0e-5,
             ):
                 raise RuntimeError(
-                    "Primary and auxiliary MANO references disagree on object pose"
+                    "Primary and second MANO references disagree on object pose"
                 )
         self._reference_fps = float(np.asarray(reference.get("fps", 0.0)))
         self._control_dt = float(cfg.sim.dt * cfg.decimation)
@@ -701,25 +700,20 @@ class ManoResidualEnv(DirectRLEnv):
             cfg.articulated_object_cfg.spawn.articulation_props.fix_root_link = (
                 cfg.articulated_object_fix_root_link
             )
-            cfg.articulated_object_cfg.spawn.rigid_props.disable_gravity = (
-                cfg.object_disable_gravity
-            )
-        else:
-            cfg.object_cfg.spawn.rigid_props.disable_gravity = cfg.object_disable_gravity
         cfg.observation_space = OBSERVATION_DIM + (
             2 * OBJECT_JOINT_DIM if cfg.articulate_mode else 0
         )
         if self._bimanual_mode:
-            auxiliary_control_dim = int(
-                self._auxiliary_reference["hand_q"].shape[1]
+            second_control_dim = int(
+                self._second_reference["hand_q"].shape[1]
             )
-            auxiliary_tip_count = int(
-                self._auxiliary_reference["fingertip_pose_wxyz"].shape[1]
+            second_tip_count = int(
+                self._second_reference["fingertip_pose_wxyz"].shape[1]
             )
-            # Auxiliary current/goal q plus current xyz and goal xyz+quat for
+            # Second current/goal q plus current xyz and goal xyz+quat for
             # each tracked fingertip. Object state remains represented once.
             cfg.observation_space += (
-                2 * auxiliary_control_dim + 10 * auxiliary_tip_count
+                2 * second_control_dim + 10 * second_tip_count
             )
         if cfg.articulate_mode and cfg.hand_cfg.spawn is not None:
             # Articulated-object contact filtering reports from one hand link
@@ -755,29 +749,29 @@ class ManoResidualEnv(DirectRLEnv):
         )
         self._primary_action_dim = len(self._action_joint_names)
         if self._bimanual_mode:
-            self._auxiliary_reference_joint_names = self._auxiliary_reference[
+            self._second_reference_joint_names = self._second_reference[
                 "joint_names"
             ].tolist()
-            self._auxiliary_action_joint_names = (
-                self._auxiliary_reference["action_joint_names"].tolist()
-                if "action_joint_names" in self._auxiliary_reference
-                else list(self._auxiliary_reference_joint_names)
+            self._second_action_joint_names = (
+                self._second_reference["action_joint_names"].tolist()
+                if "action_joint_names" in self._second_reference
+                else list(self._second_reference_joint_names)
             )
-            self._auxiliary_action_to_control_cpu = torch.from_numpy(
-                self._auxiliary_reference["action_to_control_matrix"]
-                if "action_to_control_matrix" in self._auxiliary_reference
+            self._second_action_to_control_cpu = torch.from_numpy(
+                self._second_reference["action_to_control_matrix"]
+                if "action_to_control_matrix" in self._second_reference
                 else np.eye(
-                    len(self._auxiliary_reference_joint_names), dtype=np.float32
+                    len(self._second_reference_joint_names), dtype=np.float32
                 )
             )
         else:
-            self._auxiliary_reference_joint_names = []
-            self._auxiliary_action_joint_names = []
-            self._auxiliary_action_to_control_cpu = None
-        self._auxiliary_action_dim = len(self._auxiliary_action_joint_names)
+            self._second_reference_joint_names = []
+            self._second_action_joint_names = []
+            self._second_action_to_control_cpu = None
+        self._second_action_dim = len(self._second_action_joint_names)
         self._all_action_joint_names = [
             *self._action_joint_names,
-            *self._auxiliary_action_joint_names,
+            *self._second_action_joint_names,
         ]
         cfg.action_space = gym.spaces.Box(
             low=-1.0,
@@ -988,72 +982,72 @@ class ManoResidualEnv(DirectRLEnv):
         )
         self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
         if self._bimanual_mode:
-            auxiliary_joint_names = self._auxiliary_reference_joint_names
-            if self.auxiliary_hand.num_joints != len(auxiliary_joint_names):
+            second_joint_names = self._second_reference_joint_names
+            if self.second_hand.num_joints != len(second_joint_names):
                 raise RuntimeError(
-                    "Auxiliary MANO joint count does not match its reference: "
-                    f"asset={self.auxiliary_hand.joint_names}, "
-                    f"reference={auxiliary_joint_names}"
+                    "Second MANO joint count does not match its reference: "
+                    f"asset={self.second_hand.joint_names}, "
+                    f"reference={second_joint_names}"
                 )
-            missing_auxiliary_joints = sorted(
-                set(auxiliary_joint_names) - set(self.auxiliary_hand.joint_names)
+            missing_second_joints = sorted(
+                set(second_joint_names) - set(self.second_hand.joint_names)
             )
-            if missing_auxiliary_joints:
+            if missing_second_joints:
                 raise RuntimeError(
-                    "Auxiliary reference joints missing from imported MANO hand: "
-                    f"{missing_auxiliary_joints}"
+                    "Second reference joints missing from imported MANO hand: "
+                    f"{missing_second_joints}"
                 )
-            auxiliary_order = [
-                auxiliary_joint_names.index(name)
-                for name in self.auxiliary_hand.joint_names
+            second_order = [
+                second_joint_names.index(name)
+                for name in self.second_hand.joint_names
             ]
-            auxiliary_order_tensor = torch.tensor(auxiliary_order)
-            self.auxiliary_reference_hand_q = torch.from_numpy(
-                self._auxiliary_reference["hand_q"]
-            ).index_select(1, auxiliary_order_tensor).to(self.device)
-            self.auxiliary_reference_hand_ctrl = torch.from_numpy(
-                self._auxiliary_reference["hand_ctrl"]
-            ).index_select(1, auxiliary_order_tensor).to(self.device)
-            self.auxiliary_action_to_control = (
-                self._auxiliary_action_to_control_cpu[auxiliary_order]
+            second_order_tensor = torch.tensor(second_order)
+            self.second_reference_hand_q = torch.from_numpy(
+                self._second_reference["hand_q"]
+            ).index_select(1, second_order_tensor).to(self.device)
+            self.second_reference_hand_ctrl = torch.from_numpy(
+                self._second_reference["hand_ctrl"]
+            ).index_select(1, second_order_tensor).to(self.device)
+            self.second_action_to_control = (
+                self._second_action_to_control_cpu[second_order]
                 .to(self.device)
             )
-            if self.auxiliary_action_to_control.shape != (
-                self.auxiliary_hand.num_joints,
-                self._auxiliary_action_dim,
+            if self.second_action_to_control.shape != (
+                self.second_hand.num_joints,
+                self._second_action_dim,
             ):
                 raise RuntimeError(
-                    "Auxiliary MANO action-to-control map has shape "
-                    f"{tuple(self.auxiliary_action_to_control.shape)}, expected "
-                    f"({self.auxiliary_hand.num_joints}, "
-                    f"{self._auxiliary_action_dim})"
+                    "Second MANO action-to-control map has shape "
+                    f"{tuple(self.second_action_to_control.shape)}, expected "
+                    f"({self.second_hand.num_joints}, "
+                    f"{self._second_action_dim})"
                 )
-            self.auxiliary_reference_fingertip_pose = torch.from_numpy(
-                self._auxiliary_reference["fingertip_pose_wxyz"]
+            self.second_reference_fingertip_pose = torch.from_numpy(
+                self._second_reference["fingertip_pose_wxyz"]
             ).to(self.device)
-            self.auxiliary_fingertip_offsets = torch.from_numpy(
-                self._auxiliary_reference["fingertip_offsets"]
+            self.second_fingertip_offsets = torch.from_numpy(
+                self._second_reference["fingertip_offsets"]
             ).to(self.device)
-            auxiliary_tip_names = self._auxiliary_reference[
+            second_tip_names = self._second_reference[
                 "fingertip_link_names"
             ].tolist()
-            missing_auxiliary_tips = sorted(
-                set(auxiliary_tip_names) - set(self.auxiliary_hand.body_names)
+            missing_second_tips = sorted(
+                set(second_tip_names) - set(self.second_hand.body_names)
             )
-            if missing_auxiliary_tips:
+            if missing_second_tips:
                 raise RuntimeError(
-                    "Auxiliary fingertip links missing from imported MANO hand: "
-                    f"{missing_auxiliary_tips}"
+                    "Second fingertip links missing from imported MANO hand: "
+                    f"{missing_second_tips}"
                 )
-            self._auxiliary_fingertip_body_indices = [
-                self.auxiliary_hand.body_names.index(name)
-                for name in auxiliary_tip_names
+            self._second_fingertip_body_indices = [
+                self.second_hand.body_names.index(name)
+                for name in second_tip_names
             ]
-            auxiliary_limits = (
-                self.auxiliary_hand.root_physx_view.get_dof_limits().to(self.device)
+            second_limits = (
+                self.second_hand.root_physx_view.get_dof_limits().to(self.device)
             )
-            self.auxiliary_joint_lower_limits = auxiliary_limits[..., 0]
-            self.auxiliary_joint_upper_limits = auxiliary_limits[..., 1]
+            self.second_joint_lower_limits = second_limits[..., 0]
+            self.second_joint_upper_limits = second_limits[..., 1]
         self.morphology_context = (
             None
             if self._morphology_context_cpu is None
@@ -1077,7 +1071,7 @@ class ManoResidualEnv(DirectRLEnv):
         root_position_action_names = [
             *ROOT_POSITION_JOINT_NAMES,
             *(
-                tuple(f"{AUXILIARY_MANO_SIDE}_pos_{axis}" for axis in "xyz")
+                tuple(f"{SECOND_MANO_SIDE}_pos_{axis}" for axis in "xyz")
                 if self._bimanual_mode
                 else ()
             ),
@@ -1085,7 +1079,7 @@ class ManoResidualEnv(DirectRLEnv):
         root_rotation_action_names = [
             *ROOT_ROTATION_JOINT_NAMES,
             *(
-                tuple(f"{AUXILIARY_MANO_SIDE}_rot_{axis}" for axis in "xyz")
+                tuple(f"{SECOND_MANO_SIDE}_rot_{axis}" for axis in "xyz")
                 if self._bimanual_mode
                 else ()
             ),
@@ -1136,8 +1130,8 @@ class ManoResidualEnv(DirectRLEnv):
             device=self.device,
         )
         if self._bimanual_mode:
-            self.auxiliary_joint_targets = torch.zeros(
-                (self.num_envs, self.auxiliary_hand.num_joints),
+            self.second_joint_targets = torch.zeros(
+                (self.num_envs, self.second_hand.num_joints),
                 dtype=torch.float,
                 device=self.device,
             )
@@ -1202,13 +1196,13 @@ class ManoResidualEnv(DirectRLEnv):
                 device=self.device,
             )
             if self._bimanual_mode:
-                self._capture_auxiliary_hand_q = torch.zeros(
-                    (*capture_shape, self.auxiliary_hand.num_joints),
+                self._capture_second_hand_q = torch.zeros(
+                    (*capture_shape, self.second_hand.num_joints),
                     dtype=torch.float32,
                     device=self.device,
                 )
-                self._capture_auxiliary_joint_targets = torch.zeros(
-                    (*capture_shape, self.auxiliary_hand.num_joints),
+                self._capture_second_joint_targets = torch.zeros(
+                    (*capture_shape, self.second_hand.num_joints),
                     dtype=torch.float32,
                     device=self.device,
                 )
@@ -1358,14 +1352,14 @@ class ManoResidualEnv(DirectRLEnv):
         ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
         return fingertip_body_pos + fingertip_offset_w
 
-    def _current_auxiliary_fingertip_positions_w(self) -> torch.Tensor:
-        fingertip_body_quat = self.auxiliary_hand.data.body_quat_w[
-            :, self._auxiliary_fingertip_body_indices
+    def _current_second_fingertip_positions_w(self) -> torch.Tensor:
+        fingertip_body_quat = self.second_hand.data.body_quat_w[
+            :, self._second_fingertip_body_indices
         ]
-        fingertip_body_pos = self.auxiliary_hand.data.body_pos_w[
-            :, self._auxiliary_fingertip_body_indices
+        fingertip_body_pos = self.second_hand.data.body_pos_w[
+            :, self._second_fingertip_body_indices
         ]
-        fingertip_offsets = self.auxiliary_fingertip_offsets[
+        fingertip_offsets = self.second_fingertip_offsets[
             None, :, :
         ].expand(self.num_envs, -1, -1)
         fingertip_offset_w = quat_apply(
@@ -1373,7 +1367,7 @@ class ManoResidualEnv(DirectRLEnv):
             fingertip_offsets.reshape(-1, 3),
         ).reshape(
             self.num_envs,
-            len(self._auxiliary_fingertip_body_indices),
+            len(self._second_fingertip_body_indices),
             3,
         )
         return fingertip_body_pos + fingertip_offset_w
@@ -1489,7 +1483,7 @@ class ManoResidualEnv(DirectRLEnv):
         else:
             self.hand = Articulation(self.cfg.hand_cfg)
             if self._bimanual_mode:
-                self.auxiliary_hand = Articulation(self.cfg.auxiliary_hand_cfg)
+                self.second_hand = Articulation(self.cfg.second_hand_cfg)
             self._apply_morphology_batch_overlays()
         visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
         if HAND_ID == "mano" and MANO_SIDE == "left" and visual_manifest_path.is_file():
@@ -1504,7 +1498,7 @@ class ManoResidualEnv(DirectRLEnv):
                 )
         if (
             self._bimanual_mode
-            and AUXILIARY_MANO_SIDE == "left"
+            and SECOND_MANO_SIDE == "left"
             and visual_manifest_path.is_file()
         ):
             visual_manifest = json.loads(
@@ -1515,7 +1509,7 @@ class ManoResidualEnv(DirectRLEnv):
                     usd_path=str(ASSET_ROOT / relative_usd_path),
                 )
                 visual_cfg.func(
-                    f"/World/envs/env_0/AuxiliaryHand/{link_name}/visual_overlay",
+                    f"/World/envs/env_0/SecondHand/{link_name}/visual_overlay",
                     visual_cfg,
                 )
         if grouped_replicas:
@@ -1604,34 +1598,34 @@ class ManoResidualEnv(DirectRLEnv):
                 self._articulated_contact_sensors.values()
             )
             if self._bimanual_mode:
-                self._auxiliary_articulated_contact_sensors = {
+                self._second_articulated_contact_sensors = {
                     link_name: ContactSensor(
                         ContactSensorCfg(
-                            prim_path=f"{env_regex}/AuxiliaryHand/{link_name}",
+                            prim_path=f"{env_regex}/SecondHand/{link_name}",
                             update_period=0.0,
                             history_length=0,
                             filter_prim_paths_expr=object_filter_paths,
                             max_contact_data_count_per_prim=4,
                         )
                     )
-                    for link_name in AUXILIARY_CONTACT_LINK_NAMES
+                    for link_name in SECOND_CONTACT_LINK_NAMES
                 }
                 self._all_hand_contact_sensors += tuple(
-                    self._auxiliary_articulated_contact_sensors.values()
+                    self._second_articulated_contact_sensors.values()
                 )
         else:
             # A rigid object has one reporting body, filtered against groups
             # of hand links exactly as in the original environment.
             def object_contact_sensor(
-                link_names: Sequence[str], *, include_auxiliary: bool = False
+                link_names: Sequence[str], *, include_second: bool = False
             ) -> ContactSensor:
                 filter_paths = [
                     f"{env_regex}/Hand/{name}" for name in link_names
                 ]
-                if include_auxiliary and self._bimanual_mode:
+                if include_second and self._bimanual_mode:
                     filter_paths.extend(
-                        f"{env_regex}/AuxiliaryHand/{name}"
-                        for name in AUXILIARY_CONTACT_LINK_NAMES
+                        f"{env_regex}/SecondHand/{name}"
+                        for name in SECOND_CONTACT_LINK_NAMES
                     )
                 return ContactSensor(
                     ContactSensorCfg(
@@ -1650,7 +1644,7 @@ class ManoResidualEnv(DirectRLEnv):
             )
             self._all_hand_contact_sensor = object_contact_sensor(
                 ALL_HAND_CONTACT_LINK_NAMES,
-                include_auxiliary=True,
+                include_second=True,
             )
         if not grouped_replicas:
             self._validate_collision_coverage(
@@ -1659,10 +1653,10 @@ class ManoResidualEnv(DirectRLEnv):
             )
             if self._bimanual_mode:
                 self._validate_collision_coverage(
-                    hand_root_path=f"{self._environment_root(0)}/AuxiliaryHand",
+                    hand_root_path=f"{self._environment_root(0)}/SecondHand",
                     object_root_path=f"{self._environment_root(0)}/Object",
-                    contact_link_names=AUXILIARY_CONTACT_LINK_NAMES,
-                    hand_label=f"mano_{AUXILIARY_MANO_SIDE}",
+                    contact_link_names=SECOND_CONTACT_LINK_NAMES,
+                    hand_label=f"mano_{SECOND_MANO_SIDE}",
                 )
         if not grouped_replicas:
             self._spawn_support_ground()
@@ -1678,7 +1672,7 @@ class ManoResidualEnv(DirectRLEnv):
                 )
             if self._bimanual_mode:
                 self._filter_hand_support_collisions(
-                    hand_root_path="/World/envs/env_0/AuxiliaryHand",
+                    hand_root_path="/World/envs/env_0/SecondHand",
                     support_root_path="/World/ground",
                 )
         # InteractiveScene already creates all independent environment Xforms
@@ -1688,7 +1682,7 @@ class ManoResidualEnv(DirectRLEnv):
             self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
         if self._bimanual_mode:
-            self.scene.articulations["auxiliary_hand"] = self.auxiliary_hand
+            self.scene.articulations["second_hand"] = self.second_hand
         if self.cfg.articulate_mode:
             self.scene.articulations["object"] = self.object
         else:
@@ -1698,10 +1692,10 @@ class ManoResidualEnv(DirectRLEnv):
                 self.scene.sensors[f"object_contact_{link_name}"] = sensor
             if self._bimanual_mode:
                 for link_name, sensor in (
-                    self._auxiliary_articulated_contact_sensors.items()
+                    self._second_articulated_contact_sensors.items()
                 ):
                     self.scene.sensors[
-                        f"object_contact_auxiliary_{link_name}"
+                        f"object_contact_second_{link_name}"
                     ] = sensor
         else:
             self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
@@ -2114,40 +2108,40 @@ class ManoResidualEnv(DirectRLEnv):
             self.joint_upper_limits,
         )
         if self._bimanual_mode:
-            auxiliary_base_targets = self._reference_at(
-                self.auxiliary_reference_hand_ctrl,
+            second_base_targets = self._reference_at(
+                self.second_reference_hand_ctrl,
                 self.phase_buf,
             )
-            auxiliary_actions = self.actions[:, self._primary_action_dim :]
-            auxiliary_residual = (
+            second_actions = self.actions[:, self._primary_action_dim :]
+            second_residual = (
                 self.residual_scale[self._primary_action_dim :]
-                * auxiliary_actions
+                * second_actions
             )
-            auxiliary_control_residual = (
-                auxiliary_residual @ self.auxiliary_action_to_control.T
+            second_control_residual = (
+                second_residual @ self.second_action_to_control.T
             )
-            auxiliary_targets = (
-                auxiliary_base_targets + auxiliary_control_residual
+            second_targets = (
+                second_base_targets + second_control_residual
             )
-            self.auxiliary_joint_targets = torch.clamp(
-                auxiliary_targets,
-                self.auxiliary_joint_lower_limits,
-                self.auxiliary_joint_upper_limits,
+            self.second_joint_targets = torch.clamp(
+                second_targets,
+                self.second_joint_lower_limits,
+                self.second_joint_upper_limits,
             )
         if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_actions[env_ids, self.phase_buf] = self.actions
             self._capture_joint_targets[env_ids, self.phase_buf] = self.joint_targets
             if self._bimanual_mode:
-                self._capture_auxiliary_joint_targets[
+                self._capture_second_joint_targets[
                     env_ids, self.phase_buf
-                ] = self.auxiliary_joint_targets
+                ] = self.second_joint_targets
 
     def _apply_action(self) -> None:
         self.hand.set_joint_position_target(self.joint_targets)
         if self._bimanual_mode:
-            self.auxiliary_hand.set_joint_position_target(
-                self.auxiliary_joint_targets
+            self.second_hand.set_joint_position_target(
+                self.second_joint_targets
             )
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
@@ -2211,28 +2205,28 @@ class ManoResidualEnv(DirectRLEnv):
             dim=-1,
         )
         if self._bimanual_mode:
-            auxiliary_fingertip_pos = (
-                self._current_auxiliary_fingertip_positions_w()
+            second_fingertip_pos = (
+                self._current_second_fingertip_positions_w()
                 - self.scene.env_origins[:, None, :]
             )
-            auxiliary_goal_fingertip_pose = self._reference_at(
-                self.auxiliary_reference_fingertip_pose,
+            second_goal_fingertip_pose = self._reference_at(
+                self.second_reference_fingertip_pose,
                 self.phase_buf,
             )
-            auxiliary_observation = torch.cat(
+            second_observation = torch.cat(
                 (
-                    self.auxiliary_hand.data.joint_pos,
-                    auxiliary_fingertip_pos.flatten(start_dim=1),
-                    auxiliary_goal_fingertip_pose.flatten(start_dim=1),
+                    self.second_hand.data.joint_pos,
+                    second_fingertip_pos.flatten(start_dim=1),
+                    second_goal_fingertip_pose.flatten(start_dim=1),
                     self._reference_at(
-                        self.auxiliary_reference_hand_q,
+                        self.second_reference_hand_q,
                         self.phase_buf,
                     ),
                 ),
                 dim=-1,
             )
             observation = torch.cat(
-                (observation, auxiliary_observation), dim=-1
+                (observation, second_observation), dim=-1
             )
         if self.morphology_context is not None:
             observation = torch.cat((observation, self.morphology_context), dim=-1)
@@ -2644,8 +2638,8 @@ class ManoResidualEnv(DirectRLEnv):
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_hand_q[env_ids, self.phase_buf] = self.hand.data.joint_pos
             if self._bimanual_mode:
-                self._capture_auxiliary_hand_q[env_ids, self.phase_buf] = (
-                    self.auxiliary_hand.data.joint_pos
+                self._capture_second_hand_q[env_ids, self.phase_buf] = (
+                    self.second_hand.data.joint_pos
                 )
             object_position = (
                 self.object.data.root_pos_w - self.scene.env_origins
@@ -2737,8 +2731,8 @@ class ManoResidualEnv(DirectRLEnv):
         metadata = {
             "hand_id": HAND_ID,
             "bimanual_mode": self._bimanual_mode,
-            "auxiliary_hand_side": (
-                AUXILIARY_MANO_SIDE if self._bimanual_mode else None
+            "second_hand_side": (
+                SECOND_MANO_SIDE if self._bimanual_mode else None
             ),
             "status": "success" if success else "farthest",
             "success": success,
@@ -2781,8 +2775,8 @@ class ManoResidualEnv(DirectRLEnv):
             "joint_names": list(self.hand.joint_names),
             "action_joint_names": list(self._all_action_joint_names),
             "primary_action_joint_names": list(self._action_joint_names),
-            "auxiliary_action_joint_names": list(
-                self._auxiliary_action_joint_names
+            "second_action_joint_names": list(
+                self._second_action_joint_names
             ),
             "residual_root_position_scale": self.cfg.residual_root_position_scale,
             "residual_root_rotation_scale": self.cfg.residual_root_rotation_scale,
@@ -2820,16 +2814,16 @@ class ManoResidualEnv(DirectRLEnv):
             "metadata_json": np.asarray(json.dumps(metadata)),
         }
         if self._bimanual_mode:
-            payload["auxiliary_hand_q"] = self._capture_auxiliary_hand_q[
+            payload["second_hand_q"] = self._capture_second_hand_q[
                 env_id, : last_phase + 1
             ].detach().cpu().numpy()
-            payload["auxiliary_joint_targets"] = (
-                self._capture_auxiliary_joint_targets[
+            payload["second_joint_targets"] = (
+                self._capture_second_joint_targets[
                     env_id, : last_phase + 1
                 ].detach().cpu().numpy()
             )
-            payload["auxiliary_joint_names"] = np.asarray(
-                self.auxiliary_hand.joint_names
+            payload["second_joint_names"] = np.asarray(
+                self.second_hand.joint_names
             )
         if self.cfg.articulate_mode:
             payload["object_joint_position_rad"] = self._capture_object_joint[
@@ -2990,45 +2984,45 @@ class ManoResidualEnv(DirectRLEnv):
         self.joint_targets[env_ids] = ctrl
 
         if self._bimanual_mode:
-            auxiliary_root_state = self.auxiliary_hand.data.default_root_state[
+            second_root_state = self.second_hand.data.default_root_state[
                 env_ids
             ].clone()
-            auxiliary_root_state[:, :3] += self.scene.env_origins[env_ids]
-            auxiliary_root_state[:, 7:] = 0.0
-            auxiliary_joint_pos = self._reference_at(
-                self.auxiliary_reference_hand_q,
+            second_root_state[:, :3] += self.scene.env_origins[env_ids]
+            second_root_state[:, 7:] = 0.0
+            second_joint_pos = self._reference_at(
+                self.second_reference_hand_q,
                 self.phase_buf[env_ids_tensor],
                 env_ids_tensor,
             )
-            auxiliary_joint_vel = (
+            second_joint_vel = (
                 self._reference_velocity_at(
-                    self.auxiliary_reference_hand_q,
+                    self.second_reference_hand_q,
                     self.phase_buf[env_ids_tensor],
                     env_ids_tensor,
                 )
                 if self.cfg.randomize_start_phase
-                else torch.zeros_like(auxiliary_joint_pos)
+                else torch.zeros_like(second_joint_pos)
             )
-            self.auxiliary_hand.write_root_pose_to_sim(
-                auxiliary_root_state[:, :7], env_ids
+            self.second_hand.write_root_pose_to_sim(
+                second_root_state[:, :7], env_ids
             )
-            self.auxiliary_hand.write_root_velocity_to_sim(
-                auxiliary_root_state[:, 7:], env_ids
+            self.second_hand.write_root_velocity_to_sim(
+                second_root_state[:, 7:], env_ids
             )
-            self.auxiliary_hand.write_joint_state_to_sim(
-                auxiliary_joint_pos,
-                auxiliary_joint_vel,
+            self.second_hand.write_joint_state_to_sim(
+                second_joint_pos,
+                second_joint_vel,
                 env_ids=env_ids,
             )
-            auxiliary_ctrl = self._reference_at(
-                self.auxiliary_reference_hand_ctrl,
+            second_ctrl = self._reference_at(
+                self.second_reference_hand_ctrl,
                 self.phase_buf[env_ids_tensor],
                 env_ids_tensor,
             )
-            self.auxiliary_hand.set_joint_position_target(
-                auxiliary_ctrl, env_ids=env_ids
+            self.second_hand.set_joint_position_target(
+                second_ctrl, env_ids=env_ids
             )
-            self.auxiliary_joint_targets[env_ids] = auxiliary_ctrl
+            self.second_joint_targets[env_ids] = second_ctrl
 
         object_pose = self._reference_at(
             self.reference_object_pose,
@@ -3078,8 +3072,8 @@ class ManoResidualEnv(DirectRLEnv):
         if self._capture_enabled:
             self._capture_hand_q[env_ids] = 0.0
             if self._bimanual_mode:
-                self._capture_auxiliary_hand_q[env_ids] = 0.0
-                self._capture_auxiliary_joint_targets[env_ids] = 0.0
+                self._capture_second_hand_q[env_ids] = 0.0
+                self._capture_second_joint_targets[env_ids] = 0.0
             self._capture_object_pose[env_ids] = 0.0
             if self.cfg.articulate_mode:
                 self._capture_object_joint[env_ids] = 0.0
@@ -3108,9 +3102,9 @@ class ManoResidualEnv(DirectRLEnv):
             self._capture_actions[env_ids, 0] = 0.0
             self._capture_joint_targets[env_ids, 0] = ctrl
             if self._bimanual_mode:
-                self._capture_auxiliary_hand_q[env_ids, 0] = auxiliary_joint_pos
-                self._capture_auxiliary_joint_targets[
+                self._capture_second_hand_q[env_ids, 0] = second_joint_pos
+                self._capture_second_joint_targets[
                     env_ids, 0
-                ] = auxiliary_ctrl
+                ] = second_ctrl
             self._capture_pose_reward[env_ids, 0] = 0.0
             self._capture_contact_reward[env_ids, 0] = 0.0

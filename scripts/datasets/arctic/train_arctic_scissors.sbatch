@@ -37,11 +37,11 @@ export DEXCODESIGN_REFERENCE_PATH="${REFERENCE_PATH:-${REPO_ROOT}/artifacts/arct
 export DEXCODESIGN_OBJECT_USD_PATH="${OBJECT_USD_PATH:-${REPO_ROOT}/artifacts/arctic_mano_preview/assets/objects/scissors_vhacd.usd}"
 export DEXCODESIGN_MANO_SIDE="${MANO_SIDE:-right}"
 if [[ "${BIMANUAL_MODE:-false}" == "true" ]]; then
-  if [[ -z "${AUXILIARY_REFERENCE_PATH:-}" ]]; then
-    echo "BIMANUAL_MODE=true requires AUXILIARY_REFERENCE_PATH" >&2
+  if [[ -z "${BIMANUAL_REFERENCE_PATH:-}" ]]; then
+    echo "BIMANUAL_MODE=true requires BIMANUAL_REFERENCE_PATH" >&2
     exit 2
   fi
-  export DEXCODESIGN_AUXILIARY_REFERENCE_PATH="${AUXILIARY_REFERENCE_PATH}"
+  export DEXCODESIGN_BIMANUAL_REFERENCE_PATH="${BIMANUAL_REFERENCE_PATH}"
 fi
 
 RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
@@ -71,7 +71,6 @@ fi
   env.articulate_mode=true \
   env.bimanual_mode="${BIMANUAL_MODE:-false}" \
   env.articulated_object_fix_root_link=false \
-  env.object_disable_gravity="${OBJECT_DISABLE_GRAVITY:-false}" \
   env.require_free_object_root=true \
   env.require_dynamic_object_root=true \
   env.residual_root_position_scale="${ROOT_POSITION_SCALE:-0.03}" \

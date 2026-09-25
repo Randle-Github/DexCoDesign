@@ -38,7 +38,6 @@ rm -f "$HAND_BEST_ROLLOUT_PATH"
   env.exponential_pose_reward=true \
   env.pose_tracking_reward_scale="${POSE_REWARD_SCALE:-4.0}" \
   env.articulated_object_fix_root_link=false \
-  env.object_disable_gravity="${OBJECT_DISABLE_GRAVITY:-false}" \
   env.require_free_object_root=true \
   env.require_dynamic_object_root=true \
   env.require_cross_link_pinch="${REQUIRE_CROSS_LINK_PINCH:-true}" \
