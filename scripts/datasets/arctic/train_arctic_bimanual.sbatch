@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-ROOT=/coc/flash7/yliu3735/workspace/DexCoDesign
+ROOT="${DEXCODESIGN_REPO_ROOT:-/coc/flash7/yliu3735/workspace/DexCoDesign}"
 SAMPLE_ID="${SAMPLE_ID:?SAMPLE_ID is required}"
 OBJECT_ID="${OBJECT_ID:?OBJECT_ID is required}"
 REFERENCE_ROOT="${REFERENCE_ROOT:-${ROOT}/artifacts/arctic_bimanual/${SAMPLE_ID}}"

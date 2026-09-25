@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="/coc/flash7/yliu3735/workspace/DexCoDesign"
+REPO_ROOT="${DEXCODESIGN_REPO_ROOT:-/coc/flash7/yliu3735/workspace/DexCoDesign}"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/arctic_scissors_training"
 NUM_ENVS="${NUM_ENVS:-512}"
 TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-300}"
