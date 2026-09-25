@@ -15,6 +15,7 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser()
 parser.add_argument("--rollout", type=Path, required=True)
 parser.add_argument("--hand-usd", type=Path, required=True)
+parser.add_argument("--second-hand-usd", type=Path, default=None)
 parser.add_argument("--object-usd", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--fps", type=int, default=30)
@@ -63,6 +64,16 @@ def main() -> None:
     carb.settings.get_settings().set_bool("/isaaclab/cameras_enabled", True)
     with np.load(args.rollout.resolve()) as source:
         hand_q = source["hand_q"].astype(np.float32)
+        second_hand_q = (
+            source["second_hand_q"].astype(np.float32)
+            if "second_hand_q" in source.files
+            else None
+        )
+        second_joint_names = (
+            source["second_joint_names"].astype(str).tolist()
+            if "second_joint_names" in source.files
+            else None
+        )
         object_pose = source["object_pose_wxyz"].astype(np.float32)
         object_q = source["object_joint_position_rad"].astype(np.float32)
         metadata = json.loads(str(source["metadata_json"]))
@@ -72,6 +83,16 @@ def main() -> None:
             f"Inconsistent rollout shapes: hand={hand_q.shape}, "
             f"object_pose={object_pose.shape}, object_q={object_q.shape}"
         )
+    if second_hand_q is not None:
+        if args.second_hand_usd is None:
+            raise ValueError(
+                "Bimanual rollout requires --second-hand-usd for exact playback"
+            )
+        if len(second_hand_q) != len(hand_q) or second_joint_names is None:
+            raise ValueError(
+                f"Inconsistent second-hand rollout: primary={hand_q.shape}, "
+                f"second={second_hand_q.shape}"
+            )
 
     sim = SimulationContext(
         sim_utils.SimulationCfg(dt=1 / 120, render_interval=1, device=args.device)
@@ -90,6 +111,12 @@ def main() -> None:
     light.func("/World/Light", light)
     hand = articulation("/World/Hand", args.hand_usd, (0.12, 0.55, 0.96))
     print("ARCTIC_POLICY_RENDER_STAGE hand_spawned", flush=True)
+    second_hand = None
+    if second_hand_q is not None:
+        second_hand = articulation(
+            "/World/SecondHand", args.second_hand_usd, (0.30, 0.85, 0.48)
+        )
+        print("ARCTIC_POLICY_RENDER_STAGE second_hand_spawned", flush=True)
     obj = articulation("/World/Object", args.object_usd, (0.95, 0.45, 0.08))
     print("ARCTIC_POLICY_RENDER_STAGE object_spawned", flush=True)
     camera = Camera(
@@ -116,10 +143,18 @@ def main() -> None:
         raise ValueError("Captured rollout does not contain joint_names metadata")
     order = [saved_names.index(name) for name in hand.joint_names]
     hand_q = hand_q[:, order]
+    if second_hand is not None:
+        second_order = [second_joint_names.index(name) for name in second_hand.joint_names]
+        second_hand_q = second_hand_q[:, second_order]
     center = object_pose[:, :3].mean(axis=0)
+    camera_offset = (
+        np.array([0.46, 0.44, 0.34])
+        if second_hand is not None
+        else np.array([0.36, 0.34, 0.28])
+    )
     camera.set_world_poses_from_view(
         torch.tensor(
-            [center + np.array([0.36, 0.34, 0.28])],
+            [center + camera_offset],
             dtype=torch.float32,
             device=sim.device,
         ),
@@ -132,6 +167,11 @@ def main() -> None:
     print("ARCTIC_POLICY_RENDER_STAGE camera_positioned", flush=True)
 
     hand_q_t = torch.as_tensor(hand_q, device=sim.device)
+    second_hand_q_t = (
+        torch.as_tensor(second_hand_q, device=sim.device)
+        if second_hand_q is not None
+        else None
+    )
     object_pose_t = torch.as_tensor(object_pose, device=sim.device)
     object_q_t = torch.as_tensor(object_q, device=sim.device)
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -146,6 +186,11 @@ def main() -> None:
         for frame_index in range(len(hand_q)):
             q = hand_q_t[frame_index : frame_index + 1]
             hand.write_joint_state_to_sim(q, torch.zeros_like(q))
+            if second_hand is not None:
+                second_q = second_hand_q_t[frame_index : frame_index + 1]
+                second_hand.write_joint_state_to_sim(
+                    second_q, torch.zeros_like(second_q)
+                )
             pose = object_pose_t[frame_index : frame_index + 1]
             obj.write_root_pose_to_sim(pose)
             obj.write_root_velocity_to_sim(torch.zeros((1, 6), device=sim.device))

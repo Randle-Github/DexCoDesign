@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-ROOT=/coc/flash7/yliu3735/workspace/DexCoDesign
+ROOT="${DEXCODESIGN_REPO_ROOT:-/coc/flash7/yliu3735/workspace/DexCoDesign}"
 source /coc/flash7/yliu3735/anaconda3/etc/profile.d/conda.sh
 conda activate codesign
 cd "$ROOT"
@@ -39,6 +39,9 @@ render_args=(
   --enable_cameras
   "${extra_args[@]}"
 )
+if [[ -n "${SECOND_HAND_USD_PATH:-}" ]]; then
+  render_args+=(--second-hand-usd "${SECOND_HAND_USD_PATH}")
+fi
 if [[ "${GUI_RENDER:-0}" == "1" ]]; then
   xvfb-run -a -s "-screen 0 1280x960x24" ./isaaclab.sh "${render_args[@]}"
 else
