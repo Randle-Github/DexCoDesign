@@ -33,6 +33,13 @@ export WANDB_MODE=disabled
 export DEXCODESIGN_REFERENCE_PATH="${REFERENCE_PATH:-${REPO_ROOT}/artifacts/arctic_mano_dynamic/00_scissors/isaaclab_reference_right_fixedtip_dynamic_tabletop_30hz.npz}"
 export DEXCODESIGN_OBJECT_USD_PATH="${OBJECT_USD_PATH:-${REPO_ROOT}/artifacts/arctic_mano_preview/assets/objects/scissors_vhacd.usd}"
 export DEXCODESIGN_MANO_SIDE="${MANO_SIDE:-right}"
+if [[ "${BIMANUAL_MODE:-false}" == "true" ]]; then
+  if [[ -z "${AUXILIARY_REFERENCE_PATH:-}" ]]; then
+    echo "BIMANUAL_MODE=true requires AUXILIARY_REFERENCE_PATH" >&2
+    exit 2
+  fi
+  export DEXCODESIGN_AUXILIARY_REFERENCE_PATH="${AUXILIARY_REFERENCE_PATH}"
+fi
 
 RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
@@ -44,6 +51,12 @@ if [[ "${DEXCODESIGN_MANO_SIDE}" == "right" && ! -f "${REPO_ROOT}/artifacts/isaa
     artifacts/isaaclab_mano_residual/assets/mano_right.usd \
     --joint-stiffness 0 --joint-damping 0 --headless
 fi
+if [[ "${BIMANUAL_MODE:-false}" == "true" && ! -f "${REPO_ROOT}/artifacts/isaaclab_mano_residual/assets/mano_left.usd" ]]; then
+  ./isaaclab.sh -p scripts/tools/convert_urdf.py \
+    assets/robot_hands/direct_motor/mano/left/hand.urdf \
+    artifacts/isaaclab_mano_residual/assets/mano_left.usd \
+    --joint-stiffness 0 --joint-damping 0 --headless
+fi
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py \
   --task DexCoDesign-MANO-Residual-Direct-v0 \
   --algorithm PPO \
@@ -53,6 +66,7 @@ fi
   "${CHECKPOINT_ARGS[@]}" \
   --headless \
   env.articulate_mode=true \
+  env.bimanual_mode="${BIMANUAL_MODE:-false}" \
   env.articulated_object_fix_root_link=false \
   env.object_disable_gravity="${OBJECT_DISABLE_GRAVITY:-false}" \
   env.require_free_object_root=true \

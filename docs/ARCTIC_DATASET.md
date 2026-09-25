@@ -131,11 +131,43 @@ Selection is balanced across object identities and prefers manipulation/use
 sequences over static grab sequences. TACO and ARCTIC manifests remain separate
 so rigid-object and articulated-object metrics cannot be accidentally mixed.
 
+## Bimanual residual mode
+
+ARCTIC records both hands.  `env.bimanual_mode=true` therefore spawns both
+physical MANO articulations.  The selected primary side (normally `right`) is
+controlled by residual PPO, while the opposite support hand tracks its own
+reference trajectory and participates in PhysX contacts.  The policy observes
+the support hand's current and goal state, but its action dimension remains
+unchanged; existing single-hand checkpoints and training configurations are
+not silently reinterpreted.
+
+Prepare a synchronized pair:
+
+```bash
+python scripts/datasets/arctic/prepare_arctic_bimanual_item.py \
+  --canonical-trajectory datasets/arctic_v1/canonical_100_tabletop/000_box_s08/trajectory.npz \
+  --output artifacts/arctic_bimanual/000_box_s08
+```
+
+Training requires both paths:
+
+```bash
+SAMPLE_ID=000_box_s08 OBJECT_ID=box \
+  sbatch scripts/datasets/arctic/train_arctic_bimanual.sbatch
+```
+
+The mode is intentionally an asymmetric first implementation: it tests whether
+the missing physical support hand explains single-hand failures without first
+doubling the learned action space.  A fully learned two-hand residual policy
+can be added later as a separate ablation.
+
 ## Files
 
 ```text
 scripts/datasets/arctic/download_arctic_minimal.py
 scripts/datasets/arctic/prepare_arctic_objects.py
 scripts/datasets/arctic/prepare_arctic_subset.py
+scripts/datasets/arctic/prepare_arctic_bimanual_item.py
+scripts/datasets/arctic/train_arctic_bimanual.sbatch
 docs/ARCTIC_DATASET.md
 ```

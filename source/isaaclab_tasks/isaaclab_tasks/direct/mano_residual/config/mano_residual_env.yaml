@@ -10,6 +10,11 @@ collisions:
 # else about the hand, action, controller, or PPO configuration changes.
 articulate_mode: false
 
+# Adds the opposite MANO hand as a physical reference-tracking support hand.
+# The residual PPO action continues to control the selected primary side, so
+# existing single-hand action semantics and checkpoints remain unchanged.
+bimanual_mode: false
+
 # Maximum residual correction produced by a normalized policy action in
 # [-1, 1]. Position is in meters; rotation and finger joints are in radians.
 residual_actions:

@@ -54,6 +54,9 @@ MANO_REFERENCE_PATH = (
     / "isaaclab_reference.npz"
 )
 REFERENCE_PATH_OVERRIDE = os.environ.get("DEXCODESIGN_REFERENCE_PATH")
+AUXILIARY_REFERENCE_PATH_OVERRIDE = os.environ.get(
+    "DEXCODESIGN_AUXILIARY_REFERENCE_PATH"
+)
 OBJECT_USD_PATH = Path(
     os.environ.get(
         "DEXCODESIGN_OBJECT_USD_PATH",
@@ -186,6 +189,26 @@ ROOT_POSITION_EXPR = f"{MANO_SIDE}_pos_.*" if HAND_ID == "mano" else "root_pos_.
 ROOT_ROTATION_EXPR = f"{MANO_SIDE}_rot_.*" if HAND_ID == "mano" else "root_rot_.*"
 FINGER_JOINT_EXPR = f"{MANO_SIDE}_j_.*" if HAND_ID == "mano" else "finger__.*"
 
+if HAND_ID == "mano":
+    AUXILIARY_MANO_SIDE = "left" if MANO_SIDE == "right" else "right"
+    AUXILIARY_HAND_USD_PATH = ASSET_ROOT / f"mano_{AUXILIARY_MANO_SIDE}.usd"
+    AUXILIARY_CONTACT_LINK_NAMES = (
+        f"{AUXILIARY_MANO_SIDE}_palm",
+        *(
+            f"{AUXILIARY_MANO_SIDE}_{finger}{segment}"
+            for finger in ("index", "middle", "ring", "pinky")
+            for segment in ("1z", "2", "3")
+        ),
+        *(
+            f"{AUXILIARY_MANO_SIDE}_{name}"
+            for name in ("thumb1z", "thumb2z", "thumb3")
+        ),
+    )
+else:
+    AUXILIARY_MANO_SIDE = "left"
+    AUXILIARY_HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
+    AUXILIARY_CONTACT_LINK_NAMES = ()
+
 
 def _points_in_elliptical_prism(
     points: torch.Tensor,
@@ -234,6 +257,12 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # fixed-base collision diagnostics from being mistaken for grasp training.
     require_free_object_root = False
     require_dynamic_object_root = False
+
+    # Bimanual mode keeps the selected MANO side as the residual-policy hand
+    # and adds the opposite hand as a physical, reference-tracking support
+    # hand.  This is deliberately opt-in so existing single-hand checkpoints,
+    # observations, and action dimensions remain unchanged.
+    bimanual_mode = False
 
     sim: SimulationCfg = SimulationCfg(
         dt=1.0 / 120.0,
@@ -323,6 +352,45 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
             ),
             "fingers": ImplicitActuatorCfg(
                 joint_names_expr=[FINGER_JOINT_EXPR],
+                stiffness=300.0,
+                damping=34.6410162,
+                effort_limit_sim=1000.0,
+                velocity_limit_sim=20.0,
+                armature=1.0,
+            ),
+        },
+    )
+
+    auxiliary_hand_cfg: ArticulationCfg = ArticulationCfg(
+        prim_path="/World/envs/env_.*/AuxiliaryHand",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(AUXILIARY_HAND_USD_PATH),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_depenetration_velocity=1.0,
+            ),
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                fix_root_link=True,
+                enabled_self_collisions=False,
+                solver_position_iteration_count=8,
+                solver_velocity_iteration_count=2,
+            ),
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
+        actuators={
+            "wrist": ImplicitActuatorCfg(
+                joint_names_expr=[
+                    f"{AUXILIARY_MANO_SIDE}_pos_.*",
+                    f"{AUXILIARY_MANO_SIDE}_rot_.*",
+                ],
+                stiffness=1000.0,
+                damping=63.2455532,
+                effort_limit_sim=1000.0,
+                velocity_limit_sim=20.0,
+                armature=1.0,
+            ),
+            "fingers": ImplicitActuatorCfg(
+                joint_names_expr=[f"{AUXILIARY_MANO_SIDE}_j_.*"],
                 stiffness=300.0,
                 damping=34.6410162,
                 effort_limit_sim=1000.0,
@@ -524,6 +592,31 @@ class ManoResidualEnv(DirectRLEnv):
         return self.scene.num_envs
 
     def __init__(self, cfg: ManoResidualEnvCfg, render_mode: str | None = None, **kwargs):
+        self._bimanual_mode = bool(cfg.bimanual_mode)
+        if self._bimanual_mode:
+            if HAND_ID != "mano" or MORPHOLOGY_BATCH_MANIFEST is not None:
+                raise ValueError(
+                    "bimanual_mode currently supports one canonical MANO pair only"
+                )
+            if not AUXILIARY_REFERENCE_PATH_OVERRIDE:
+                raise ValueError(
+                    "bimanual_mode requires DEXCODESIGN_AUXILIARY_REFERENCE_PATH"
+                )
+            auxiliary_reference_path = Path(
+                AUXILIARY_REFERENCE_PATH_OVERRIDE
+            ).expanduser().resolve()
+            if not auxiliary_reference_path.is_file():
+                raise FileNotFoundError(
+                    f"Missing auxiliary MANO reference: {auxiliary_reference_path}"
+                )
+            with np.load(auxiliary_reference_path) as auxiliary_reference_file:
+                self._auxiliary_reference = {
+                    key: auxiliary_reference_file[key].copy()
+                    for key in auxiliary_reference_file.files
+                }
+            cfg.auxiliary_hand_cfg.spawn.activate_contact_sensors = bool(
+                cfg.articulate_mode
+            )
         if (
             MORPHOLOGY_BATCH_MANIFEST is not None
             and not MORPHOLOGY_BATCH_MANIFEST.get("grouped_physics_replication", False)
@@ -554,6 +647,37 @@ class ManoResidualEnv(DirectRLEnv):
         )
         references = [np.load(path) for path in reference_paths]
         reference = references[0]
+        if self._bimanual_mode:
+            required_auxiliary_keys = (
+                "joint_names",
+                "hand_q",
+                "hand_ctrl",
+                "object_pose_wxyz",
+                "fingertip_pose_wxyz",
+                "fingertip_link_names",
+                "fingertip_offsets",
+            )
+            missing = [
+                key
+                for key in required_auxiliary_keys
+                if key not in self._auxiliary_reference
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"Auxiliary MANO reference is missing required fields: {missing}"
+                )
+            if len(self._auxiliary_reference["hand_q"]) != len(reference["hand_q"]):
+                raise RuntimeError(
+                    "Primary and auxiliary MANO references have different lengths"
+                )
+            if not np.allclose(
+                self._auxiliary_reference["object_pose_wxyz"],
+                reference["object_pose_wxyz"],
+                atol=1.0e-5,
+            ):
+                raise RuntimeError(
+                    "Primary and auxiliary MANO references disagree on object pose"
+                )
         self._reference_fps = float(np.asarray(reference.get("fps", 0.0)))
         self._control_dt = float(cfg.sim.dt * cfg.decimation)
         if self._reference_fps <= 0.0:
@@ -582,6 +706,18 @@ class ManoResidualEnv(DirectRLEnv):
         cfg.observation_space = OBSERVATION_DIM + (
             2 * OBJECT_JOINT_DIM if cfg.articulate_mode else 0
         )
+        if self._bimanual_mode:
+            auxiliary_control_dim = int(
+                self._auxiliary_reference["hand_q"].shape[1]
+            )
+            auxiliary_tip_count = int(
+                self._auxiliary_reference["fingertip_pose_wxyz"].shape[1]
+            )
+            # Auxiliary current/goal q plus current xyz and goal xyz+quat for
+            # each tracked fingertip. Object state remains represented once.
+            cfg.observation_space += (
+                2 * auxiliary_control_dim + 10 * auxiliary_tip_count
+            )
         if cfg.articulate_mode and cfg.hand_cfg.spawn is not None:
             # Articulated-object contact filtering reports from one hand link
             # and filters against all object links, so the hand bodies need
@@ -816,6 +952,61 @@ class ManoResidualEnv(DirectRLEnv):
             self.device
         )
         self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
+        if self._bimanual_mode:
+            auxiliary_joint_names = self._auxiliary_reference[
+                "joint_names"
+            ].tolist()
+            if self.auxiliary_hand.num_joints != len(auxiliary_joint_names):
+                raise RuntimeError(
+                    "Auxiliary MANO joint count does not match its reference: "
+                    f"asset={self.auxiliary_hand.joint_names}, "
+                    f"reference={auxiliary_joint_names}"
+                )
+            missing_auxiliary_joints = sorted(
+                set(auxiliary_joint_names) - set(self.auxiliary_hand.joint_names)
+            )
+            if missing_auxiliary_joints:
+                raise RuntimeError(
+                    "Auxiliary reference joints missing from imported MANO hand: "
+                    f"{missing_auxiliary_joints}"
+                )
+            auxiliary_order = [
+                auxiliary_joint_names.index(name)
+                for name in self.auxiliary_hand.joint_names
+            ]
+            auxiliary_order_tensor = torch.tensor(auxiliary_order)
+            self.auxiliary_reference_hand_q = torch.from_numpy(
+                self._auxiliary_reference["hand_q"]
+            ).index_select(1, auxiliary_order_tensor).to(self.device)
+            self.auxiliary_reference_hand_ctrl = torch.from_numpy(
+                self._auxiliary_reference["hand_ctrl"]
+            ).index_select(1, auxiliary_order_tensor).to(self.device)
+            self.auxiliary_reference_fingertip_pose = torch.from_numpy(
+                self._auxiliary_reference["fingertip_pose_wxyz"]
+            ).to(self.device)
+            self.auxiliary_fingertip_offsets = torch.from_numpy(
+                self._auxiliary_reference["fingertip_offsets"]
+            ).to(self.device)
+            auxiliary_tip_names = self._auxiliary_reference[
+                "fingertip_link_names"
+            ].tolist()
+            missing_auxiliary_tips = sorted(
+                set(auxiliary_tip_names) - set(self.auxiliary_hand.body_names)
+            )
+            if missing_auxiliary_tips:
+                raise RuntimeError(
+                    "Auxiliary fingertip links missing from imported MANO hand: "
+                    f"{missing_auxiliary_tips}"
+                )
+            self._auxiliary_fingertip_body_indices = [
+                self.auxiliary_hand.body_names.index(name)
+                for name in auxiliary_tip_names
+            ]
+            auxiliary_limits = (
+                self.auxiliary_hand.root_physx_view.get_dof_limits().to(self.device)
+            )
+            self.auxiliary_joint_lower_limits = auxiliary_limits[..., 0]
+            self.auxiliary_joint_upper_limits = auxiliary_limits[..., 1]
         self.morphology_context = (
             None
             if self._morphology_context_cpu is None
@@ -881,6 +1072,12 @@ class ManoResidualEnv(DirectRLEnv):
             dtype=torch.float,
             device=self.device,
         )
+        if self._bimanual_mode:
+            self.auxiliary_joint_targets = torch.zeros(
+                (self.num_envs, self.auxiliary_hand.num_joints),
+                dtype=torch.float,
+                device=self.device,
+            )
         self._object_position_error = torch.zeros(self.num_envs, device=self.device)
         self._object_rotation_error = torch.zeros(self.num_envs, device=self.device)
         # Evaluation curves report the accumulated C-error pose reward only.
@@ -941,6 +1138,12 @@ class ManoResidualEnv(DirectRLEnv):
                 dtype=torch.float32,
                 device=self.device,
             )
+            if self._bimanual_mode:
+                self._capture_auxiliary_hand_q = torch.zeros(
+                    (*capture_shape, self.auxiliary_hand.num_joints),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
             self._capture_object_pose = torch.zeros(
                 (*capture_shape, 7),
                 dtype=torch.float32,
@@ -1087,6 +1290,26 @@ class ManoResidualEnv(DirectRLEnv):
         ).reshape(self.num_envs, len(self._fingertip_body_indices), 3)
         return fingertip_body_pos + fingertip_offset_w
 
+    def _current_auxiliary_fingertip_positions_w(self) -> torch.Tensor:
+        fingertip_body_quat = self.auxiliary_hand.data.body_quat_w[
+            :, self._auxiliary_fingertip_body_indices
+        ]
+        fingertip_body_pos = self.auxiliary_hand.data.body_pos_w[
+            :, self._auxiliary_fingertip_body_indices
+        ]
+        fingertip_offsets = self.auxiliary_fingertip_offsets[
+            None, :, :
+        ].expand(self.num_envs, -1, -1)
+        fingertip_offset_w = quat_apply(
+            fingertip_body_quat.reshape(-1, 4),
+            fingertip_offsets.reshape(-1, 3),
+        ).reshape(
+            self.num_envs,
+            len(self._auxiliary_fingertip_body_indices),
+            3,
+        )
+        return fingertip_body_pos + fingertip_offset_w
+
     def _reference_at(
         self,
         tensor: torch.Tensor,
@@ -1197,6 +1420,8 @@ class ManoResidualEnv(DirectRLEnv):
                 )
         else:
             self.hand = Articulation(self.cfg.hand_cfg)
+            if self._bimanual_mode:
+                self.auxiliary_hand = Articulation(self.cfg.auxiliary_hand_cfg)
             self._apply_morphology_batch_overlays()
         visual_manifest_path = ASSET_ROOT / "mano_visuals.json"
         if HAND_ID == "mano" and MANO_SIDE == "left" and visual_manifest_path.is_file():
@@ -1207,6 +1432,22 @@ class ManoResidualEnv(DirectRLEnv):
                 )
                 visual_cfg.func(
                     f"/World/envs/env_0/Hand/{link_name}/visual_overlay",
+                    visual_cfg,
+                )
+        if (
+            self._bimanual_mode
+            and AUXILIARY_MANO_SIDE == "left"
+            and visual_manifest_path.is_file()
+        ):
+            visual_manifest = json.loads(
+                visual_manifest_path.read_text(encoding="utf-8")
+            )
+            for link_name, relative_usd_path in visual_manifest.items():
+                visual_cfg = sim_utils.UsdFileCfg(
+                    usd_path=str(ASSET_ROOT / relative_usd_path),
+                )
+                visual_cfg.func(
+                    f"/World/envs/env_0/AuxiliaryHand/{link_name}/visual_overlay",
                     visual_cfg,
                 )
         if grouped_replicas:
@@ -1294,18 +1535,42 @@ class ManoResidualEnv(DirectRLEnv):
             self._all_hand_contact_sensors = tuple(
                 self._articulated_contact_sensors.values()
             )
+            if self._bimanual_mode:
+                self._auxiliary_articulated_contact_sensors = {
+                    link_name: ContactSensor(
+                        ContactSensorCfg(
+                            prim_path=f"{env_regex}/AuxiliaryHand/{link_name}",
+                            update_period=0.0,
+                            history_length=0,
+                            filter_prim_paths_expr=object_filter_paths,
+                            max_contact_data_count_per_prim=4,
+                        )
+                    )
+                    for link_name in AUXILIARY_CONTACT_LINK_NAMES
+                }
+                self._all_hand_contact_sensors += tuple(
+                    self._auxiliary_articulated_contact_sensors.values()
+                )
         else:
             # A rigid object has one reporting body, filtered against groups
             # of hand links exactly as in the original environment.
-            def object_contact_sensor(link_names: Sequence[str]) -> ContactSensor:
+            def object_contact_sensor(
+                link_names: Sequence[str], *, include_auxiliary: bool = False
+            ) -> ContactSensor:
+                filter_paths = [
+                    f"{env_regex}/Hand/{name}" for name in link_names
+                ]
+                if include_auxiliary and self._bimanual_mode:
+                    filter_paths.extend(
+                        f"{env_regex}/AuxiliaryHand/{name}"
+                        for name in AUXILIARY_CONTACT_LINK_NAMES
+                    )
                 return ContactSensor(
                     ContactSensorCfg(
                         prim_path=f"{env_regex}/Object",
                         update_period=0.0,
                         history_length=0,
-                        filter_prim_paths_expr=[
-                            f"{env_regex}/Hand/{name}" for name in link_names
-                        ],
+                        filter_prim_paths_expr=filter_paths,
                     )
                 )
 
@@ -1316,13 +1581,21 @@ class ManoResidualEnv(DirectRLEnv):
                 OTHER_FINGER_CONTACT_LINK_NAMES
             )
             self._all_hand_contact_sensor = object_contact_sensor(
-                ALL_HAND_CONTACT_LINK_NAMES
+                ALL_HAND_CONTACT_LINK_NAMES,
+                include_auxiliary=True,
             )
         if not grouped_replicas:
             self._validate_collision_coverage(
                 hand_root_path=f"{self._environment_root(0)}/Hand",
                 object_root_path=f"{self._environment_root(0)}/Object",
             )
+            if self._bimanual_mode:
+                self._validate_collision_coverage(
+                    hand_root_path=f"{self._environment_root(0)}/AuxiliaryHand",
+                    object_root_path=f"{self._environment_root(0)}/Object",
+                    contact_link_names=AUXILIARY_CONTACT_LINK_NAMES,
+                    hand_label=f"mano_{AUXILIARY_MANO_SIDE}",
+                )
         if not grouped_replicas:
             self._spawn_support_ground()
             hand_roots = (
@@ -1335,12 +1608,19 @@ class ManoResidualEnv(DirectRLEnv):
                     hand_root_path=hand_root,
                     support_root_path="/World/ground",
                 )
+            if self._bimanual_mode:
+                self._filter_hand_support_collisions(
+                    hand_root_path="/World/envs/env_0/AuxiliaryHand",
+                    support_root_path="/World/ground",
+                )
         # InteractiveScene already creates all independent environment Xforms
         # before _setup_scene when replicate_physics=False. Re-cloning here
         # would overwrite the deterministic MultiUsdFileCfg assignments.
         if self.cfg.scene.replicate_physics and not grouped_replicas:
             self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["hand"] = self.hand
+        if self._bimanual_mode:
+            self.scene.articulations["auxiliary_hand"] = self.auxiliary_hand
         if self.cfg.articulate_mode:
             self.scene.articulations["object"] = self.object
         else:
@@ -1348,6 +1628,13 @@ class ManoResidualEnv(DirectRLEnv):
         if self.cfg.articulate_mode:
             for link_name, sensor in self._articulated_contact_sensors.items():
                 self.scene.sensors[f"object_contact_{link_name}"] = sensor
+            if self._bimanual_mode:
+                for link_name, sensor in (
+                    self._auxiliary_articulated_contact_sensors.items()
+                ):
+                    self.scene.sensors[
+                        f"object_contact_auxiliary_{link_name}"
+                    ] = sensor
         else:
             self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
             self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
@@ -1617,13 +1904,15 @@ class ManoResidualEnv(DirectRLEnv):
         self,
         hand_root_path: str,
         object_root_path: str,
+        contact_link_names: Sequence[str] = ALL_HAND_CONTACT_LINK_NAMES,
+        hand_label: str = HAND_ID,
     ) -> None:
         """Fail before simulation if a physical hand part or object lacks collision."""
 
         stage = self.scene.stage
         missing_links: list[str] = []
         collider_count = 0
-        for link_name in ALL_HAND_CONTACT_LINK_NAMES:
+        for link_name in contact_link_names:
             link_path = f"{hand_root_path}/{link_name}"
             link = stage.GetPrimAtPath(link_path)
             colliders = []
@@ -1639,7 +1928,7 @@ class ManoResidualEnv(DirectRLEnv):
             collider_count += len(colliders)
         if missing_links:
             raise RuntimeError(
-                f"{HAND_ID} has physical hand parts without collision USD prims: "
+                f"{hand_label} has physical hand parts without collision USD prims: "
                 f"{missing_links}"
             )
 
@@ -1679,8 +1968,8 @@ class ManoResidualEnv(DirectRLEnv):
             )
         self._object_collision_approximations = object_approximations
         print(
-            f"[HAND_COLLISION_COVERAGE:{HAND_ID}] "
-            f"physical_links={len(ALL_HAND_CONTACT_LINK_NAMES)} "
+            f"[HAND_COLLISION_COVERAGE:{hand_label}] "
+            f"physical_links={len(contact_link_names)} "
             f"hand_colliders={collider_count} "
             f"object_colliders={len(object_colliders)} "
             f"object_approximation={object_approximations[0]}"
@@ -1753,6 +2042,16 @@ class ManoResidualEnv(DirectRLEnv):
             self.joint_lower_limits,
             self.joint_upper_limits,
         )
+        if self._bimanual_mode:
+            auxiliary_targets = self._reference_at(
+                self.auxiliary_reference_hand_ctrl,
+                self.phase_buf,
+            )
+            self.auxiliary_joint_targets = torch.clamp(
+                auxiliary_targets,
+                self.auxiliary_joint_lower_limits,
+                self.auxiliary_joint_upper_limits,
+            )
         if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_actions[env_ids, self.phase_buf] = self.actions
@@ -1760,6 +2059,10 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _apply_action(self) -> None:
         self.hand.set_joint_position_target(self.joint_targets)
+        if self._bimanual_mode:
+            self.auxiliary_hand.set_joint_position_target(
+                self.auxiliary_joint_targets
+            )
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
@@ -1821,6 +2124,30 @@ class ManoResidualEnv(DirectRLEnv):
             ),
             dim=-1,
         )
+        if self._bimanual_mode:
+            auxiliary_fingertip_pos = (
+                self._current_auxiliary_fingertip_positions_w()
+                - self.scene.env_origins[:, None, :]
+            )
+            auxiliary_goal_fingertip_pose = self._reference_at(
+                self.auxiliary_reference_fingertip_pose,
+                self.phase_buf,
+            )
+            auxiliary_observation = torch.cat(
+                (
+                    self.auxiliary_hand.data.joint_pos,
+                    auxiliary_fingertip_pos.flatten(start_dim=1),
+                    auxiliary_goal_fingertip_pose.flatten(start_dim=1),
+                    self._reference_at(
+                        self.auxiliary_reference_hand_q,
+                        self.phase_buf,
+                    ),
+                ),
+                dim=-1,
+            )
+            observation = torch.cat(
+                (observation, auxiliary_observation), dim=-1
+            )
         if self.morphology_context is not None:
             observation = torch.cat((observation, self.morphology_context), dim=-1)
         return {"policy": observation}
@@ -2230,6 +2557,10 @@ class ManoResidualEnv(DirectRLEnv):
         if self._capture_enabled:
             env_ids = torch.arange(self.num_envs, device=self.device)
             self._capture_hand_q[env_ids, self.phase_buf] = self.hand.data.joint_pos
+            if self._bimanual_mode:
+                self._capture_auxiliary_hand_q[env_ids, self.phase_buf] = (
+                    self.auxiliary_hand.data.joint_pos
+                )
             object_position = (
                 self.object.data.root_pos_w - self.scene.env_origins
             )
@@ -2319,6 +2650,10 @@ class ManoResidualEnv(DirectRLEnv):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         metadata = {
             "hand_id": HAND_ID,
+            "bimanual_mode": self._bimanual_mode,
+            "auxiliary_hand_side": (
+                AUXILIARY_MANO_SIDE if self._bimanual_mode else None
+            ),
             "status": "success" if success else "farthest",
             "success": success,
             "env_id": env_id,
@@ -2394,6 +2729,13 @@ class ManoResidualEnv(DirectRLEnv):
             ].detach().cpu().numpy(),
             "metadata_json": np.asarray(json.dumps(metadata)),
         }
+        if self._bimanual_mode:
+            payload["auxiliary_hand_q"] = self._capture_auxiliary_hand_q[
+                env_id, : last_phase + 1
+            ].detach().cpu().numpy()
+            payload["auxiliary_joint_names"] = np.asarray(
+                self.auxiliary_hand.joint_names
+            )
         if self.cfg.articulate_mode:
             payload["object_joint_position_rad"] = self._capture_object_joint[
                 env_id, : last_phase + 1
@@ -2551,6 +2893,47 @@ class ManoResidualEnv(DirectRLEnv):
         )
         self.hand.set_joint_position_target(ctrl, env_ids=env_ids)
         self.joint_targets[env_ids] = ctrl
+
+        if self._bimanual_mode:
+            auxiliary_root_state = self.auxiliary_hand.data.default_root_state[
+                env_ids
+            ].clone()
+            auxiliary_root_state[:, :3] += self.scene.env_origins[env_ids]
+            auxiliary_root_state[:, 7:] = 0.0
+            auxiliary_joint_pos = self._reference_at(
+                self.auxiliary_reference_hand_q,
+                self.phase_buf[env_ids_tensor],
+                env_ids_tensor,
+            )
+            auxiliary_joint_vel = (
+                self._reference_velocity_at(
+                    self.auxiliary_reference_hand_q,
+                    self.phase_buf[env_ids_tensor],
+                    env_ids_tensor,
+                )
+                if self.cfg.randomize_start_phase
+                else torch.zeros_like(auxiliary_joint_pos)
+            )
+            self.auxiliary_hand.write_root_pose_to_sim(
+                auxiliary_root_state[:, :7], env_ids
+            )
+            self.auxiliary_hand.write_root_velocity_to_sim(
+                auxiliary_root_state[:, 7:], env_ids
+            )
+            self.auxiliary_hand.write_joint_state_to_sim(
+                auxiliary_joint_pos,
+                auxiliary_joint_vel,
+                env_ids=env_ids,
+            )
+            auxiliary_ctrl = self._reference_at(
+                self.auxiliary_reference_hand_ctrl,
+                self.phase_buf[env_ids_tensor],
+                env_ids_tensor,
+            )
+            self.auxiliary_hand.set_joint_position_target(
+                auxiliary_ctrl, env_ids=env_ids
+            )
+            self.auxiliary_joint_targets[env_ids] = auxiliary_ctrl
 
         object_pose = self._reference_at(
             self.reference_object_pose,
