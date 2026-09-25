@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -55,6 +56,23 @@ def articulation(path: str, usd: Path, color: tuple[float, float, float]) -> Art
             actuators={},
         )
     )
+
+
+def capture_rgb(camera: Camera, sim: SimulationContext) -> np.ndarray:
+    """Wait for a valid RTX camera buffer after startup or scene changes."""
+
+    last_error: Exception | None = None
+    for _ in range(120):
+        try:
+            app.update()
+            sim.render()
+            camera.update(0.0)
+            rgb = camera.data.output["rgb"]
+            if rgb.ndim == 4 and rgb.shape[-1] >= 3:
+                return rgb[0, :, :, :3].detach().cpu().numpy()
+        except (IndexError, KeyError, RuntimeError, TypeError) as error:
+            last_error = error
+    raise RuntimeError("RTX camera did not produce a valid RGB frame") from last_error
 
 
 def main() -> None:
@@ -197,10 +215,7 @@ def main() -> None:
             q_obj = object_q_t[frame_index : frame_index + 1]
             obj.write_joint_state_to_sim(q_obj, torch.zeros_like(q_obj))
             sim.forward()
-            app.update()
-            sim.render()
-            camera.update(0.0)
-            frame = camera.data.output["rgb"][0, :, :, :3].detach().cpu().numpy()
+            frame = capture_rgb(camera, sim)
             if frame_index == 0:
                 imageio.imwrite(args.output.with_suffix(".png"), frame)
                 print(
@@ -222,4 +237,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException:
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
