@@ -107,7 +107,7 @@ def read_success_objects(root: Path) -> dict[str, list[dict]]:
 
 def read_action_annotations(root: Path, success: dict[str, list[dict]]) -> list[dict]:
     result = []
-    path = root / "_downloads" / "annotations_v2.jsonl"
+    path = root / "raw/downloads" / "annotations_v2.jsonl"
     with path.open(encoding="utf-8") as f:
         for line in f:
             item = json.loads(line)
@@ -343,7 +343,7 @@ def main() -> None:
     converted = []
     found_count = 0
     rejected_count = 0
-    archive = root / "_downloads" / "keypoints_3d_mano_align.tar.gz"
+    archive = root / "raw/downloads" / "keypoints_3d_mano_align.tar.gz"
     with tarfile.open(archive, mode="r|gz") as tar:
         for member in tar:
             name = member.name.lstrip("./")
@@ -374,7 +374,7 @@ def main() -> None:
         if item["session"] in converted_sessions:
             prefix = f"publish/{item['scene_category']}/{item['mesh_folder']}/"
             wanted_prefixes[prefix] = mesh_root / safe_id(f"{item['scene_category']}/{item['object_folder']}")
-    mesh_archive = root / "_downloads" / "scans_publish.zip"
+    mesh_archive = root / "raw/downloads" / "scans_publish.zip"
     mesh_status = {}
     with zipfile.ZipFile(mesh_archive) as zf:
         for member in zf.infolist():

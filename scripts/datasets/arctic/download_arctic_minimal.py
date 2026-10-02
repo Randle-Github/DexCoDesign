@@ -145,7 +145,7 @@ def main() -> None:
     selected = ["raw_seqs.zip"]
     if args.include_official_meta:
         selected.append("meta.zip")
-    archive_root = args.root / "downloads"
+    archive_root = args.root / "raw/downloads"
     raw_root = args.root / "raw"
     for filename in selected:
         spec = ARCHIVES[filename]

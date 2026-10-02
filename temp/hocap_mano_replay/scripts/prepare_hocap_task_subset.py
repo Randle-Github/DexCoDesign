@@ -16,7 +16,7 @@ import numpy as np
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw"
 DEFAULT_MANIFEST = EXPERIMENT_ROOT / "data" / "benchmark_tasks.json"
-DEFAULT_OUTPUT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/source_tasks"
+DEFAULT_OUTPUT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw/tasks"
 
 
 def quaternion_step_angle(quaternion_xyzw: np.ndarray) -> np.ndarray:

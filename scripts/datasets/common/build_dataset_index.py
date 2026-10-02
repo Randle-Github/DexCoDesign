@@ -63,7 +63,8 @@ def build_index(dataset: str) -> dict:
     supp_objects = {}
     if dataset == "supp":
         source = json.loads((root / "manifest.json").read_text())
-        supp_objects = {row["sample_id"]: row["objects"] for row in source["groups"]["supp"]}
+        supp_rows = source["groups"]["supp"] + source.get("diagnostic_groups", {}).get("supp", [])
+        supp_objects = {row["sample_id"]: row["objects"] for row in supp_rows}
     samples = []
     for path in paths:
         audit = audit_trajectory(path)
@@ -95,10 +96,12 @@ def build_index(dataset: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("datasets", nargs="*", choices=DATASET_NAMES, default=DATASET_NAMES)
+    parser.add_argument("datasets", nargs="*", help=f"Subset of {', '.join(DATASET_NAMES)}")
     parser.add_argument("--write", action="store_true", help="Write index.json after strict trajectory/asset checks")
     args = parser.parse_args()
-    for dataset in args.datasets:
+    for dataset in args.datasets or DATASET_NAMES:
+        if dataset not in DATASET_NAMES:
+            parser.error(f"Unknown dataset {dataset!r}; choose from {DATASET_NAMES}")
         index = build_index(dataset)
         print(f"{dataset}: {len(index['samples'])} valid trajectories with resolvable object meshes")
         if args.write:

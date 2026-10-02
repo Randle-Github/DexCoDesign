@@ -87,7 +87,7 @@ def main() -> None:
     converted = []
 
     for record in manifest["records"]:
-        source_path = root / record["path"]
+        source_path = root / "raw/benchmark_source" / Path(record["path"]).name
         source = np.load(source_path, allow_pickle=False)
         frames = np.asarray(source["frame_indices"], dtype=np.int64)
         hands = np.stack(

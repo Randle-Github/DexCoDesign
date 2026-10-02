@@ -73,7 +73,7 @@ def main() -> None:
             "Run download_arctic_minimal.py first."
         )
     selected = select(paired, min(args.count, len(paired)), args.seed)
-    output_root = args.root / "benchmark_100"
+    output_root = args.root / "raw/benchmark_source"
     output_root.mkdir(parents=True, exist_ok=True)
     records = []
     for index, mano_path in enumerate(selected):

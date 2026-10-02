@@ -72,7 +72,7 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path("datasets/taco_v1"))
     args = parser.parse_args()
     root = args.root.resolve()
-    downloads = root / "_downloads"
+    downloads = root / "raw/downloads"
     downloads.mkdir(parents=True, exist_ok=True)
     for name, (size, checksum) in FILES.items():
         destination = root / name if name.endswith(".csv") else downloads / name

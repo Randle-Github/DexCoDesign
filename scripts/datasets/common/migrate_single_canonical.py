@@ -29,7 +29,7 @@ def main() -> None:
         (repo / "artifacts/datasets/hocap_v1/canonical", data / "hocap_v1/canonical"),
         (repo / "temp/hocap_mano_replay/data/tasks/models", data / "hocap_v1/assets/objects"),
         (repo / "temp/hocap_mano_replay/data/raw", data / "hocap_v1/raw"),
-        (repo / "temp/hocap_mano_replay/data/tasks", data / "hocap_v1/source_tasks"),
+        (repo / "temp/hocap_mano_replay/data/tasks", data / "hocap_v1/raw/tasks"),
         (data / "arctic_v1/canonical_100", data / "arctic_v1/raw/canonical_source"),
         (data / "gigahands_v1/canonical_candidates_v2", data / "gigahands_v1/canonical"),
         (data / "taco_v1/canonical_100", data / "taco_v1/canonical"),

@@ -205,7 +205,7 @@ def main() -> None:
     args = parser.parse_args()
 
     root = args.root.resolve()
-    downloads = root / "_downloads"
+    downloads = root / "raw/downloads"
     metadata_path = root / "taco_info.csv"
     hand_archive_path = downloads / "Hand_Poses_3D.zip"
     object_archive_path = downloads / "Object_Poses.zip"

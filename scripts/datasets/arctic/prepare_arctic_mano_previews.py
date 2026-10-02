@@ -127,8 +127,8 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path("datasets/arctic_v1"))
     parser.add_argument(
         "--benchmark-dir",
-        default="benchmark_100",
-        help="Benchmark subdirectory to convert (for example benchmark_100_table_fixed).",
+        default="raw/benchmark_source",
+        help="Benchmark source subdirectory to convert.",
     )
     parser.add_argument("--output", type=Path, default=Path("artifacts/arctic_mano_preview"))
     args = parser.parse_args()

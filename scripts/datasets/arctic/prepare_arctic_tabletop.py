@@ -341,7 +341,7 @@ def write_table_dynamic(
             )
             canonical_records.append({"sequence_id": source_path.parent.name, "path": str(destination.relative_to(root))})
 
-    for source_path in sorted((root / "benchmark_100").glob("*.npz")):
+    for source_path in sorted((root / "raw/benchmark_source").glob("*.npz")):
         if sequence_ids is not None and source_path.stem not in sequence_ids:
             continue
         with np.load(source_path, allow_pickle=False) as source:
@@ -435,7 +435,7 @@ def write_table_fixed(
             )
             canonical_records.append({"sequence_id": source_path.parent.name, "path": str(destination.relative_to(root))})
 
-    for source_path in sorted((root / "benchmark_100").glob("*.npz")):
+    for source_path in sorted((root / "raw/benchmark_source").glob("*.npz")):
         with np.load(source_path, allow_pickle=False) as source:
             oid = object_id(source)
             if object_ids is not None and oid not in object_ids:
