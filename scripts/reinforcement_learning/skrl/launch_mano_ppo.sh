@@ -173,7 +173,11 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
   )
   if [[ "$GPU_TYPE" == any ]]; then command+=(--gpus=1); else command+=(--gpus="$GPU_TYPE:1"); fi
   if [[ -n "$QOS" ]]; then command+=(--qos="$QOS"); fi
-  command+=("$SCRIPT_PATH" "${ORIGINAL_ARGS[@]}")
+  submit_args=()
+  for arg in "${ORIGINAL_ARGS[@]}"; do
+    if [[ "$arg" != --dry-run ]]; then submit_args+=("$arg"); fi
+  done
+  command+=("$SCRIPT_PATH" "${submit_args[@]}")
   if (( DRY_RUN )); then
     printf 'mode=%s side=%s reference=%s object=%s output=%s\n' "$MODE" "$SIDE" "$REFERENCE" "$OBJECT_USD" "$OUTPUT_DIR"
     printf '%q ' "${command[@]}"
