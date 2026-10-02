@@ -19,7 +19,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "wuji_rollout_video", ROOT / "temp/hocap_mano_replay/scripts/wuji_rollout_video.py"
+    "wuji_rollout_video", ROOT / "scripts/visualization/wuji_rollout_video.py"
 )
 video_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(video_module)
