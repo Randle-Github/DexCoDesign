@@ -8,11 +8,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts/datasets/common"))
+from dataset_catalog import dataset_root, iter_samples  # noqa: E402
+
+
+def canonical_records(dataset: str) -> dict[str, dict]:
+    return {record["sample_id"]: record for record in iter_samples(dataset)}
+
+
+def visual_assets(dataset: str, record: dict) -> list[dict]:
+    root = dataset_root(dataset)
+    return [
+        {**asset, "path": rel(root / asset["path"])}
+        for asset in record["objects"]
+    ]
 
 
 def metadata(path: Path) -> tuple[dict, int, float]:
@@ -49,21 +64,17 @@ def greedy(records: list[dict], count: int, keys: tuple[str, ...], seeds: list[s
 
 
 def taco() -> list[dict]:
-    root = ROOT / "datasets/taco_v1"
+    root = dataset_root("taco")
+    canonical = canonical_records("taco")
     records = []
     for index, line in enumerate((root / "manifests/selected_100.jsonl").read_text().splitlines()):
         source = json.loads(line)
-        path = root / f"canonical/{index:03d}/trajectory.npz"
-        if not path.is_file():
+        entry = canonical.get(f"{index:03d}")
+        if entry is None:
             continue
+        path = root / entry["trajectory"]
         meta, frames, fps = metadata(path)
-        objects = []
-        for object_index, info in enumerate(meta["objects"]):
-            mesh = root / f"raw/object_models/{info['object_id']}_cm.obj"
-            if mesh.is_file():
-                objects.append({"path": rel(mesh), "scale": 0.01, "object_index": object_index, "part": info["role"]})
-        if len(objects) != len(meta["objects"]):
-            continue
+        objects = visual_assets("taco", entry)
         records.append({
             "dataset": "taco", "sample_id": f"{index:03d}_{source['action'].replace(' ', '_')}",
             "trajectory": rel(path), "frames": frames, "fps": fps,
@@ -76,18 +87,13 @@ def taco() -> list[dict]:
 
 
 def arctic() -> list[dict]:
-    root = ROOT / "datasets/arctic_v1"
+    root = dataset_root("arctic")
     records = []
-    for path in sorted((root / "canonical").glob("*/trajectory.npz")):
+    for entry in iter_samples("arctic"):
+        path = root / entry["trajectory"]
         meta, frames, fps = metadata(path)
         object_id = meta["objects"][0]["object_id"]
-        objects = [
-            {"path": rel(root / f"assets/object_vtemplates/{object_id}/{part}.obj"), "scale": 0.001,
-             "object_index": 0, "part": part}
-            for part in ("bottom", "top")
-        ]
-        if not all((ROOT / spec["path"]).is_file() for spec in objects):
-            continue
+        objects = visual_assets("arctic", entry)
         # Initial/final frames have hands well outside the workspace; keep
         # the complete interaction interval while recording the crop.
         start, stop = min(10, frames - 1), max(min(frames - 10, frames), 11)
@@ -101,19 +107,17 @@ def arctic() -> list[dict]:
 
 
 def hocap() -> list[dict]:
-    root = ROOT / "datasets/hocap_v1/canonical"
+    root = dataset_root("hocap")
     records = []
-    for path in sorted(root.glob("*/trajectory.npz")):
+    for entry in iter_samples("hocap"):
+        path = root / entry["trajectory"]
         meta, frames, fps = metadata(path)
         object_id = meta["objects"][0]["object_id"]
-        mesh = ROOT / f"datasets/hocap_v1/assets/objects/{object_id}/cleaned_mesh_10000.obj"
-        if not mesh.is_file():
-            continue
         records.append({
             "dataset": "hocap", "sample_id": path.parent.name, "trajectory": rel(path),
-            "frames": frames, "fps": fps, "action": path.parent.name, "objects": [
-                {"path": rel(mesh), "scale": 1.0, "object_index": 0, "part": object_id}
-            ], "clip_start": 0, "clip_stop": frames, "ground": "unverified_source_world",
+            "frames": frames, "fps": fps, "action": path.parent.name,
+            "objects": visual_assets("hocap", entry),
+            "clip_start": 0, "clip_stop": frames, "ground": "unverified_source_world",
         })
     return records[:10]
 
@@ -147,36 +151,33 @@ def moving_window(path: Path, seconds: float = 6.0) -> tuple[int, int]:
 
 
 def dexterhand() -> list[dict]:
-    root = ROOT / "datasets/dexterhand_v1"
+    root = dataset_root("dexterhand")
     records = []
-    for path in sorted((root / "canonical").glob("*/trajectory.npz")):
+    for entry in iter_samples("dexterhand"):
+        path = root / entry["trajectory"]
         meta, frames, fps = metadata(path)
-        session = meta["source_session"]
         object_id = meta["objects"][0]["object_id"]
-        mesh_name = "visual_rest.obj" if object_id == "RubiksCube" else "visual.obj"
-        mesh = root / "assets/objects" / session / mesh_name
-        if not mesh.is_file():
-            continue
         start, stop = moving_window(path)
         records.append({
             "dataset": "dexterhand", "sample_id": path.parent.name, "trajectory": rel(path),
-            "frames": frames, "fps": fps, "action": object_id, "objects": [
-                {"path": rel(mesh), "scale": 1.0, "object_index": 0, "part": object_id}
-            ], "clip_start": start, "clip_stop": stop, "ground": "source_z_down_support",
+            "frames": frames, "fps": fps, "action": object_id,
+            "objects": visual_assets("dexterhand", entry),
+            "clip_start": start, "clip_stop": stop, "ground": "source_z_down_support",
             "articulation_caveat": object_id == "RubiksCube",
         })
     return records[:10]
 
 
 def gigahands() -> list[dict]:
-    root = ROOT / "datasets/gigahands_v1"
+    root = dataset_root("gigahands")
+    canonical = canonical_records("gigahands")
     manifest = json.loads((root / "canonical/manifest.json").read_text())
     records = []
     for source in manifest["records"]:
-        path = root / "canonical" / source["path"]
-        mesh = root / source["mesh_file"]
-        if not path.is_file() or not mesh.is_file():
+        entry = canonical.get(source["candidate_id"])
+        if entry is None:
             continue
+        path = root / entry["trajectory"]
         meta, frames, fps = metadata(path)
         if frames < 40:
             continue
@@ -186,7 +187,7 @@ def gigahands() -> list[dict]:
             "action": source["action_group"], "scene": source["scene_category"],
             "object": source["object_folder"], "action_text": source["action_text"],
             "quality": -float(source.get("minimum_hand_to_mesh_bbox_gap_m", 1.0)),
-            "objects": [{"path": rel(mesh), "scale": 1.0, "object_index": 0, "part": source["object_folder"]}],
+            "objects": visual_assets("gigahands", entry),
             "clip_start": 0, "clip_stop": frames, "ground": "unverified_source_world",
         })
     return greedy(records, 10, ("action", "scene", "object"), ["GIGA_0207_p048-sandwich_0013"])
