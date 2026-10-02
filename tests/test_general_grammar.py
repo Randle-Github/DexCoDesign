@@ -14,6 +14,7 @@ from dexcodesign.morphology.general_grammar import (
     palm_prototype_index,
 )
 from dexcodesign.morphology.generate import editable_finger_segments, main_finger_path
+from dexcodesign.morphology.midas_grammar import FINGER_MP_DP_RATIO, SOURCE_MM, STATIC_BOUNDS_MM
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +37,7 @@ def test_midas_main_paths_exclude_linkage_branches() -> None:
     assert editable_finger_segments(hand, by_id["midas_hand:thumb"]) == [5, 9, 16]
 
 
-def test_midas_general_schema_is_17d_and_zero_is_source() -> None:
+def test_midas_general_schema_is_constrained_10d_and_zero_is_source() -> None:
     segment_ids = {
         "thumb": (5, 9, 16),
         "index": (6, 11, 17),
@@ -44,8 +45,8 @@ def test_midas_general_schema_is_17d_and_zero_is_source() -> None:
         "ring": (8, 15, 19),
     }
     schema = build_schema("midas_hand", segment_ids, palm_affine_editable=False)
-    assert schema["vector_dimension"] == 17
-    decoded = decode_vector(np.zeros(17), schema)
+    assert schema["vector_dimension"] == 10
+    decoded = decode_vector(np.zeros(10), schema)
     assert decoded["palm"]["prototype_index"] == 0
     assert decoded["palm"]["expansion"] == 0.0
     assert all(value == 1.0 for value in decoded["width_scales"].values())
@@ -56,6 +57,36 @@ def test_midas_general_schema_is_17d_and_zero_is_source() -> None:
     )
 
 
+def test_protected_midas_uses_radial_palm_and_physical_length_ratios() -> None:
+    schema = build_schema(
+        "midas_hand",
+        {"thumb": (5, 9, 16), "index": (6, 11, 17),
+         "middle": (7, 13, 18), "ring": (8, 15, 19)},
+        palm_affine_editable=False,
+        palm_layout_mode="source_star_fusion",
+    )
+    vector = np.zeros(schema["vector_dimension"])
+    vector[0] = palm_prototype_coordinate(4)
+    graph = graph_spec_from_vector(vector, schema, hand_id="bounded_midas")
+    assert graph["palm"]["layout_mode"] == "source_star_fusion"
+    assert graph["palm"]["prototype_index"] == 4
+    assert graph["palm"]["scale_x"] == 1.0
+    assert graph["palm"]["scale_z"] == 1.0
+    vector[schema["vector_names"].index("finger_dp_length")] = 0.8
+    graph = graph_spec_from_vector(vector, schema, hand_id="radial_midas")
+    dimensions = graph["physical_dimensions_mm"]
+    assert np.isclose(dimensions["finger_mp_length"] / dimensions["finger_dp_length"], FINGER_MP_DP_RATIO)
+    assert all(
+        graph["fingers"][role]["length_scales_by_source_part"][str(part)]
+        == dimensions["finger_dp_length"] / SOURCE_MM["finger_dp_length"]
+        for role, part in (("index", 17), ("middle", 18), ("ring", 19))
+    )
+    for name, value in dimensions.items():
+        if name in STATIC_BOUNDS_MM:
+            lower, upper = STATIC_BOUNDS_MM[name]
+            assert lower <= value <= upper
+
+
 def test_general_extremes_restore_the_original_broad_search_range() -> None:
     segment_ids = {
         "thumb": (5, 9, 16),
@@ -63,11 +94,11 @@ def test_general_extremes_restore_the_original_broad_search_range() -> None:
         "middle": (7, 13, 18),
         "ring": (8, 15, 19),
     }
-    schema = build_schema("midas_hand", segment_ids, palm_affine_editable=False)
+    schema = build_schema("wuji_hand_2", segment_ids, palm_affine_editable=False)
     lower = decode_vector(np.asarray([0.0, *([-1.0] * 16)]), schema)
     upper = decode_vector(np.ones(17), schema)
     assert lower["palm"]["prototype_index"] == 0
-    assert upper["palm"]["prototype_index"] == 31
+    assert upper["palm"]["prototype_index"] == 7
     assert upper["palm"]["expansion"] == 0.70
     assert set(lower["width_scales"].values()) == {0.60}
     assert set(upper["width_scales"].values()) == {1.45}
@@ -96,7 +127,7 @@ def test_ordered_palm_bank_and_graph_are_canonical() -> None:
         palm_affine_editable=True,
     )
     assert schema["vector_dimension"] == 23
-    for index in range(32):
+    for index in range(8):
         coordinate = palm_prototype_coordinate(index)
         assert palm_prototype_index(coordinate) == index
     source = graph_spec_from_vector(
@@ -108,5 +139,5 @@ def test_ordered_palm_bank_and_graph_are_canonical() -> None:
     assert source["grammar_id"] == GRAMMAR_ID
     assert source["palm"]["layout_mode"] == "source_fixed"
     assert star["palm"]["layout_mode"] == "source_star_fusion"
-    assert star["palm"]["prototype_index"] == 31
+    assert star["palm"]["prototype_index"] == 7
     assert star["palm"]["expansion"] == 0.70

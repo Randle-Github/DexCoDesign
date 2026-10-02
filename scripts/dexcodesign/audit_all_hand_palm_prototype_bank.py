@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "source" / "dexcodesign"))
+from dexcodesign.morphology.general_grammar import PALM_PROTOTYPES
+
+
+MAX_EXPANSION = 0.35
 
 
 def main() -> int:
@@ -34,7 +41,9 @@ def main() -> int:
             {
                 "hand_id": hand["hand_id"],
                 "source_hand": hand["seed_source"],
-                "palm_expansion_index": int(round(graph["expansion"] * 31 / 0.35)),
+                "palm_expansion_index": int(round(
+                    graph["expansion"] * (PALM_PROTOTYPES - 1) / MAX_EXPANSION
+                )),
                 "palm_expansion": float(graph["expansion"]),
                 "visual_mesh": str(visual.resolve()),
                 "collision_mesh": str(collision.resolve()),
@@ -50,14 +59,14 @@ def main() -> int:
     invalid = {
         source: sorted(indices)
         for source, indices in by_source.items()
-        if sorted(indices) != list(range(32))
+        if sorted(indices) != list(range(PALM_PROTOTYPES))
     }
     if invalid:
         raise RuntimeError(f"incomplete prototype indices: {invalid}")
     result = {
         "schema_version": 1,
         "sources": len(by_source),
-        "levels_per_source": 32,
+        "levels_per_source": PALM_PROTOTYPES,
         "prototype_count": len(rows),
         "all_prototypes_have_real_visual_and_collision_mesh": True,
         "mano_excluded": "mano" not in by_source,

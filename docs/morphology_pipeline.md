@@ -81,7 +81,7 @@ search action.
 
 The general simulation-hand search variables are:
 
-- one ordered palm prototype selected from a 32-level source-to-star bank;
+- one ordered palm prototype selected from an 8-level source-to-star bank;
 - palm X/Z in-plane scale and bounded in-plane yaw when the source platform is
   editable;
 - an independent length variable for every editable main-chain phalanx;
@@ -103,8 +103,8 @@ search variables.
 - finger-root locations along the palm boundary;
 - anthropomorphic, symmetric, or asymmetric palm layouts when compatible.
 
-The canonical palm coordinate is continuous in `[0, 1]` and quantizes to 32
-ordered prototypes. Prototype 0 preserves the source palm. Prototype 31 reaches
+The canonical palm coordinate is continuous in `[0, 1]` and quantizes to 8
+ordered prototypes. Prototype 0 preserves the source palm. Prototype 7 reaches
 expansion 0.70 toward the House/star target. Intermediate prototypes move the
 palm surface and every complete finger-root position and orientation together.
 Explicit values that violate motor-footprint clearance fail instead of being

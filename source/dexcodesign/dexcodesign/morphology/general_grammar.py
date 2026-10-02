@@ -11,14 +11,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from .midas_grammar import (
+    FINGER_CLEARANCE_MM,
+    FINGER_MP_DP_RATIO,
+    SOURCE_MM as MIDAS_SOURCE_MM,
+    STATIC_BOUNDS_MM as MIDAS_BOUNDS_MM,
+)
+
 
 GRAMMAR_ID = "general-simulation-hand-v3"
 
 
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 NORMAL_FINGERS = ("index", "middle", "ring", "pinky")
-PALM_PROTOTYPES = 32
-# The 32 ordered prototypes span the complete source-to-star fusion bank used
+PALM_PROTOTYPES = 8
+# The ordered prototypes span the complete source-to-star fusion bank used
 # by morphology search.  Earlier all-hand experiments accidentally stopped at
 # 0.35, which made neighbouring prototypes visually almost indistinguishable.
 # 0.70 is the already validated WUJI search range: the source motor mounts stay
@@ -32,12 +39,17 @@ def build_schema(
     segment_ids_by_finger: dict[str, tuple[int, ...]],
     *,
     palm_affine_editable: bool,
+    palm_layout_mode: str = "source_star_fusion",
 ) -> dict:
+    if palm_layout_mode not in {"source_star_fusion", "anthropomorphic"}:
+        raise ValueError(f"unsupported general palm layout mode: {palm_layout_mode}")
+    if source_hand == "midas_hand" and palm_affine_editable:
+        raise ValueError("MiDas mount is fixed; palm affine coordinates are not editable")
     parameters = [{
         "name": "palm_expansion",
         "bounds": [0.0, 1.0],
         "source": 0.0,
-        "kind": "ordered_32_source_star_fusion_selector",
+        "kind": f"ordered_{PALM_PROTOTYPES}_source_star_fusion_selector",
     }]
     if palm_affine_editable:
         parameters.extend((
@@ -45,14 +57,32 @@ def build_schema(
             {"name": "palm_scale_z", "bounds": [-1.0, 1.0], "source": 0.0},
             {"name": "palm_yaw", "bounds": [-1.0, 1.0], "source": 0.0},
         ))
-    for finger in FINGERS:
-        for source_part_id in segment_ids_by_finger.get(finger, ()):
-            parameters.append({
-                "name": f"{finger}_segment_{source_part_id}_length",
-                "bounds": [-1.0, 1.0],
-                "source": 0.0,
-                "source_part_id": int(source_part_id),
-            })
+    if source_hand == "midas_hand":
+        if palm_layout_mode != "source_star_fusion":
+            raise ValueError("MiDas general grammar uses the radial source-star palm bank")
+        # The three identical normal fingers share physical dimensions. MP
+        # length is derived from DP, never independently sampled.
+        expected = {
+            "thumb": (5, 9, 16), "index": (6, 11, 17),
+            "middle": (7, 13, 18), "ring": (8, 15, 19),
+        }
+        if {key: tuple(value) for key, value in segment_ids_by_finger.items()} != expected:
+            raise ValueError("MiDas requires its complete source-local finger chains")
+        for name in (
+            "finger_pp_length", "finger_dp_length", "thumb_pp_length",
+            "thumb_mp_length", "thumb_dp_length", "finger_body_width",
+            "finger_dp_width", "thumb_body_width", "thumb_dp_width",
+        ):
+            parameters.append({"name": name, "bounds": [-1.0, 1.0], "source": 0.0})
+    else:
+        for finger in FINGERS:
+            for source_part_id in segment_ids_by_finger.get(finger, ()):
+                parameters.append({
+                    "name": f"{finger}_segment_{source_part_id}_length",
+                    "bounds": [-1.0, 1.0],
+                    "source": 0.0,
+                    "source_part_id": int(source_part_id),
+                })
 
     normal_segments = [
         source_id
@@ -60,12 +90,12 @@ def build_schema(
         for source_id in segment_ids_by_finger.get(finger, ())
     ]
     thumb_segments = list(segment_ids_by_finger.get("thumb", ()))
-    if normal_segments:
+    if normal_segments and source_hand != "midas_hand":
         parameters.extend((
             {"name": "normal_body_width", "bounds": [-1.0, 1.0], "source": 0.0},
             {"name": "normal_distal_width", "bounds": [-1.0, 1.0], "source": 0.0},
         ))
-    if thumb_segments:
+    if thumb_segments and source_hand != "midas_hand":
         parameters.extend((
             {"name": "thumb_body_width", "bounds": [-1.0, 1.0], "source": 0.0},
             {"name": "thumb_distal_width", "bounds": [-1.0, 1.0], "source": 0.0},
@@ -81,8 +111,12 @@ def build_schema(
             for finger in FINGERS
         },
         "palm_prototype_count": PALM_PROTOTYPES,
+        "palm_layout_mode": palm_layout_mode,
         "zero_vector_is_source": True,
         "auxiliary_linkages_are_not_phalanx_parameters": True,
+        "physical_constraints": (
+            "midas-manufacturing-constraints-v1" if source_hand == "midas_hand" else None
+        ),
     }
 
 
@@ -104,7 +138,7 @@ def source_vector(schema: dict) -> np.ndarray:
 
 
 def palm_prototype_index(value: float) -> int:
-    """Quantize the ordered palm coordinate to one of 32 prototypes."""
+    """Quantize the ordered palm coordinate to a bank prototype."""
     if not np.isfinite(value) or not 0.0 <= value <= 1.0:
         raise ValueError("palm prototype coordinate must lie in [0, 1]")
     return int(np.rint(value * (PALM_PROTOTYPES - 1)))
@@ -121,6 +155,65 @@ def _scale(value: float, lower: float, upper: float) -> float:
     return 1.0 + value * ((1.0 - lower) if value < 0.0 else (upper - 1.0))
 
 
+def _midas_dimension(raw: dict, parameter: str, physical: str, upper: float | None = None) -> float:
+    source = MIDAS_SOURCE_MM[physical]
+    lower, bound_upper = MIDAS_BOUNDS_MM[physical]
+    if upper is not None:
+        bound_upper = min(bound_upper, upper)
+    value = raw[parameter]
+    return source + value * ((source - lower) if value < 0.0 else (bound_upper - source))
+
+
+def _decode_midas(raw: dict, prototype: int) -> dict:
+    dimensions = {
+        "finger_pp_length": _midas_dimension(raw, "finger_pp_length", "finger_pp_length"),
+        "finger_dp_length": _midas_dimension(raw, "finger_dp_length", "finger_dp_length"),
+        "thumb_pp_length": _midas_dimension(raw, "thumb_pp_length", "thumb_pp_length"),
+        "thumb_mp_length": _midas_dimension(raw, "thumb_mp_length", "thumb_mp_length"),
+        "thumb_dp_length": _midas_dimension(raw, "thumb_dp_length", "thumb_dp_length"),
+        # Source f-DB=30.6 mm remains the conservative motor-footprint pitch.
+        # A wider finger is not admitted until a separate motor-spacing model
+        # is implemented for radial palms.
+        "finger_body_width": _midas_dimension(
+            raw, "finger_body_width", "finger_mp_width",
+            MIDAS_SOURCE_MM["finger_base_spacing"] - FINGER_CLEARANCE_MM,
+        ),
+        "finger_dp_width": _midas_dimension(raw, "finger_dp_width", "finger_dp_width"),
+        "thumb_body_width": _midas_dimension(raw, "thumb_body_width", "thumb_mp_width"),
+        "thumb_dp_width": _midas_dimension(raw, "thumb_dp_width", "thumb_dp_width"),
+    }
+    dimensions["finger_mp_length"] = dimensions["finger_dp_length"] * FINGER_MP_DP_RATIO
+    if dimensions["finger_dp_width"] >= dimensions["finger_body_width"]:
+        raise ValueError("MiDas distal finger must be narrower than its body")
+    role_parts = {
+        "thumb": ((5, "thumb_pp_length"), (9, "thumb_mp_length"), (16, "thumb_dp_length")),
+        "index": ((6, "finger_pp_length"), (11, "finger_mp_length"), (17, "finger_dp_length")),
+        "middle": ((7, "finger_pp_length"), (13, "finger_mp_length"), (18, "finger_dp_length")),
+        "ring": ((8, "finger_pp_length"), (15, "finger_mp_length"), (19, "finger_dp_length")),
+    }
+    return {
+        "palm": {
+            "prototype_index": prototype,
+            "expansion": prototype * PALM_EXPANSION_MAX / (PALM_PROTOTYPES - 1),
+            "scale_x": 1.0, "scale_z": 1.0, "yaw": 0.0,
+        },
+        "fingers": {
+            role: {"length_scales_by_source_part": {
+                str(part): dimensions[name] / MIDAS_SOURCE_MM[name]
+                for part, name in entries
+            }}
+            for role, entries in role_parts.items()
+        },
+        "width_scales": {
+            "normal_body": dimensions["finger_body_width"] / MIDAS_SOURCE_MM["finger_mp_width"],
+            "normal_distal": dimensions["finger_dp_width"] / MIDAS_SOURCE_MM["finger_dp_width"],
+            "thumb_body": dimensions["thumb_body_width"] / MIDAS_SOURCE_MM["thumb_mp_width"],
+            "thumb_distal": dimensions["thumb_dp_width"] / MIDAS_SOURCE_MM["thumb_dp_width"],
+        },
+        "physical_dimensions_mm": dimensions,
+    }
+
+
 def decode_vector(vector: np.ndarray | list[float], schema: dict) -> dict:
     latent = np.asarray(vector, dtype=np.float64)
     if latent.shape != (int(schema["vector_dimension"]),):
@@ -132,6 +225,8 @@ def decode_vector(vector: np.ndarray | list[float], schema: dict) -> dict:
         raise ValueError("general morphology vector exceeds its bounds")
     raw = dict(zip(schema["vector_names"], latent, strict=True))
     prototype = palm_prototype_index(raw["palm_expansion"])
+    if schema["source_hand"] == "midas_hand":
+        return _decode_midas(raw, prototype)
     result = {
         "palm": {
             "prototype_index": prototype,
@@ -176,9 +271,9 @@ def graph_spec_from_vector(
         "source_hand": schema["source_hand"],
         "palm": {
             "layout_mode": (
-                "source_fixed" if prototype == 0 else "source_star_fusion"
+                "source_fixed" if prototype == 0 else schema["palm_layout_mode"]
             ),
-            "prototype_bank_id": f"{schema['source_hand']}:palm32",
+            "prototype_bank_id": f"{schema['source_hand']}:palm{PALM_PROTOTYPES}",
             **decoded["palm"],
         },
         "fingers": {
@@ -188,6 +283,8 @@ def graph_spec_from_vector(
         "general_morphology_vector": np.asarray(vector, dtype=float).tolist(),
         "general_morphology_vector_names": list(schema["vector_names"]),
         "grammar_id": schema["grammar_id"],
+        **({"physical_dimensions_mm": decoded["physical_dimensions_mm"]}
+           if "physical_dimensions_mm" in decoded else {}),
     }
 
 

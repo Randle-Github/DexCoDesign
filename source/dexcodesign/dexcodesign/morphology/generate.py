@@ -51,7 +51,7 @@ PROTECTED_TRANSMISSION_SOURCES = {
     "ruka_v2",
     "inspire_rh56dfx",
 }
-BOUNDED_PALM_LAYOUT_SOURCES = PROTECTED_TRANSMISSION_SOURCES | {
+BOUNDED_PALM_LAYOUT_SOURCES = (PROTECTED_TRANSMISSION_SOURCES - {"midas_hand"}) | {
     # These source palms have attachment geometry close to the fixed mount
     # sector. Large House-style radial edits exceed the source-topology
     # deformation bound; bounded edge edits remain valid.
@@ -1114,9 +1114,9 @@ def main() -> int:
                 f"choose one of {seed_pool}"
             )
         seed = sources[seed_id]
-        # Large radial rearrangements are incompatible with a fixed tendon or
-        # underactuated transmission platform. Keep those hands on the bounded
-        # anthropomorphic palm-edit path; other sources retain all three modes.
+        # Most protected transmissions require bounded palm edits. MiDas is a
+        # deliberate exception: its motor/base hardware remains protected,
+        # while the complete finger-root frames follow the radial palm bank.
         if (
             seed_id in BOUNDED_PALM_LAYOUT_SOURCES
             and requested_layout_mode not in {"source_fixed", "anthropomorphic"}

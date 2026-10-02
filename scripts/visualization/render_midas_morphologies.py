@@ -114,11 +114,12 @@ def render_exact_thumbnail(
 
 
 def render_exact_sheet(
-    hands: list[dict], generation_root: Path, output: Path, tile_size: int
+    hands: list[dict], generation_root: Path, output: Path, tile_size: int,
+    columns: int,
 ) -> None:
     maximum_extent = max(float(np.max(np.ptp(hand_bounds(hand), axis=0))) for hand in hands)
     camera_distance = 2.05 * maximum_extent
-    columns = 10
+    columns = min(columns, len(hands))
     rows = math.ceil(len(hands) / columns)
     canvas = Image.new("RGB", (columns * tile_size, rows * tile_size))
     with tempfile.TemporaryDirectory(prefix="midas_exact_render_") as temporary:
@@ -289,6 +290,11 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=2160)
     parser.add_argument("--fast-grid", action="store_true")
     parser.add_argument("--tile-size", type=int, default=384)
+    parser.add_argument("--columns", type=int, default=10)
+    parser.add_argument(
+        "--skip-source", action="store_true",
+        help="omit the reserved source hand from the contact sheet",
+    )
     parser.add_argument("--streaming-compile", action="store_true")
     parser.add_argument("--compile-batch-size", type=int, default=8)
     parser.add_argument(
@@ -297,11 +303,15 @@ def main() -> int:
         default=ROOT / ".venv-morphology" / "bin" / "python",
     )
     args = parser.parse_args()
+    if args.columns < 1:
+        parser.error("--columns must be positive")
     generation_root = args.generation_root.resolve()
     source_path = generation_root / (
         "hand_ir.json" if args.streaming_compile else "compiled_hands.json"
     )
     hands = json.loads(source_path.read_text())["hands"]
+    if args.skip_source:
+        hands = hands[1:]
     if not hands:
         raise ValueError("no compiled MiDas variants to render")
     output = args.output or generation_root / f"midas_constraints_{len(hands)}.png"
@@ -319,7 +329,7 @@ def main() -> int:
         print(f"MIDAS_RENDER_COMPLETE hands={len(hands)} output={output}")
         return 0
     elif not args.fast_grid:
-        render_exact_sheet(hands, generation_root, output, args.tile_size)
+        render_exact_sheet(hands, generation_root, output, args.tile_size, args.columns)
         print(f"MIDAS_RENDER_COMPLETE hands={len(hands)} output={output}")
         return 0
     cache_root = generation_root / "render_meshes"

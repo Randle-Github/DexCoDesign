@@ -99,6 +99,10 @@ def main() -> int:
             source_id,
             segment_ids,
             palm_affine_editable=not protected,
+            palm_layout_mode=(
+                "anthropomorphic" if protected and source_id != "midas_hand"
+                else "source_star_fusion"
+            ),
         )
         schemas[source_id] = schema
         vectors = latin_hypercube_vectors(

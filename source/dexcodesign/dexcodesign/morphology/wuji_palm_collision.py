@@ -21,7 +21,10 @@ def source_palm_partition():
     part = graph["parts"][0]
     if part["member_links"] != ["r_base_link", "r_wrist"]:
         raise ValueError("WUJI palm source membership changed; rebuild its collision partition")
-    audit = graph["canonicalization"]
+    # Existing canonical caches used this name before the source-graph rebuild.
+    audit = graph.get("canonicalization", graph.get("direct_geometry_audit"))
+    if audit is None:
+        raise ValueError("WUJI source graph has no canonicalization metadata")
     direct = load_direct_urdf(DIRECT_ROOT / "wuji_hand_2/right/hand.urdf")
     pieces = [load_visual_meshes(
         {"member_links": [name]}, direct, audit["similarity_scale"],

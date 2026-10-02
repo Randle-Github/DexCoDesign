@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Create the 32-level real-palm mesh bank graph for every robot hand."""
+"""Create the real-palm mesh bank graph for every robot hand."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "source" / "dexcodesign"))
+from dexcodesign.morphology.general_grammar import PALM_PROTOTYPES
 
 
 ROBOT_HANDS = (
@@ -23,7 +27,7 @@ ROBOT_HANDS = (
     "ruka_v2",
     "inspire_rh56dfx",
 )
-LEVELS = 32
+LEVELS = PALM_PROTOTYPES
 MAX_EXPANSION = 0.35
 
 

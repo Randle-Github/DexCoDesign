@@ -10,17 +10,21 @@ grammars. Optimizers and training modes do not own a third morphology schema.
 | MiDas manufacturing | MiDas designs constrained by its mechanical rules | `dexcodesign.morphology.midas_grammar` | Fixed 15-D, source is the zero vector |
 | General simulation hand | Every non-MANO simulation morphology, including WUJI SAC | `dexcodesign.morphology.general_grammar` | Source-dependent dimension, source is the zero vector |
 
-MANO is a task/reference hand and is never morphed. The MiDas source may still
-be bound to the general simulation grammar for an unconstrained simulation
-ablation; that does not create a third grammar.
+MANO is a task/reference hand and is never morphed. MiDas can also be bound to
+the general simulation compiler for radial palm search. This binding uses a
+10-D source-local vector (palm prototype plus nine physical finger dimensions),
+not an unconstrained per-link ablation. The dedicated 15-D MiDas grammar remains
+the separate source-topology manufacturing path.
 
 The general grammar owns all of the following semantics:
 
-- an ordered bank of 32 real palm prototypes;
+- an ordered bank of 8 real palm prototypes;
 - prototype 0 is the exact source palm;
-- prototypes 1–31 interpolate the complete finger-root position and orientation
+- prototypes 1–7 interpolate the complete finger-root position and orientation
   from the source layout toward the radial/star layout over expansion 0–0.70;
-- each editable main-chain phalanx has an independent length variable;
+- each editable main-chain phalanx normally has an independent length variable;
+  MiDas instead ties the three normal fingers and derives MP length from DP
+  length at the documented fixed ratio;
 - normal-finger body/distal widths are shared, and thumb body/distal widths are
   shared separately;
 - motor housings, connector caps, joint axes/ranges, active/mimic relations and
@@ -29,6 +33,13 @@ The general grammar owns all of the following semantics:
 The graph compiler generates both a real visual palm mesh and a real collision
 palm mesh for every selected prototype. Palm and finger roots use the same
 interface transform, so the mesh is not repaired by a post-processing check.
+MiDas uses the same radial/source-star palm bank as WUJI, with complete
+finger-root frames moving with the palm surface. Its source-local link edits
+are constrained in physical millimetres: normal fingers share dimensions,
+middle/distal lengths keep the source MP/DP ratio, and motor-body width remains
+below the conservative source finger-base pitch. The root mount and under-palm
+transmission hardware remain fixed. Other protected transmission hands retain
+bounded anthropomorphic attachment edits.
 
 ## One morphology path for WUJI SAC
 
@@ -38,7 +49,7 @@ between two representations:
 
 ```text
 SAC search vector
-  [integer palm prototype 0..31, canonical latent coordinates]
+  [integer palm prototype 0..7, canonical latent coordinates]
         |
         v
 general_grammar.decode_vector / graph_spec_from_vector
@@ -53,10 +64,10 @@ For WUJI this is 23 dimensions: one palm prototype, three palm affine values,
 retarget support and selected-result evaluation all import the same adapter and
 therefore the same general decoder.
 
-The 32 palm meshes are compiled/cached before large PhysX batches. Runtime
+The 8 palm meshes are compiled/cached before large PhysX batches. Runtime
 candidates select a prototype and apply the remaining continuous overlays; the
 optimizer does not rebuild the palm mesh inside every simulation step.
-The cache is named `palm_prototype_bank_general_v3_source_star_0p70` and carries
+The cache is named `palm_prototype_bank_general_v3_source_star_0p70_8` and carries
 a grammar signature. Training refuses the legacy unsigned/anthropomorphic bank
 instead of silently accepting a numerically similar `0.70` cache.
 
@@ -93,19 +104,20 @@ contract above.
 
 ## Verified WUJI preview
 
-`scripts/dexcodesign/generate_wuji_sac_preview.py` creates exactly 32 WUJI
+`scripts/dexcodesign/generate_wuji_design_preview.py` creates exactly 8 WUJI
 candidates through the SAC/general-grammar path. Candidate 0 is the source;
 every palm prototype is used once. The verification run checks:
 
-- 32 distinct visual palm meshes and 32 distinct collision palm meshes;
+- 8 distinct visual palm meshes and 8 distinct collision palm meshes;
 - strictly ordered expansion from 0.0 to 0.70;
-- all 160 palm/finger interfaces meshed;
+- all 40 palm/finger interfaces meshed;
 - maximum palm interface-frame error 0.0;
 - source DoF, joint axes and transmission semantics unchanged.
 
-Generated preview meshes are deleted after rendering. The vector, graph,
-compiler metadata, audit JSON and final image are retained and can reproduce
-them.
+Run with `--palm-only` to keep a reusable 8-mesh bank, or omit it to preview
+palm and finger edits together. The palm-only bank keeps its visual and collision
+meshes; mixed-preview meshes are kept with `--keep-meshes` and otherwise removed
+after rendering. `generate_wuji_sac_preview.py` is a compatibility wrapper.
 
 ## Retention policy
 

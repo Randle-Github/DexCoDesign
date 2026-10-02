@@ -23,6 +23,7 @@ from .palm_geometry import (
     patches_from_hand_ir,
 )
 from .wuji_palm_collision import lock_wuji_base
+from .midas_grammar import CANONICAL_UNITS_PER_MM, STATIC_BOUNDS_MM
 
 
 HERE = Path(__file__).resolve().parent
@@ -390,6 +391,13 @@ def main() -> int:
                 except ValueError as error:
                     raise ValueError(f"{hand['hand_id']}: {error}") from error
                 mesh = palm_result.visual_mesh
+                if hand.get("seed_source") == "midas_hand":
+                    palm_width_mm = float(mesh.extents[0]) / CANONICAL_UNITS_PER_MM
+                    if palm_width_mm > STATIC_BOUNDS_MM["palm_width"][1] + 1.0e-6:
+                        raise ValueError(
+                            f"{hand['hand_id']}: radial MiDas palm width "
+                            f"{palm_width_mm:.2f} mm exceeds the 125 mm constraint"
+                        )
                 if hand.get("seed_source") == "wuji_hand_2":
                     mesh = lock_wuji_base(mesh)
                     palm_result.visual_mesh = mesh

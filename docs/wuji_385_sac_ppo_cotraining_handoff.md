@@ -125,7 +125,7 @@ results and checkpoints from an earlier experiment.
 cd /home/yhan389/Desktop/DexCoDesign
 conda activate DexCoDesign_sim4_5_lab_2_3_2
 
-BANK="$PWD/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70"
+BANK="$PWD/artifacts/wuji_physx_search/palm_prototype_bank_general_v3_source_star_0p70_8"
 SEED="$PWD/artifacts/all_hands_success_action_retarget/wuji_hand_2/retargeted_trajectory.npz"
 OBJECT_USD="$PWD/artifacts/isaaclab_mano_residual/assets/g04_1.usd"
 RUN_NAME="wuji_385_real_cotrain_random_$(date +%Y%m%d_%H%M%S)"

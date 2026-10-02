@@ -18,9 +18,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "source" / "dexcodesign"
 INTEGRATION_SCRIPTS = ROOT / "scripts" / "dexcodesign"
-DEFAULT_OUTPUT = (
-    ROOT / "artifacts" / "hand_morphology" / "wuji_general_design_preview_32"
-)
+MORPHOLOGY_OUTPUT = ROOT / "artifacts" / "hand_morphology"
 for path in (SOURCE, INTEGRATION_SCRIPTS):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -39,7 +37,7 @@ from wuji_general_space import (  # noqa: E402
 def stratified_vectors(count: int, seed: int, amplitude: float) -> np.ndarray:
     if count != PALM_EXPANSION_LEVELS:
         raise ValueError(
-            f"the palm audit requires exactly {PALM_EXPANSION_LEVELS} candidates"
+            f"the palm preview requires exactly {PALM_EXPANSION_LEVELS} candidates"
         )
     rng = np.random.default_rng(seed)
     vectors = np.repeat(SOURCE_VECTOR[None, :], count, axis=0)
@@ -80,13 +78,13 @@ def audit_palm_bank(output: Path, *, palm_only: bool) -> dict[str, object]:
             (output / mesh["collision_file"]).read_bytes()
         ).hexdigest())
     if len(expansions) != PALM_EXPANSION_LEVELS:
-        raise RuntimeError("palm bank must contain exactly 32 prototypes")
+        raise RuntimeError(f"palm bank must contain exactly {PALM_EXPANSION_LEVELS} prototypes")
     if not all(a < b for a, b in zip(expansions, expansions[1:])):
         raise RuntimeError("palm prototype expansion is not strictly ordered")
     if len(set(visual_hashes)) != PALM_EXPANSION_LEVELS:
-        raise RuntimeError("palm bank does not contain 32 distinct visual meshes")
+        raise RuntimeError(f"palm bank does not contain {PALM_EXPANSION_LEVELS} distinct visual meshes")
     if len(set(collision_hashes)) != PALM_EXPANSION_LEVELS:
-        raise RuntimeError("palm bank does not contain 32 distinct collision meshes")
+        raise RuntimeError(f"palm bank does not contain {PALM_EXPANSION_LEVELS} distinct collision meshes")
     if any(
         hand["palm_connection"]["checked"] != 5
         or hand["palm_connection"]["unmeshed"] != 0
@@ -112,13 +110,35 @@ def audit_palm_bank(output: Path, *, palm_only: bool) -> dict[str, object]:
     return audit
 
 
+def compiled_meshes_exist(output: Path) -> bool:
+    """A metadata-only preview is not a reusable mesh bank."""
+    manifest = output / "compiled_hands.json"
+    if not manifest.is_file():
+        return False
+    try:
+        hands = json.loads(manifest.read_text(encoding="utf-8"))["hands"]
+        meshes = [
+            part["compiled_mesh"]
+            for hand in hands
+            for part in hand["parts"]
+            if part.get("compiled_mesh") is not None
+        ]
+        return bool(hands) and bool(meshes) and all(
+            (output / file).is_file()
+            for mesh in meshes
+            for file in (mesh["file"], mesh.get("collision_file", mesh["file"]))
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--count", type=int, default=32)
+    parser.add_argument("--count", type=int, default=PALM_EXPANSION_LEVELS)
     parser.add_argument("--seed", type=int, default=20260825)
     parser.add_argument("--amplitude", type=float, default=0.78)
     parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--palm-only",
         action="store_true",
@@ -128,7 +148,15 @@ def main() -> int:
     args = parser.parse_args()
     if not 0.0 < args.amplitude <= 1.0:
         parser.error("--amplitude must lie in (0, 1]")
-    output = args.output.resolve()
+    output = (
+        args.output
+        if args.output is not None
+        else MORPHOLOGY_OUTPUT / (
+            f"wuji_general_palm_bank_{PALM_EXPANSION_LEVELS}"
+            if args.palm_only
+            else f"wuji_general_design_preview_{PALM_EXPANSION_LEVELS}"
+        )
+    ).resolve()
     output.mkdir(parents=True, exist_ok=True)
     vectors = stratified_vectors(args.count, args.seed, args.amplitude)
     if args.palm_only:
@@ -172,24 +200,25 @@ def main() -> int:
         else f"{SOURCE}{os.pathsep}{env['PYTHONPATH']}"
     )
     env["HAND_GENERATION_ROOT"] = str(output)
-    run(
-        [
-            sys.executable,
-            "scripts/dexcodesign/compile_hand_graph_batch.py",
-            str(graph_path),
-            "--output-dir",
-            str(output),
-            "--workers",
-            str(args.workers),
-            "--force",
-        ],
-        env,
-    )
+    meshes_available = compiled_meshes_exist(output)
+    compile_command = [
+        sys.executable,
+        "scripts/dexcodesign/compile_hand_graph_batch.py",
+        str(graph_path),
+        "--output-dir",
+        str(output),
+        "--workers",
+        str(args.workers),
+    ]
+    if not meshes_available and (output / "compiled_hands.json").is_file():
+        # The compiler's metadata cache can outlive deleted preview meshes.
+        compile_command.append("--force")
+    run(compile_command, env)
     audit = audit_palm_bank(output, palm_only=args.palm_only)
     image_path = output / (
-        "wuji_palm_prototypes_32.png"
+        f"wuji_palm_prototypes_{PALM_EXPANSION_LEVELS}.png"
         if args.palm_only
-        else "wuji_design_variants_32.png"
+        else f"wuji_design_variants_{PALM_EXPANSION_LEVELS}.png"
     )
     run(
         [
@@ -201,7 +230,8 @@ def main() -> int:
         ],
         env,
     )
-    if not args.keep_meshes:
+    keep_meshes = args.keep_meshes or args.palm_only
+    if not keep_meshes:
         for path in (
             output / "meshes",
             output / "compiled_parts",
@@ -225,7 +255,7 @@ def main() -> int:
         "vector_dimension": len(VECTOR_NAMES),
         "image": str(image_path),
         "palm_audit": audit,
-        "generated_meshes_deleted": not args.keep_meshes,
+        "generated_meshes_deleted": not keep_meshes,
     }, indent=2))
     return 0
 

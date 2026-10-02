@@ -101,8 +101,8 @@ parser.add_argument("--video-height", type=int, default=480)
 parser.add_argument(
     "--fixed-palm-prototype",
     type=int,
-    choices=range(32),
-    metavar="{0..31}",
+    choices=range(8),
+    metavar="{0..7}",
     help=(
         "freeze the palm at one precompiled prototype and remove it from the "
         "SAC action; prototype 0 is the exact source WUJI palm"
@@ -264,7 +264,7 @@ if not args_cli.original_source_hand:
         "source_hand": "wuji_hand_2",
         "vector_dimension": 23,
         "palm_layout_mode": "source_star_fusion",
-        "palm_prototype_count": 32,
+        "palm_prototype_count": 8,
         "palm_expansion_range": [0.0, 0.70],
         "zero_prototype_is_exact_source": True,
     }
