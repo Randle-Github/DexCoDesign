@@ -8,6 +8,7 @@ Run without --apply to preflight the exact moves first.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 
@@ -30,7 +31,6 @@ def main() -> None:
         (repo / "temp/hocap_mano_replay/data/raw", data / "hocap_v1/raw"),
         (repo / "temp/hocap_mano_replay/data/tasks", data / "hocap_v1/source_tasks"),
         (data / "arctic_v1/canonical_100", data / "arctic_v1/raw/canonical_source"),
-        (data / "arctic_v1/canonical_100_tabletop", data / "arctic_v1/canonical"),
         (data / "gigahands_v1/canonical_candidates_v2", data / "gigahands_v1/canonical"),
         (data / "taco_v1/canonical_100", data / "taco_v1/canonical"),
     ]
@@ -42,10 +42,12 @@ def main() -> None:
         base = data / "arctic_v1/canonical_100_tabletop" / sample
         if not (base / "trajectory.npz").is_file():
             raise FileNotFoundError(base)
-        moves.extend([
-            (base, archive / "arctic/tabletop_before_semantic_correction" / sample),
-            (path.parent, data / "arctic_v1/canonical" / sample),
-        ])
+        moves.append((base, archive / "arctic/tabletop_before_semantic_correction" / sample))
+    # Remove the old versions of the corrected samples first, then rename the
+    # remaining 90-sample parent, then insert the corrected samples. Every
+    # source therefore still exists when its move is executed.
+    moves.append((data / "arctic_v1/canonical_100_tabletop", data / "arctic_v1/canonical"))
+    moves.extend((path.parent, data / "arctic_v1/canonical" / path.parent.name) for path in corrected)
     archived = [
         "arctic_v1/canonical_100_table_fixed",
         "arctic_v1/canonical_100_tabletop_semantic_v2",
@@ -61,16 +63,12 @@ def main() -> None:
         "_staging",
     ]
     moves.extend((data / name, archive / name) for name in archived if (data / name).exists())
+    if os.stat(data).st_dev != os.stat(archive.parent).st_dev:
+        raise ValueError("Recovery archive must be on the same filesystem for atomic moves")
     for source, destination in moves:
         if not source.exists():
             raise FileNotFoundError(source)
-        # The ARCTIC correction targets exist until the preceding move of the
-        # previous sample runs, so allow only that narrowly documented case.
-        replacing_corrected = (
-            source.parent.name == "canonical_100_tabletop_semantic_v3"
-            and destination.parent.name == "canonical"
-        )
-        if destination.exists() and not replacing_corrected:
+        if destination.exists():
             raise FileExistsError(destination)
         print(f"MOVE {source} -> {destination}")
     if not args.apply:
@@ -83,9 +81,17 @@ def main() -> None:
         raise FileNotFoundError(f"Cannot preserve source cube mesh: {cube_source} -> {cube_target}")
     cube_target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(cube_source, cube_target)
-    for source, destination in moves:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(destination))
+    completed: list[tuple[Path, Path]] = []
+    try:
+        for source, destination in moves:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+            completed.append((source, destination))
+    except Exception:
+        for source, destination in reversed(completed):
+            source.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(destination), str(source))
+        raise
     print("MIGRATION_COMPLETE: active data has five public roots plus Supp")
 
 
