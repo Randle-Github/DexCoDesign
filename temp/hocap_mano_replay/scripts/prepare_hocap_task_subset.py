@@ -14,9 +14,9 @@ import numpy as np
 
 
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
-RAW_ROOT = EXPERIMENT_ROOT / "data" / "raw"
+RAW_ROOT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw"
 DEFAULT_MANIFEST = EXPERIMENT_ROOT / "data" / "benchmark_tasks.json"
-DEFAULT_OUTPUT = EXPERIMENT_ROOT / "data" / "tasks"
+DEFAULT_OUTPUT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/source_tasks"
 
 
 def quaternion_step_angle(quaternion_xyzw: np.ndarray) -> np.ndarray:
@@ -95,7 +95,7 @@ def main() -> None:
     np.save(task_root / "mano_pose_left.npy", mano_pose)
     np.save(task_root / f"object_pose_{object_id}.npy", object_pose)
 
-    model_root = args.output_root / "models" / object_id
+    model_root = Path(__file__).resolve().parents[3] / "datasets/hocap_v1/assets/objects" / object_id
     for filename in (
         "cleaned_mesh_2000.obj",
         "cleaned_mesh_10000.obj",

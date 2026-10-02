@@ -53,7 +53,7 @@ def taco() -> list[dict]:
     records = []
     for index, line in enumerate((root / "manifests/selected_100.jsonl").read_text().splitlines()):
         source = json.loads(line)
-        path = root / f"canonical_100/{index:03d}/trajectory.npz"
+        path = root / f"canonical/{index:03d}/trajectory.npz"
         if not path.is_file():
             continue
         meta, frames, fps = metadata(path)
@@ -78,7 +78,7 @@ def taco() -> list[dict]:
 def arctic() -> list[dict]:
     root = ROOT / "datasets/arctic_v1"
     records = []
-    for path in sorted((root / "canonical_100_tabletop_semantic_v3").glob("*/trajectory.npz")):
+    for path in sorted((root / "canonical").glob("*/trajectory.npz")):
         meta, frames, fps = metadata(path)
         object_id = meta["objects"][0]["object_id"]
         objects = [
@@ -101,12 +101,12 @@ def arctic() -> list[dict]:
 
 
 def hocap() -> list[dict]:
-    root = ROOT / "artifacts/datasets/hocap_v1/canonical"
+    root = ROOT / "datasets/hocap_v1/canonical"
     records = []
     for path in sorted(root.glob("*/trajectory.npz")):
         meta, frames, fps = metadata(path)
         object_id = meta["objects"][0]["object_id"]
-        mesh = ROOT / f"temp/hocap_mano_replay/data/tasks/models/{object_id}/cleaned_mesh_10000.obj"
+        mesh = ROOT / f"datasets/hocap_v1/assets/objects/{object_id}/cleaned_mesh_10000.obj"
         if not mesh.is_file():
             continue
         records.append({
@@ -170,10 +170,10 @@ def dexterhand() -> list[dict]:
 
 def gigahands() -> list[dict]:
     root = ROOT / "datasets/gigahands_v1"
-    manifest = json.loads((root / "canonical_candidates_v2/manifest.json").read_text())
+    manifest = json.loads((root / "canonical/manifest.json").read_text())
     records = []
     for source in manifest["records"]:
-        path = root / "canonical_candidates_v2" / source["path"]
+        path = root / "canonical" / source["path"]
         mesh = root / source["mesh_file"]
         if not path.is_file() or not mesh.is_file():
             continue

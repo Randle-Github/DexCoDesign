@@ -93,7 +93,7 @@ def source_up_priors(root: Path) -> dict[str, dict]:
     prior without inventing an object-specific axis by hand.
     """
     priors: dict[str, dict] = {}
-    for source_path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+    for source_path in sorted((root / "raw/canonical_source").glob("*/trajectory.npz")):
         with np.load(source_path, allow_pickle=False) as source:
             oid = object_id(source)
             if oid in priors:
@@ -291,13 +291,13 @@ def write_table_dynamic(
     output_tag: str = "",
 ) -> dict:
     """Rigidly align full trajectories to stable table poses without freezing roots."""
-    canonical_out = root / f"canonical_100_tabletop{output_tag}"
-    benchmark_out = root / f"benchmark_100_tabletop{output_tag}"
+    canonical_out = root / "canonical"
+    benchmark_out = root / "derived/tabletop_benchmark"
     canonical_records = []
     raw_records = []
     max_relative_error = 0.0
 
-    for source_path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+    for source_path in sorted((root / "raw/canonical_source").glob("*/trajectory.npz")):
         if sequence_ids is not None and source_path.parent.name not in sequence_ids:
             continue
         with np.load(source_path, allow_pickle=False) as source:
@@ -392,13 +392,13 @@ def write_table_fixed(
     poses: dict[str, dict],
     object_ids: set[str] | None = None,
 ) -> dict:
-    canonical_out = root / "canonical_100_table_fixed"
-    benchmark_out = root / "benchmark_100_table_fixed"
+    canonical_out = root / "derived/table_fixed"
+    benchmark_out = root / "derived/table_fixed_benchmark"
     canonical_records = []
     raw_records = []
     max_relative_error = 0.0
 
-    for source_path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+    for source_path in sorted((root / "raw/canonical_source").glob("*/trajectory.npz")):
         with np.load(source_path, allow_pickle=False) as source:
             oid = object_id(source)
             if object_ids is not None and oid not in object_ids:
@@ -543,7 +543,7 @@ def main() -> None:
         return
 
     q_by_object: dict[str, list[float]] = {}
-    for path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+    for path in sorted((root / "raw/canonical_source").glob("*/trajectory.npz")):
         with np.load(path, allow_pickle=False) as source:
             q_by_object.setdefault(object_id(source), []).extend(np.asarray(source["object_joint_positions_rad"]).reshape(-1).tolist())
 

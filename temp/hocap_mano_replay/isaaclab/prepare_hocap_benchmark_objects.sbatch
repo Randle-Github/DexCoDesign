@@ -26,7 +26,7 @@ RUNTIME_LIB_DIR="${REPO_ROOT}/artifacts/isaaclab_mano_residual/runtime_libs"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 mkdir -p "${OUTPUT_ROOT}"
 ./isaaclab.sh -p scripts/tools/convert_mesh.py \
-  "temp/hocap_mano_replay/data/tasks/models/${OBJECT_ID}/cleaned_mesh_2000.obj" \
+  "datasets/hocap_v1/assets/objects/${OBJECT_ID}/cleaned_mesh_2000.obj" \
   "${OUTPUT_ROOT}/object.usd" \
   --collision-approximation convexDecomposition --mass 0.015 --headless
 test -s "${OUTPUT_ROOT}/object.usd"

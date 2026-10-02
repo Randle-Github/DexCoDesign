@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
-RAW_ROOT = EXPERIMENT_ROOT / "data" / "raw"
+RAW_ROOT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw"
 ARCHIVES = {
     "models.zip": (
         "https://utdallas.box.com/shared/static/"

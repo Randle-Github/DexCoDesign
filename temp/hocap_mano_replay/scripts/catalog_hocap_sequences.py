@@ -21,8 +21,8 @@ from download_label_subset import HTTPRangeReader, LABELS_URL
 
 
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_POSES = EXPERIMENT_ROOT / "data" / "raw" / "poses.zip"
-DEFAULT_OUTPUT = EXPERIMENT_ROOT / "data" / "hocap_sequence_catalog.json"
+DEFAULT_POSES = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw/poses.zip"
+DEFAULT_OUTPUT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/hocap_sequence_catalog.json"
 
 
 def quaternion_excursion(quaternion_xyzw: np.ndarray) -> float:

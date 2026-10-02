@@ -13,6 +13,8 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "scripts/datasets/common"))
+from dataset_catalog import dataset_root, iter_samples  # noqa: E402
 
 
 def main() -> None:
@@ -20,17 +22,14 @@ def main() -> None:
     parser.add_argument("--index", type=int, required=True)
     parser.add_argument("--iterations", type=int, default=24)
     parser.add_argument(
-        "--root", type=Path, default=REPO_ROOT / "datasets" / "arctic_v1"
-    )
-    parser.add_argument(
         "--output", type=Path, default=REPO_ROOT / "artifacts" / "arctic_rl_100"
     )
     args = parser.parse_args()
 
-    sources = sorted((args.root / "canonical_100_tabletop").glob("*/trajectory.npz"))
-    if not 0 <= args.index < len(sources):
-        raise IndexError(f"index {args.index} outside prepared set of {len(sources)}")
-    source = sources[args.index]
+    records = list(iter_samples("arctic"))
+    if not 0 <= args.index < len(records):
+        raise IndexError(f"index {args.index} outside prepared set of {len(records)}")
+    source = dataset_root("arctic") / records[args.index]["trajectory"]
     with np.load(source, allow_pickle=False) as data:
         metadata = json.loads(str(data["metadata_json"]))
     object_id = str(metadata["objects"][0]["object_id"])

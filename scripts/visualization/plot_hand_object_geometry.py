@@ -22,20 +22,20 @@ from scipy.spatial.transform import Rotation
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = {
     "taco": (
-        "datasets/taco_v1/canonical_100/065/trajectory.npz",
+        "datasets/taco_v1/canonical/065/trajectory.npz",
         ["datasets/taco_v1/raw/object_models/087_cm.obj", "datasets/taco_v1/raw/object_models/110_cm.obj"],
         0.01,
         [0, 20],
     ),
     "arctic": (
-        "datasets/arctic_v1/canonical_100_tabletop_semantic_v3/009_scissors_s08/trajectory.npz",
+        "datasets/arctic_v1/canonical/009_scissors_s08/trajectory.npz",
         ["datasets/arctic_v1/assets/object_vtemplates/scissors/bottom.obj", "datasets/arctic_v1/assets/object_vtemplates/scissors/top.obj"],
         0.001,
         [10, 80],
     ),
     "hocap": (
-        "artifacts/datasets/hocap_v1/canonical/g04_pick_place/trajectory.npz",
-        ["temp/hocap_mano_replay/data/tasks/models/G04_1/cleaned_mesh_10000.obj"],
+        "datasets/hocap_v1/canonical/g04_pick_place/trajectory.npz",
+        ["datasets/hocap_v1/assets/objects/G04_1/cleaned_mesh_10000.obj"],
         1.0,
         [0, 100],
     ),
@@ -46,7 +46,7 @@ SAMPLES = {
         [380, 440],
     ),
     "gigahands": (
-        "datasets/gigahands_v1/canonical_candidates_v2/GIGA_0207_p048-sandwich_0013/trajectory.npz",
+        "datasets/gigahands_v1/canonical/GIGA_0207_p048-sandwich_0013/trajectory.npz",
         ["datasets/gigahands_v1/assets/objects/3_sandwich_sandwich_spam_can/sandwich-spam-can.obj"],
         1.0,
         [0, 40],

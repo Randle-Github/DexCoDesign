@@ -28,7 +28,7 @@ export OUTPUT_ROOT="${REPO_ROOT}/artifacts/hocap_multitask/ppo"
 export RESULT_SET="${TASK_ID}"
 export DEXCODESIGN_OBJECT_USD_PATH="${REPO_ROOT}/artifacts/hocap_multitask/assets/${TASK_ID}/object.usd"
 if [[ "${HAND_ID_OVERRIDE}" == "mano" ]]; then
-  export DEXCODESIGN_REFERENCE_PATH="${REPO_ROOT}/temp/hocap_mano_replay/data/tasks/${TASK_ID}/isaaclab_reference.npz"
+  export DEXCODESIGN_REFERENCE_PATH="${REPO_ROOT}/datasets/hocap_v1/source_tasks/${TASK_ID}/isaaclab_reference.npz"
 else
   export DEXCODESIGN_REFERENCE_PATH="${REPO_ROOT}/artifacts/hocap_multitask/prepared/${TASK_ID}/${HAND_ID_OVERRIDE}/reference.npz"
 fi

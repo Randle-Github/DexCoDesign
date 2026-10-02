@@ -320,7 +320,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
     root = args.root.resolve()
-    output = (args.output or root / "canonical_candidates_v2").resolve()
+    output = (args.output or root / "canonical").resolve()
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Refusing to overwrite nonempty candidate output: {output}")
     output.mkdir(parents=True, exist_ok=True)

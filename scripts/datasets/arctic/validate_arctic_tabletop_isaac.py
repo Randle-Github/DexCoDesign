@@ -73,7 +73,7 @@ def quaternion_angle(q0: torch.Tensor, q1: torch.Tensor) -> float:
 def main() -> None:
     root = args.root.resolve()
     q_by_object: dict[str, list[float]] = {}
-    for path in sorted((root / "canonical_100").glob("*/trajectory.npz")):
+    for path in sorted((root / "raw/canonical_source").glob("*/trajectory.npz")):
         with np.load(path, allow_pickle=False) as source:
             oid = metadata(source)["objects"][0]["object_id"]
             q_by_object.setdefault(oid, []).extend(source["object_joint_positions_rad"].reshape(-1).tolist())

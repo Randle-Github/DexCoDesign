@@ -80,7 +80,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=512)
     args = parser.parse_args()
     root = args.root.resolve()
-    output = (args.output or (root / "canonical_100")).resolve()
+    output = (args.output or (root / "raw/canonical_source")).resolve()
     left_layer = mano_layer(args.model_root.resolve(), "left")
     right_layer = mano_layer(args.model_root.resolve(), "right")
     manifest = json.loads((root / "manifests" / "benchmark_100.json").read_text())

@@ -42,7 +42,7 @@ def main() -> None:
         else:
             raise FileNotFoundError(f"No unambiguous selected_*.jsonl under {root / 'manifests'}")
     records = [json.loads(line) for line in selection_manifest.read_text().splitlines() if line]
-    output = (args.output or (root / f"canonical_{len(records)}")).resolve()
+    output = (args.output or (root / "canonical")).resolve()
     converted = []
     for index, record in enumerate(records):
         sequence = record["sequence_id"]

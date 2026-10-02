@@ -84,7 +84,7 @@ def object_asset(kind: str, fit, destination: Path) -> str:
         mesh.vertices *= np.array([0.03, 0.03, 0.04])
         provenance = "source Bi-DexHands egg.xml ellipsoid dimensions"
     elif kind == "cube":
-        source = ROOT / "datasets/bidexhands_v1/assets/objects/source/cube_multicolor.obj"
+        source = ROOT / "datasets/supp_v1/assets/source/cube_multicolor.obj"
         mesh = trimesh.load(source, force="mesh")
         mesh.apply_scale(0.05)
         provenance = "official Bi-DexHands cube_multicolor.obj with URDF scale 0.05"

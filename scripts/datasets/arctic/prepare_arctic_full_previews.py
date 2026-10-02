@@ -30,9 +30,9 @@ TARGETS = {
 def process_one(args: tuple[str, str, str, str, int]) -> dict:
     directory, sequence_id, root_text, output_text, iterations = args
     root, output = Path(root_text), Path(output_text)
-    manifest = json.loads((root / "canonical_100" / "manifest.json").read_text())
+    manifest = json.loads((root / "raw/canonical_source" / "manifest.json").read_text())
     record = next(item for item in manifest["records"] if item["sequence_id"] == sequence_id)
-    source = np.load(root / record["path"], allow_pickle=False)
+    source = np.load(root / "raw/canonical_source" / Path(record["path"]).parent.name / "trajectory.npz", allow_pickle=False)
     metadata = json.loads(str(source["metadata_json"]))
     mano_root = REPO / "assets" / "robot_hands" / "direct_motor" / "mano"
     preview = output / directory

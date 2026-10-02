@@ -14,8 +14,8 @@ from trajectory_schema import save_trajectory
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tasks", type=Path, default=Path("temp/hocap_mano_replay/data/tasks"))
-    parser.add_argument("--output", type=Path, default=Path("artifacts/datasets/hocap_v1/canonical"))
+    parser.add_argument("--tasks", type=Path, default=Path("datasets/hocap_v1/source_tasks"))
+    parser.add_argument("--output", type=Path, default=Path("datasets/hocap_v1/canonical"))
     parser.add_argument("--fps", type=float, default=30.0)
     args = parser.parse_args()
     converted = []
