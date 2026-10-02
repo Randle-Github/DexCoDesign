@@ -48,7 +48,7 @@ TRAJECTORY="$(python -c \
   "${STATUS}")"
 
 ./isaaclab.sh -p \
-  temp/hocap_mano_replay/isaaclab/replay_hand_rollout.py \
+  scripts/visualization/replay_hand_rollout.py \
   --trajectory "${TRAJECTORY}" \
   --output-dir "${RESULT_DIR}" \
   --enable_cameras \

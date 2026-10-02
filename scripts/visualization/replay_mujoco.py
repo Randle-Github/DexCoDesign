@@ -16,8 +16,8 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation
 
 
-EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = EXPERIMENT_ROOT.parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENT_ROOT = REPO_ROOT / "temp" / "hocap_mano_replay"
 SEQUENCE_ROOT = (
     EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
 )

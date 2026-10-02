@@ -45,8 +45,8 @@ def main() -> None:
     object_mesh.set(
         "file",
         str(
-            Path(__file__).resolve().parents[1]
-            / "data/subset/models/G04_1/cleaned_mesh_2000.obj"
+            Path(__file__).resolve().parents[2]
+            / "temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj"
         ),
     )
     scene_xml = args.output.with_suffix(".scene.xml")

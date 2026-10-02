@@ -24,7 +24,7 @@ ln -sfn "${CONDA_PREFIX}/lib/libGLU.so.1" "${RUNTIME_LIB_DIR}/libGLU.so.1"
 export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
 ./isaaclab.sh -p \
-  temp/hocap_mano_replay/isaaclab/replay_successful_trajectory.py \
+  scripts/visualization/replay_successful_trajectory.py \
   --trajectory "${TRAJECTORY}" \
   --output-dir "${RESULT_DIR}" \
   --enable_cameras \

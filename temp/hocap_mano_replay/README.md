@@ -32,7 +32,7 @@ the replay code. Pose arrays are copied without modification.
 .venv-morphology/bin/python temp/hocap_mano_replay/scripts/prepare_subset.py
 .venv-morphology/bin/python temp/hocap_mano_replay/scripts/download_label_subset.py
 .venv-morphology/bin/python temp/hocap_mano_replay/scripts/prepare_isaaclab_reference.py
-.venv-morphology/bin/mjpython temp/hocap_mano_replay/scripts/replay_mujoco.py
+.venv-morphology/bin/mjpython scripts/visualization/replay_mujoco.py
 ```
 
 ## Retarget all direct-motor hands

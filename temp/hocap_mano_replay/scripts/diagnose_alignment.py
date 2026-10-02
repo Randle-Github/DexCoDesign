@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location(
-    "replay_mujoco", SCRIPT_ROOT / "replay_mujoco.py"
+    "replay_mujoco", SCRIPT_ROOT.parents[2] / "scripts" / "visualization" / "replay_mujoco.py"
 )
 assert spec is not None and spec.loader is not None
 replay = importlib.util.module_from_spec(spec)
