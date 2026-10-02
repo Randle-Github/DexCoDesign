@@ -32,6 +32,7 @@ from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.sim.utils import get_all_matching_child_prims
 from isaaclab.utils import configclass
+from isaaclab.utils.io import load_yaml
 from isaaclab.utils.math import (
     axis_angle_from_quat,
     quat_apply,
@@ -39,9 +40,17 @@ from isaaclab.utils.math import (
     quat_error_magnitude,
     quat_mul,
 )
+from .palm_geometry_observation import (
+    OBSERVATION_DIM as PALM_GEOMETRY_OBSERVATION_DIM,
+    FixedWujiGeometry,
+    build_observation,
+)
+from .reference_loader import load_references, reference_layout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
+ENV_OPTIONS_PATH = Path(__file__).parent / "config" / "mano_residual_env.yaml"
+ENV_OPTIONS = load_yaml(str(ENV_OPTIONS_PATH))
 ASSET_ROOT = REPO_ROOT / "artifacts" / "isaaclab_mano_residual" / "assets"
 MANO_REFERENCE_PATH = (
     REPO_ROOT
@@ -103,14 +112,16 @@ if HAND_ID == "mano":
     HAND_USD_PATH = ASSET_ROOT / f"mano_{_mano}.usd"
     ROOT_POSITION_JOINT_NAMES = tuple(f"{_mano}_pos_{axis}" for axis in "xyz")
     ROOT_ROTATION_JOINT_NAMES = tuple(f"{_mano}_rot_{axis}" for axis in "xyz")
-    # Scissor handles and other tools are commonly supported by middle and
-    # proximal phalanges, not only fingertips. Reward all collision-bearing
-    # finger bodies while keeping palm and virtual serial-joint bodies out of
-    # the opposing-finger pinch definition.
-    THUMB_CONTACT_LINK_NAMES = tuple(
+    # Match the collaborator's single-hand pinch reward: distal tips only.
+    THUMB_CONTACT_LINK_NAMES = (f"{_mano}_thumb3",)
+    OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
+        f"{_mano}_{finger}3"
+        for finger in ("index", "middle", "ring", "pinky")
+    )
+    ARTICULATED_THUMB_CONTACT_LINK_NAMES = tuple(
         f"{_mano}_{name}" for name in ("thumb1z", "thumb2z", "thumb3")
     )
-    OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
+    ARTICULATED_OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
         f"{_mano}_{finger}{segment}"
         for finger in ("index", "middle", "ring", "pinky")
         for segment in ("1z", "2", "3")
@@ -157,6 +168,8 @@ else:
         OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
             _schema["other_finger_contact_link_names"].tolist()
         )
+        ARTICULATED_THUMB_CONTACT_LINK_NAMES = THUMB_CONTACT_LINK_NAMES
+        ARTICULATED_OTHER_FINGER_CONTACT_LINK_NAMES = OTHER_FINGER_CONTACT_LINK_NAMES
         if "contact_link_names" not in _schema:
             raise RuntimeError(
                 f"{REFERENCE_PATH} predates full collision coverage; "
@@ -185,6 +198,29 @@ with np.load(REFERENCE_PATH) as _reference_schema:
         else 0
     )
 OBSERVATION_DIM = 2 * CONTROL_DIM + 34
+
+
+def _usd_collision_approximations(usd_path: Path) -> dict[str, str]:
+    """Read the collision approximation selected by each hand USD link."""
+    stage = Usd.Stage.Open(str(usd_path))
+    if stage is None:
+        raise ValueError(f"cannot open hand USD: {usd_path}")
+    root = stage.GetDefaultPrim()
+    if not root:
+        raise ValueError(f"hand USD has no default prim: {usd_path}")
+    approximations: dict[str, str] = {}
+    for link in root.GetChildren():
+        collision = link.GetChild("collisions")
+        if not collision or not collision.HasAPI(UsdPhysics.CollisionAPI):
+            continue
+        attribute = collision.GetAttribute("physics:approximation")
+        value = attribute.Get() if attribute else None
+        approximations[link.GetName()] = "none" if value is None else str(value)
+    if not approximations:
+        raise ValueError(f"hand USD contains no link collision prims: {usd_path}")
+    return approximations
+
+
 ROOT_POSITION_EXPR = f"{MANO_SIDE}_pos_.*" if HAND_ID == "mano" else "root_pos_.*"
 ROOT_ROTATION_EXPR = f"{MANO_SIDE}_rot_.*" if HAND_ID == "mano" else "root_rot_.*"
 FINGER_JOINT_EXPR = f"{MANO_SIDE}_j_.*" if HAND_ID == "mano" else "finger__.*"
@@ -192,6 +228,19 @@ FINGER_JOINT_EXPR = f"{MANO_SIDE}_j_.*" if HAND_ID == "mano" else "finger__.*"
 if HAND_ID == "mano":
     SECOND_MANO_SIDE = "left" if MANO_SIDE == "right" else "right"
     SECOND_HAND_USD_PATH = ASSET_ROOT / f"mano_{SECOND_MANO_SIDE}.usd"
+    SECOND_THUMB_CONTACT_LINK_NAMES = (f"{SECOND_MANO_SIDE}_thumb3",)
+    SECOND_OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
+        f"{SECOND_MANO_SIDE}_{finger}3"
+        for finger in ("index", "middle", "ring", "pinky")
+    )
+    SECOND_ARTICULATED_THUMB_CONTACT_LINK_NAMES = tuple(
+        f"{SECOND_MANO_SIDE}_{name}" for name in ("thumb1z", "thumb2z", "thumb3")
+    )
+    SECOND_ARTICULATED_OTHER_FINGER_CONTACT_LINK_NAMES = tuple(
+        f"{SECOND_MANO_SIDE}_{finger}{segment}"
+        for finger in ("index", "middle", "ring", "pinky")
+        for segment in ("1z", "2", "3")
+    )
     SECOND_CONTACT_LINK_NAMES = (
         f"{SECOND_MANO_SIDE}_palm",
         *(
@@ -207,6 +256,10 @@ if HAND_ID == "mano":
 else:
     SECOND_MANO_SIDE = "left"
     SECOND_HAND_USD_PATH = ASSET_ROOT / "mano_left.usd"
+    SECOND_THUMB_CONTACT_LINK_NAMES = ()
+    SECOND_OTHER_FINGER_CONTACT_LINK_NAMES = ()
+    SECOND_ARTICULATED_THUMB_CONTACT_LINK_NAMES = ()
+    SECOND_ARTICULATED_OTHER_FINGER_CONTACT_LINK_NAMES = ()
     SECOND_CONTACT_LINK_NAMES = ()
 
 
@@ -233,7 +286,19 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # Keep the legacy MANO/object observation layout unless a WUJI run
     # explicitly opts into the palm-geometry representation.
     observation_mode = "legacy"
+    geometry_urdf_path: str = str(
+        ALL_HAND_ROOT / "prepared" / "wuji_hand_2" / "hand_rl.urdf"
+    )
+    geometry_collision_approximation: str = "auto"
+    geometry_inward_direction_mode: str = "reference_object"
     state_space = 0
+
+    # The collaborator's rigid single-hand task keeps hand/support contact
+    # unless this is explicitly requested. Other modes retain their existing
+    # support-filtering behaviour below.
+    disable_hand_support_collisions: bool = bool(
+        ENV_OPTIONS["collisions"]["disable_hand_support_collisions"]
+    )
 
     # Rigid mode keeps the original 7D object pose. Articulate mode changes
     # only the object-pose representation to [root xyz, root quat wxyz,
@@ -247,10 +312,8 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     require_free_object_root = False
     require_dynamic_object_root = False
 
-    # Bimanual mode jointly controls both MANO hands. The policy action is the
-    # concatenation [primary residual, opposite-hand residual]. It remains
-    # opt-in so existing single-hand checkpoints and action dimensions do not
-    # change.
+    # Bimanual mode jointly controls both MANO hands. Object root pose and
+    # optional articulation are shared; each hand earns its own pinch reward.
     bimanual_mode = False
 
     sim: SimulationCfg = SimulationCfg(
@@ -562,6 +625,26 @@ class ManoResidualEvalEnvCfg(ManoResidualEnvCfg):
     log_rollout_diagnostics = False
 
 
+@configclass
+class WujiPalmGeometryEnvCfg(ManoResidualEnvCfg):
+    """Single WUJI residual policy with the collaborator's geometry inputs."""
+
+    observation_mode: str = "palm_geometry"
+    observation_space = PALM_GEOMETRY_OBSERVATION_DIM
+
+
+@configclass
+class WujiPalmGeometryPlayEnvCfg(ManoResidualPlayEnvCfg):
+    observation_mode: str = "palm_geometry"
+    observation_space = PALM_GEOMETRY_OBSERVATION_DIM
+
+
+@configclass
+class WujiPalmGeometryEvalEnvCfg(ManoResidualEvalEnvCfg):
+    observation_mode: str = "palm_geometry"
+    observation_space = PALM_GEOMETRY_OBSERVATION_DIM
+
+
 class ManoResidualEnv(DirectRLEnv):
     cfg: ManoResidualEnvCfg
 
@@ -615,6 +698,8 @@ class ManoResidualEnv(DirectRLEnv):
         if cfg.observation_mode == "palm_geometry":
             if HAND_ID not in ("wuji_hand_2", "wuji_morphology_batch"):
                 raise ValueError("palm_geometry currently supports only WUJI topology")
+            if cfg.articulate_mode:
+                raise ValueError("palm_geometry does not encode articulated-object joints")
             if cfg.observation_space != PALM_GEOMETRY_OBSERVATION_DIM or cfg.morphology_context_dim:
                 raise ValueError(
                     f"palm_geometry requires {PALM_GEOMETRY_OBSERVATION_DIM} "
@@ -625,7 +710,14 @@ class ManoResidualEnv(DirectRLEnv):
             if MORPHOLOGY_BATCH_MANIFEST is not None
             else [REFERENCE_PATH]
         )
-        references = [np.load(path) for path in reference_paths]
+        representatives, geometry_bank_indices = reference_layout(
+            MORPHOLOGY_BATCH_MANIFEST, len(reference_paths)
+        )
+        # The cache closes every NPZ; grouped replicas share the same arrays.
+        references = load_references(reference_paths)
+        self._geometry_bank_indices_cpu = torch.tensor(
+            geometry_bank_indices, dtype=torch.long
+        )
         reference = references[0]
         if self._bimanual_mode:
             required_second_keys = (
@@ -658,6 +750,21 @@ class ManoResidualEnv(DirectRLEnv):
                 raise RuntimeError(
                     "Primary and second MANO references disagree on object pose"
                 )
+            if cfg.articulate_mode:
+                for key in ("object_joint_position_rad", "object_joint_names"):
+                    if key not in self._second_reference:
+                        raise RuntimeError(f"Second MANO reference is missing {key}")
+                if not np.array_equal(
+                    self._second_reference["object_joint_names"],
+                    reference["object_joint_names"],
+                ) or not np.allclose(
+                    self._second_reference["object_joint_position_rad"],
+                    reference["object_joint_position_rad"],
+                    atol=1.0e-5,
+                ):
+                    raise RuntimeError(
+                        "Primary and second MANO references disagree on object articulation"
+                    )
         self._reference_fps = float(np.asarray(reference.get("fps", 0.0)))
         self._control_dt = float(cfg.sim.dt * cfg.decimation)
         if self._reference_fps <= 0.0:
@@ -678,8 +785,10 @@ class ManoResidualEnv(DirectRLEnv):
             cfg.articulated_object_cfg.spawn.articulation_props.fix_root_link = (
                 cfg.articulated_object_fix_root_link
             )
-        cfg.observation_space = OBSERVATION_DIM + (
-            2 * OBJECT_JOINT_DIM if cfg.articulate_mode else 0
+        cfg.observation_space = (
+            PALM_GEOMETRY_OBSERVATION_DIM
+            if cfg.observation_mode == "palm_geometry"
+            else OBSERVATION_DIM + (2 * OBJECT_JOINT_DIM if cfg.articulate_mode else 0)
         )
         if self._bimanual_mode:
             second_control_dim = int(
@@ -688,11 +797,21 @@ class ManoResidualEnv(DirectRLEnv):
             second_tip_count = int(
                 self._second_reference["fingertip_pose_wxyz"].shape[1]
             )
-            # Second current/goal q plus current xyz and goal xyz+quat for
-            # each tracked fingertip. Object state remains represented once.
-            cfg.observation_space += (
-                2 * second_control_dim + 10 * second_tip_count
+            if (
+                second_control_dim != CONTROL_DIM
+                or second_tip_count != int(reference["fingertip_pose_wxyz"].shape[1])
+            ):
+                raise ValueError("bimanual mode needs matching MANO hand layouts")
+            # The object is shared: append only the second hand's state and goals.
+            cfg.observation_space += 2 * second_control_dim + 10 * second_tip_count
+            expected_bimanual_observation_dim = (
+                2 * OBSERVATION_DIM - 14
+                + (2 * OBJECT_JOINT_DIM if cfg.articulate_mode else 0)
             )
+            if cfg.observation_space != expected_bimanual_observation_dim:
+                raise ValueError(
+                    "bimanual mode needs two matching MANO layouts and one shared object state"
+                )
         if cfg.articulate_mode and cfg.hand_cfg.spawn is not None:
             # Articulated-object contact filtering reports from one hand link
             # and filters against all object links, so the hand bodies need
@@ -847,27 +966,103 @@ class ManoResidualEnv(DirectRLEnv):
             self._reference_object_joint_cpu = None
             self._initialization_object_joint_cpu = None
             self._reference_object_joint_names = []
-        required_fingertip_keys = (
-            "fingertip_pose_wxyz",
-            "fingertip_link_names",
-            "fingertip_offsets",
-        )
-        missing_fingertip_keys = [
-            key for key in required_fingertip_keys if key not in reference
-        ]
-        if missing_fingertip_keys:
-            raise RuntimeError(
-                f"{REFERENCE_PATH} is missing {missing_fingertip_keys}; regenerate "
-                "the EgoEngine-style reference before training"
-            )
-        self._reference_fingertip_pose_cpu = torch.from_numpy(
-            stacked("fingertip_pose_wxyz")
-        )
-        self._reference_fingertip_link_names = reference[
-            "fingertip_link_names"
-        ].tolist()
-        self._fingertip_offsets_cpu = torch.from_numpy(stacked("fingertip_offsets"))
         self._reference_length = int(reference["hand_q"].shape[0])
+        if cfg.observation_mode == "palm_geometry":
+            manifest = MORPHOLOGY_BATCH_MANIFEST
+            if manifest is not None:
+                required = (
+                    "hand_urdf_paths",
+                    "parametric_link_names",
+                    "parametric_relative_transforms",
+                    "parametric_mesh_deformations",
+                    "parametric_joint_names",
+                    "parametric_joint_local_positions",
+                )
+                missing = [key for key in required if key not in manifest]
+                if missing:
+                    raise ValueError(f"palm_geometry manifest lacks {missing}")
+            self._geometries = []
+            point_values = []
+            palm_values = []
+            offset_values = []
+            for index in representatives:
+                if manifest is None:
+                    urdf_path = Path(cfg.geometry_urdf_path)
+                    link_transforms = {}
+                    link_deformations = {}
+                    joint_origins = {}
+                else:
+                    urdf_path = Path(manifest["hand_urdf_paths"][index])
+                    link_transforms = dict(zip(
+                        manifest["parametric_link_names"][index],
+                        manifest["parametric_relative_transforms"][index],
+                        strict=True,
+                    ))
+                    link_deformations = dict(zip(
+                        manifest["parametric_link_names"][index],
+                        manifest["parametric_mesh_deformations"][index],
+                        strict=True,
+                    ))
+                    joint_origins = dict(zip(
+                        manifest["parametric_joint_names"][index],
+                        manifest["parametric_joint_local_positions"][index],
+                        strict=True,
+                    ))
+                if not urdf_path.is_file():
+                    raise FileNotFoundError(f"palm_geometry URDF is missing: {urdf_path}")
+                approximation = cfg.geometry_collision_approximation
+                if approximation == "auto":
+                    approximation = _usd_collision_approximations(
+                        _batch_usd_paths[index] if manifest is not None else HAND_USD_PATH
+                    )
+                source_q = torch.from_numpy(references[index]["hand_q"])
+                source_object = torch.from_numpy(
+                    references[index]["object_pose_wxyz"][:, :3]
+                )
+                geometry = FixedWujiGeometry(
+                    urdf_path,
+                    self._reference_joint_names,
+                    PALM_BODY_NAME,
+                    reference_q=source_q,
+                    reference_object_positions=source_object,
+                    collision_approximation=approximation,
+                    inward_direction_mode=cfg.geometry_inward_direction_mode,
+                    joint_origin_overrides=joint_origins,
+                    collision_mesh_transforms=link_transforms,
+                    collision_mesh_deformations=link_deformations,
+                )
+                points, palm = geometry.forward(source_q)
+                self._geometries.append(geometry)
+                point_values.append(points)
+                palm_values.append(palm)
+                offset_values.append(geometry.offsets)
+            first_body_names = self._geometries[0].body_names
+            if any(g.body_names != first_body_names for g in self._geometries[1:]):
+                raise RuntimeError("palm_geometry candidates disagree on WUJI body topology")
+            self._geometry_points_cpu = torch.stack(point_values)
+            self._geometry_palm_cpu = torch.stack(palm_values)
+            self._geometry_offsets_cpu = torch.stack(offset_values)
+        else:
+            required_fingertip_keys = (
+                "fingertip_pose_wxyz",
+                "fingertip_link_names",
+                "fingertip_offsets",
+            )
+            missing_fingertip_keys = [
+                key for key in required_fingertip_keys if key not in reference
+            ]
+            if missing_fingertip_keys:
+                raise RuntimeError(
+                    f"{REFERENCE_PATH} is missing {missing_fingertip_keys}; regenerate "
+                    "the EgoEngine-style reference before training"
+                )
+            self._reference_fingertip_pose_cpu = torch.from_numpy(
+                stacked("fingertip_pose_wxyz")
+            )
+            self._reference_fingertip_link_names = reference[
+                "fingertip_link_names"
+            ].tolist()
+            self._fingertip_offsets_cpu = torch.from_numpy(stacked("fingertip_offsets"))
 
         super().__init__(cfg, render_mode, **kwargs)
         if cfg.articulate_mode:
@@ -955,10 +1150,11 @@ class ManoResidualEnv(DirectRLEnv):
         else:
             self.reference_object_joint = None
             self.initialization_object_joint = None
-        self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
-            self.device
-        )
-        self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
+        if cfg.observation_mode == "legacy":
+            self.reference_fingertip_pose = self._reference_fingertip_pose_cpu.to(
+                self.device
+            )
+            self.fingertip_offsets = self._fingertip_offsets_cpu.to(self.device)
         if self._bimanual_mode:
             second_joint_names = self._second_reference_joint_names
             if self.second_hand.num_joints != len(second_joint_names):
@@ -1228,18 +1424,31 @@ class ManoResidualEnv(DirectRLEnv):
         self._middle_tip_body_index = self.hand.body_names.index(
             MIDDLE_TIP_BODY_NAME
         )
-        missing_fingertip_links = sorted(
-            set(self._reference_fingertip_link_names) - set(self.hand.body_names)
-        )
-        if missing_fingertip_links:
-            raise RuntimeError(
-                f"Reference fingertip links missing from imported {HAND_ID} articulation: "
-                f"{missing_fingertip_links}"
+        if cfg.observation_mode == "palm_geometry":
+            self._geometry_bank_indices = self._geometry_bank_indices_cpu.to(self.device)
+            self._geometry_body_indices = [
+                self.hand.body_names.index(name) for name in self._geometries[0].body_names
+            ]
+            self._geometry_offsets = self._geometry_offsets_cpu.to(self.device)
+            self.reference_geometry_points = self._geometry_points_cpu.to(self.device)
+            self.reference_geometry_palm = self._geometry_palm_cpu.to(self.device)
+            self._geometry_joint_indices = [
+                self.hand.joint_names.index(name) for name in self._reference_joint_names
+            ]
+            self._geometry_validated = False
+        else:
+            missing_fingertip_links = sorted(
+                set(self._reference_fingertip_link_names) - set(self.hand.body_names)
             )
-        self._fingertip_body_indices = [
-            self.hand.body_names.index(name)
-            for name in self._reference_fingertip_link_names
-        ]
+            if missing_fingertip_links:
+                raise RuntimeError(
+                    f"Reference fingertip links missing from imported {HAND_ID} articulation: "
+                    f"{missing_fingertip_links}"
+                )
+            self._fingertip_body_indices = [
+                self.hand.body_names.index(name)
+                for name in self._reference_fingertip_link_names
+            ]
     def _current_fingertip_positions_w(self) -> torch.Tensor:
         fingertip_body_quat = self.hand.data.body_quat_w[
             :, self._fingertip_body_indices
@@ -1482,16 +1691,17 @@ class ManoResidualEnv(DirectRLEnv):
             }
             self._thumb_contact_sensors = tuple(
                 self._articulated_contact_sensors[name]
-                for name in THUMB_CONTACT_LINK_NAMES
+                for name in ARTICULATED_THUMB_CONTACT_LINK_NAMES
             )
             self._other_finger_contact_sensors = tuple(
                 self._articulated_contact_sensors[name]
-                for name in OTHER_FINGER_CONTACT_LINK_NAMES
+                for name in ARTICULATED_OTHER_FINGER_CONTACT_LINK_NAMES
             )
             self._all_hand_contact_sensors = tuple(
                 self._articulated_contact_sensors.values()
             )
             if self._bimanual_mode:
+                self._primary_all_hand_contact_sensors = self._all_hand_contact_sensors
                 self._second_articulated_contact_sensors = {
                     link_name: ContactSensor(
                         ContactSensorCfg(
@@ -1504,6 +1714,17 @@ class ManoResidualEnv(DirectRLEnv):
                     )
                     for link_name in SECOND_CONTACT_LINK_NAMES
                 }
+                self._second_thumb_contact_sensors = tuple(
+                    self._second_articulated_contact_sensors[name]
+                    for name in SECOND_ARTICULATED_THUMB_CONTACT_LINK_NAMES
+                )
+                self._second_other_finger_contact_sensors = tuple(
+                    self._second_articulated_contact_sensors[name]
+                    for name in SECOND_ARTICULATED_OTHER_FINGER_CONTACT_LINK_NAMES
+                )
+                self._second_all_hand_contact_sensors = tuple(
+                    self._second_articulated_contact_sensors.values()
+                )
                 self._all_hand_contact_sensors += tuple(
                     self._second_articulated_contact_sensors.values()
                 )
@@ -1511,10 +1732,10 @@ class ManoResidualEnv(DirectRLEnv):
             # A rigid object has one reporting body, filtered against groups
             # of hand links exactly as in the original environment.
             def object_contact_sensor(
-                link_names: Sequence[str], *, include_second: bool = False
+                link_names: Sequence[str], *, hand_prim: str = "Hand", include_second: bool = False
             ) -> ContactSensor:
                 filter_paths = [
-                    f"{env_regex}/Hand/{name}" for name in link_names
+                    f"{env_regex}/{hand_prim}/{name}" for name in link_names
                 ]
                 if include_second and self._bimanual_mode:
                     filter_paths.extend(
@@ -1530,9 +1751,7 @@ class ManoResidualEnv(DirectRLEnv):
                     )
                 )
 
-            self._thumb_contact_sensor = object_contact_sensor(
-                THUMB_CONTACT_LINK_NAMES
-            )
+            self._thumb_contact_sensor = object_contact_sensor(THUMB_CONTACT_LINK_NAMES)
             self._other_finger_contact_sensor = object_contact_sensor(
                 OTHER_FINGER_CONTACT_LINK_NAMES
             )
@@ -1540,6 +1759,19 @@ class ManoResidualEnv(DirectRLEnv):
                 ALL_HAND_CONTACT_LINK_NAMES,
                 include_second=True,
             )
+            if self._bimanual_mode:
+                self._second_thumb_contact_sensor = object_contact_sensor(
+                    SECOND_THUMB_CONTACT_LINK_NAMES, hand_prim="SecondHand"
+                )
+                self._second_other_finger_contact_sensor = object_contact_sensor(
+                    SECOND_OTHER_FINGER_CONTACT_LINK_NAMES, hand_prim="SecondHand"
+                )
+                self._primary_all_hand_contact_sensor = object_contact_sensor(
+                    ALL_HAND_CONTACT_LINK_NAMES
+                )
+                self._second_all_hand_contact_sensor = object_contact_sensor(
+                    SECOND_CONTACT_LINK_NAMES, hand_prim="SecondHand"
+                )
         if not grouped_replicas:
             self._validate_collision_coverage(
                 hand_root_path=f"{self._environment_root(0)}/Hand",
@@ -1559,11 +1791,12 @@ class ManoResidualEnv(DirectRLEnv):
                 if self._morphology_batch
                 else ["/World/envs/env_0/Hand"]
             )
-            for hand_root in hand_roots:
-                self._filter_hand_support_collisions(
-                    hand_root_path=hand_root,
-                    support_root_path="/World/ground",
-                )
+            if self.cfg.disable_hand_support_collisions or self._bimanual_mode or self.cfg.articulate_mode:
+                for hand_root in hand_roots:
+                    self._filter_hand_support_collisions(
+                        hand_root_path=hand_root,
+                        support_root_path="/World/ground",
+                    )
             if self._bimanual_mode:
                 self._filter_hand_support_collisions(
                     hand_root_path="/World/envs/env_0/SecondHand",
@@ -1595,6 +1828,19 @@ class ManoResidualEnv(DirectRLEnv):
             self.scene.sensors["object_thumb_contact"] = self._thumb_contact_sensor
             self.scene.sensors["object_other_finger_contact"] = self._other_finger_contact_sensor
             self.scene.sensors["object_all_hand_contact"] = self._all_hand_contact_sensor
+            if self._bimanual_mode:
+                self.scene.sensors["object_second_thumb_contact"] = (
+                    self._second_thumb_contact_sensor
+                )
+                self.scene.sensors["object_second_other_finger_contact"] = (
+                    self._second_other_finger_contact_sensor
+                )
+                self.scene.sensors["object_primary_all_hand_contact"] = (
+                    self._primary_all_hand_contact_sensor
+                )
+                self.scene.sensors["object_second_all_hand_contact"] = (
+                    self._second_all_hand_contact_sensor
+                )
         if grouped_replicas:
             print("[MORPHOLOGY_GROUPED_STAGE] setup_scene_complete", flush=True)
         if not grouped_replicas:
@@ -2041,6 +2287,55 @@ class ManoResidualEnv(DirectRLEnv):
     def _get_observations(self) -> dict[str, torch.Tensor]:
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
         object_pose = torch.cat((object_pos, self.object.data.root_quat_w), dim=-1)
+        if self.cfg.observation_mode == "palm_geometry":
+            body_pos = self.hand.data.body_pos_w[:, self._geometry_body_indices]
+            body_quat = self.hand.data.body_quat_w[:, self._geometry_body_indices]
+            offsets = self._geometry_offsets[self._geometry_bank_indices]
+            points = body_pos + quat_apply(
+                body_quat.reshape(-1, 4), offsets.reshape(-1, 3)
+            ).reshape(self.num_envs, -1, 3)
+            points = points - self.scene.env_origins[:, None, :]
+            palm_pose = torch.cat((
+                self.hand.data.body_pos_w[:, self._palm_body_index] - self.scene.env_origins,
+                self.hand.data.body_quat_w[:, self._palm_body_index],
+            ), dim=-1)
+            if not self._geometry_validated:
+                joint_pos = self.hand.data.joint_pos[
+                    :, self._geometry_joint_indices
+                ].detach().cpu()
+                expected_points = torch.empty_like(points, device="cpu")
+                expected_palm = torch.empty_like(palm_pose, device="cpu")
+                for bank_index, geometry in enumerate(self._geometries):
+                    ids = (self._geometry_bank_indices_cpu == bank_index).nonzero(
+                        as_tuple=True
+                    )[0]
+                    candidate_points, candidate_palm = geometry.forward(joint_pos[ids])
+                    expected_points[ids] = candidate_points
+                    expected_palm[ids] = candidate_palm
+                error = (points.detach().cpu() - expected_points).norm(dim=-1).max()
+                palm_error = (
+                    palm_pose[:, :3].detach().cpu() - expected_palm[:, :3]
+                ).norm(dim=-1).max()
+                if not torch.isfinite(error) or error > 5.0e-5 or palm_error > 5.0e-5:
+                    raise RuntimeError(
+                        f"WUJI URDF/simulator FK mismatch: landmarks={error.item():.6g} m, "
+                        f"palm={palm_error.item():.6g} m"
+                    )
+                self._geometry_validated = True
+            observation = build_observation(
+                points,
+                self.reference_geometry_points[
+                    self._geometry_bank_indices, self.phase_buf
+                ],
+                palm_pose,
+                self.reference_geometry_palm[
+                    self._geometry_bank_indices, self.phase_buf
+                ],
+                object_pose,
+                self._reference_at(self.reference_object_pose, self.phase_buf),
+                self.phase_buf.to(torch.float32) / float(self._reference_length - 1),
+            )
+            return {"policy": observation}
         fingertip_pos = (
             self._current_fingertip_positions_w()
             - self.scene.env_origins[:, None, :]
@@ -2107,21 +2402,25 @@ class ManoResidualEnv(DirectRLEnv):
                 self.second_reference_fingertip_pose,
                 self.phase_buf,
             )
-            second_observation = torch.cat(
+            second_components = [
+                self.second_hand.data.joint_pos,
+                second_fingertip_pos.flatten(start_dim=1),
+            ]
+            second_components.extend(
                 (
-                    self.second_hand.data.joint_pos,
-                    second_fingertip_pos.flatten(start_dim=1),
                     second_goal_fingertip_pose.flatten(start_dim=1),
-                    self._reference_at(
-                        self.second_reference_hand_q,
-                        self.phase_buf,
-                    ),
-                ),
-                dim=-1,
+                    self._reference_at(self.second_reference_hand_q, self.phase_buf),
+                )
             )
+            second_observation = torch.cat(second_components, dim=-1)
             observation = torch.cat(
                 (observation, second_observation), dim=-1
             )
+            if observation.shape[-1] != self.cfg.observation_space:
+                raise RuntimeError(
+                    f"bimanual observation has {observation.shape[-1]} values, "
+                    f"expected {self.cfg.observation_space}"
+                )
         if self.morphology_context is not None:
             observation = torch.cat((observation, self.morphology_context), dim=-1)
         return {"policy": observation}
@@ -2250,6 +2549,62 @@ class ManoResidualEnv(DirectRLEnv):
             other_finger_force,
         )
 
+    def _compute_second_pinch_contact(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute the other hand's pinch without mixing hands or object links."""
+        if self.cfg.articulate_mode and self.cfg.require_cross_link_pinch:
+            thumb_link_force = self._contact_sensor_forces_by_filter(
+                self._second_thumb_contact_sensors
+            )
+            other_link_force = self._contact_sensor_forces_by_filter(
+                self._second_other_finger_contact_sensors
+            )
+            if thumb_link_force.shape[1] < 2:
+                raise RuntimeError(
+                    "require_cross_link_pinch needs at least two articulated object links"
+                )
+            thumb_by_link = thumb_link_force > self.cfg.contact_force_threshold
+            other_by_link = other_link_force > self.cfg.contact_force_threshold
+            different_link = ~torch.eye(
+                thumb_link_force.shape[1], dtype=torch.bool, device=self.device
+            )
+            cross_link_pairs = (
+                thumb_by_link[:, :, None]
+                & other_by_link[:, None, :]
+                & different_link[None, :, :]
+            )
+            thumb_force = thumb_link_force.amax(dim=1)
+            other_finger_force = other_link_force.amax(dim=1)
+            thumb_contact = thumb_by_link.any(dim=1)
+            other_finger_contact = other_by_link.any(dim=1)
+            return (
+                thumb_contact,
+                other_finger_contact,
+                cross_link_pairs.any(dim=(1, 2)),
+                thumb_force,
+                other_finger_force,
+            )
+        thumb_force = self._contact_sensor_force(
+            self._second_thumb_contact_sensors
+            if self.cfg.articulate_mode
+            else self._second_thumb_contact_sensor
+        )
+        other_finger_force = self._contact_sensor_force(
+            self._second_other_finger_contact_sensors
+            if self.cfg.articulate_mode
+            else self._second_other_finger_contact_sensor
+        )
+        thumb_contact = thumb_force > self.cfg.contact_force_threshold
+        other_finger_contact = other_finger_force > self.cfg.contact_force_threshold
+        return (
+            thumb_contact,
+            other_finger_contact,
+            thumb_contact & other_finger_contact,
+            thumb_force,
+            other_finger_force,
+        )
+
     def _get_rewards(self) -> torch.Tensor:
         self._compute_object_errors()
         object_pos = self.object.data.root_pos_w - self.scene.env_origins
@@ -2303,6 +2658,7 @@ class ManoResidualEnv(DirectRLEnv):
             if self.cfg.exponential_pose_reward
             else reward_offset_c - pose_tracking_error
         )
+        bimanual = self._bimanual_mode
         (
             thumb_contact,
             other_finger_contact,
@@ -2327,6 +2683,21 @@ class ManoResidualEnv(DirectRLEnv):
             * contact_tracking_quality
             * self.cfg.contact_reward_weight
         )
+        if bimanual:
+            (
+                second_thumb_contact,
+                second_other_finger_contact,
+                second_pinch_contact,
+                second_thumb_force,
+                second_other_finger_force,
+            ) = self._compute_second_pinch_contact()
+            second_contact_reward = (
+                second_pinch_contact.to(torch.float32)
+                * contact_tracking_quality
+                * self.cfg.contact_reward_weight
+            )
+            primary_contact_reward = contact_reward
+            contact_reward = primary_contact_reward + second_contact_reward
         settled_object_height = self._reference_at(
             self.reference_object_pose,
             torch.zeros_like(self.phase_buf),
@@ -2339,16 +2710,39 @@ class ManoResidualEnv(DirectRLEnv):
             object_airborne.to(torch.float32)
             * self.cfg.object_airborne_reward_weight
         )
-        excess_contact_force = torch.relu(
-            all_hand_force - self.cfg.contact_force_safe_threshold
-        ) / 100.0
-        contact_force_penalty = (
-            excess_contact_force.square() * self.cfg.contact_force_penalty_weight
-        )
+        if bimanual:
+            primary_all_hand_force = self._contact_sensor_force(
+                self._primary_all_hand_contact_sensors
+                if self.cfg.articulate_mode
+                else self._primary_all_hand_contact_sensor
+            )
+            second_all_hand_force = self._contact_sensor_force(
+                self._second_all_hand_contact_sensors
+                if self.cfg.articulate_mode
+                else self._second_all_hand_contact_sensor
+            )
+            primary_excess_force = torch.relu(
+                primary_all_hand_force - self.cfg.contact_force_safe_threshold
+            ) / 100.0
+            second_excess_force = torch.relu(
+                second_all_hand_force - self.cfg.contact_force_safe_threshold
+            ) / 100.0
+            contact_force_penalty = (
+                primary_excess_force.square() + second_excess_force.square()
+            ) * self.cfg.contact_force_penalty_weight
+        else:
+            excess_contact_force = torch.relu(
+                all_hand_force - self.cfg.contact_force_safe_threshold
+            ) / 100.0
+            contact_force_penalty = (
+                excess_contact_force.square() * self.cfg.contact_force_penalty_weight
+            )
         residual_action_penalty = (
             self.actions.square().mean(dim=-1)
             * self.cfg.residual_action_penalty_weight
         )
+        if bimanual:
+            residual_action_penalty = 2.0 * residual_action_penalty
         total_reward = (
             pose_tracking_reward
             + contact_reward
@@ -2361,7 +2755,13 @@ class ManoResidualEnv(DirectRLEnv):
         # reward tensors returned to PPO, without reconstructing a proxy.
         self._last_pose_tracking_reward = pose_tracking_reward
         self._last_contact_reward = contact_reward
-        self._last_pinch_contact = pinch_contact
+        self._last_pinch_contact = (
+            pinch_contact | second_pinch_contact
+            if bimanual else pinch_contact
+        )
+        if bimanual:
+            self._last_primary_pinch_contact = pinch_contact
+            self._last_second_pinch_contact = second_pinch_contact
         self._last_thumb_contact_force = thumb_force
         self._last_other_finger_contact_force = other_finger_force
         self._pose_episode_return += pose_tracking_reward
@@ -2402,6 +2802,19 @@ class ManoResidualEnv(DirectRLEnv):
                 / float(self._reference_length - 1)
             ),
         }
+        if bimanual:
+            log.update(
+                {
+                    "primary_pinch_contact_reward": primary_contact_reward.mean(),
+                    "second_pinch_contact_reward": second_contact_reward.mean(),
+                    "second_thumb_object_contact": second_thumb_contact.to(torch.float32).mean(),
+                    "second_other_finger_object_contact": second_other_finger_contact.to(torch.float32).mean(),
+                    "second_thumb_object_contact_force_n": second_thumb_force.mean(),
+                    "second_other_finger_object_contact_force_n": second_other_finger_force.mean(),
+                    "primary_all_hand_object_contact_force_n": primary_all_hand_force.mean(),
+                    "second_all_hand_object_contact_force_n": second_all_hand_force.mean(),
+                }
+            )
         completed = self.reset_buf
         if completed.any():
             log["pose_tracking_return"] = self._pose_episode_return[completed].mean()
@@ -2413,11 +2826,26 @@ class ManoResidualEnv(DirectRLEnv):
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         # EgoEngine applies ctrl_ref[t] and evaluates against reference t+1.
-        self.reference_time_buf += self._control_dt
-        self.phase_buf = torch.clamp(
-            torch.floor(self.reference_time_buf * self._reference_fps).to(torch.long),
-            max=self._reference_length - 1,
-        )
+        # Preserve the collaborator's exact one-frame-per-control-step rule
+        # for its single-hand 30 Hz references. Slower source datasets must
+        # retain their timestamp mapping (e.g. 10 Hz ARCTIC at 30 Hz control).
+        if (
+            not self._bimanual_mode
+            and not self.cfg.articulate_mode
+            and abs(self._reference_fps * self._control_dt - 1.0) < 1.0e-6
+        ):
+            self.phase_buf = torch.clamp(
+                self.phase_buf + 1, max=self._reference_length - 1
+            )
+            self.reference_time_buf = (
+                self.phase_buf.to(torch.float32) / self._reference_fps
+            )
+        else:
+            self.reference_time_buf += self._control_dt
+            self.phase_buf = torch.clamp(
+                torch.floor(self.reference_time_buf * self._reference_fps).to(torch.long),
+                max=self._reference_length - 1,
+            )
         self._compute_object_errors()
         # DirectRLEnv resets finished environments before returning from step().
         # Preserve the phase used for termination so external evaluation can
