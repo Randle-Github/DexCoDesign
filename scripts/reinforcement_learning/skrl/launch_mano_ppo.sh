@@ -133,7 +133,7 @@ elif [[ -n "$SECOND_REFERENCE" ]]; then
   die "--second-reference is only valid in a bimanual mode"
 fi
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+REPO_ROOT="${DEXCODESIGN_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 SCRIPT_PATH="$REPO_ROOT/scripts/reinforcement_learning/skrl/launch_mano_ppo.sh"
 REFERENCE="$(absolute_path "$REFERENCE")"
 OBJECT_USD="$(absolute_path "$OBJECT_USD")"
@@ -169,7 +169,7 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
     "$SBATCH_BIN" --parsable --job-name="$JOB_NAME" --partition="$PARTITION"
     --account="$ACCOUNT" --cpus-per-task="$CPUS" --mem="$MEM"
     --time="$TIME_LIMIT" --output="$OUTPUT_DIR/slurm-%j.out"
-    --chdir="$PWD" --export=ALL
+    --chdir="$PWD" --export="ALL,DEXCODESIGN_REPO_ROOT=$REPO_ROOT"
   )
   if [[ "$GPU_TYPE" == any ]]; then command+=(--gpus=1); else command+=(--gpus="$GPU_TYPE:1"); fi
   if [[ -n "$QOS" ]]; then command+=(--qos="$QOS"); fi
