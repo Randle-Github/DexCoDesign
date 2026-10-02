@@ -46,7 +46,7 @@ def main() -> None:
         "file",
         str(
             Path(__file__).resolve().parents[2]
-            / "temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj"
+            / "datasets/hocap_v1/raw/subset/models/G04_1/cleaned_mesh_2000.obj"
         ),
     )
     scene_xml = args.output.with_suffix(".scene.xml")

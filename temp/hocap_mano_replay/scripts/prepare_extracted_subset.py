@@ -14,7 +14,7 @@ import yaml
 
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HOCAP_ROOT = Path.home() / "Desktop" / "HO-Cap" / "datasets"
-DEFAULT_OUTPUT_ROOT = EXPERIMENT_ROOT / "data" / "subset"
+DEFAULT_OUTPUT_ROOT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw/subset"
 SEQUENCE = Path("subject_7") / "20231022_192832"
 CAMERA = "043422252387"
 HAND_SLOT = 1  # HO-Cap pose/label order is [right, left].

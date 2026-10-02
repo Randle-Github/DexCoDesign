@@ -27,11 +27,12 @@ from scipy.spatial.transform import Rotation
 SCRIPT_DIR = Path(__file__).resolve().parent
 EXPERIMENT_ROOT = SCRIPT_DIR.parent
 SEQUENCE_ROOT = (
-    EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
+    EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw/subset/subject_7/20231022_192832"
 )
 OUTPUT_ROOT = EXPERIMENT_ROOT / "artifacts" / "supr_female_foot_retarget"
 
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(EXPERIMENT_ROOT.parents[1] / "scripts/visualization"))
 from replay_mujoco import LOCAL_HAND_TO_MANO  # noqa: E402
 from retarget_all_hands import (  # noqa: E402
     FINGERS,

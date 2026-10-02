@@ -21,7 +21,7 @@ mkdir -p "${ASSET_ROOT}"
   --headless
 
 "${REPO_ROOT}/isaaclab.sh" -p "${REPO_ROOT}/scripts/tools/convert_mesh.py" \
-  "${REPO_ROOT}/temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj" \
+  "${REPO_ROOT}/datasets/hocap_v1/raw/subset/models/G04_1/cleaned_mesh_2000.obj" \
   "${ASSET_ROOT}/g04_1.usd" \
   --collision-approximation convexDecomposition \
   --mass 0.015 \

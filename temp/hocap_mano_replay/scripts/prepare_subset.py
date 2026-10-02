@@ -14,7 +14,7 @@ import numpy as np
 
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw"
-SUBSET_ROOT = EXPERIMENT_ROOT / "data" / "subset"
+SUBSET_ROOT = EXPERIMENT_ROOT.parents[1] / "datasets/hocap_v1/raw/subset"
 
 SEQUENCE = "subject_7/20231022_192832"
 HAND_SIDE = "left"

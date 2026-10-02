@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 OUTPUT_ROOT="${REPO_ROOT}/artifacts/isaaclab_all_hands_residual"
 PREPARED_ROOT="${OUTPUT_ROOT}/prepared"
 ASSET_ROOT="${OUTPUT_ROOT}/assets"
-CAPTURE="${REPO_ROOT}/temp/hocap_mano_replay/data/subset/subject_7/20231022_192832/isaaclab_reference.npz"
+CAPTURE="${REPO_ROOT}/datasets/hocap_v1/raw/subset/subject_7/20231022_192832/isaaclab_reference.npz"
 HAND_IDS=(
   ability_hand
   schunk_svh
@@ -62,7 +62,7 @@ python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/prepare_all_hand_rl_referenc
 
 python "${REPO_ROOT}/temp/hocap_mano_replay/scripts/audit_collision_coverage.py" \
   --prepared-root "${PREPARED_ROOT}" \
-  --object-mesh "${REPO_ROOT}/temp/hocap_mano_replay/data/subset/models/G04_1/cleaned_mesh_2000.obj" \
+  --object-mesh "${REPO_ROOT}/datasets/hocap_v1/raw/subset/models/G04_1/cleaned_mesh_2000.obj" \
   --output "${OUTPUT_ROOT}/collision_coverage_audit.json" \
   --require-complete-prepared
 

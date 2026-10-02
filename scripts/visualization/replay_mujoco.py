@@ -19,12 +19,11 @@ from scipy.spatial.transform import Rotation
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT_ROOT = REPO_ROOT / "temp" / "hocap_mano_replay"
 SEQUENCE_ROOT = (
-    EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
+    REPO_ROOT / "datasets/hocap_v1/raw/subset/subject_7/20231022_192832"
 )
 OBJECT_MESH = (
-    EXPERIMENT_ROOT
-    / "data"
-    / "subset"
+    REPO_ROOT
+    / "datasets/hocap_v1/raw/subset"
     / "models"
     / "G04_1"
     / "cleaned_mesh_2000.obj"

@@ -16,6 +16,7 @@ from scipy.spatial.transform import Rotation
 EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EXPERIMENT_ROOT.parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(REPO_ROOT / "scripts/visualization"))
 
 from replay_mujoco import (  # noqa: E402
     HAND_URDF,
@@ -33,7 +34,7 @@ from retarget_all_hands import (  # noqa: E402
 
 
 DEFAULT_SEQUENCE_ROOT = (
-    EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
+    REPO_ROOT / "datasets/hocap_v1/raw/subset/subject_7/20231022_192832"
 )
 
 

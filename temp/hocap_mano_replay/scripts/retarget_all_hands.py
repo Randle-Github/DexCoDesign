@@ -31,12 +31,11 @@ SOURCE_DIRECT_ROOT = REPO_ROOT / "assets" / "robot_hands" / "direct_motor"
 DIRECT_ROOT = SOURCE_DIRECT_ROOT
 REGISTRY = DIRECT_ROOT / "registry.json"
 SEQUENCE_ROOT = (
-    EXPERIMENT_ROOT / "data" / "subset" / "subject_7" / "20231022_192832"
+    REPO_ROOT / "datasets/hocap_v1/raw/subset/subject_7/20231022_192832"
 )
 OBJECT_MESH = (
-    EXPERIMENT_ROOT
-    / "data"
-    / "subset"
+    REPO_ROOT
+    / "datasets/hocap_v1/raw/subset"
     / "models"
     / "G04_1"
     / "cleaned_mesh_2000.obj"
@@ -46,6 +45,7 @@ CACHE_ROOT = ARTIFACT_ROOT / "all_hands_ik_cache"
 MANO_COMMAND_REFERENCE = SEQUENCE_ROOT / "isaaclab_reference.npz"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(REPO_ROOT / "scripts/visualization"))
 from replay_mujoco import (  # noqa: E402
     LOCAL_HAND_TO_MANO,
     mano_fingertip_offsets,
