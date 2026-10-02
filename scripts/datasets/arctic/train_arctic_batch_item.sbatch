@@ -28,14 +28,7 @@ export RUN_NAME="arctic100_${sample_id}"
 export RUN_SEED="$((1000 + SLURM_ARRAY_TASK_ID))"
 export TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-300}"
 export NUM_ENVS="${NUM_ENVS:-256}"
-export OBJECT_Z_REWARD_MULTIPLIER=1.0
-export OBJECT_AIRBORNE_REWARD_WEIGHT=0.0
-export REQUIRE_CROSS_LINK_PINCH=false
-export SCISSORS_HANDLE_CONTACT_GATE=false
-export OBJECT_FAILURE_DISTANCE="${OBJECT_FAILURE_DISTANCE:-0.05}"
-export OBJECT_FAILURE_ORIENTATION="${OBJECT_FAILURE_ORIENTATION:-1.5}"
-export OBJECT_FAILURE_ARTICULATION="${OBJECT_FAILURE_ARTICULATION:-1.5}"
 export HAND_BEST_ROLLOUT_PATH="$ROOT/artifacts/arctic_rl_100/rollouts/${sample_id}.npz"
 
-bash scripts/datasets/arctic/train_arctic_scissors.sbatch
+bash scripts/datasets/arctic/train_arctic_ppo.sbatch
 echo "ARCTIC_BATCH_TRAIN_COMPLETE index=${SLURM_ARRAY_TASK_ID} sample=${sample_id} object=${object_id}"

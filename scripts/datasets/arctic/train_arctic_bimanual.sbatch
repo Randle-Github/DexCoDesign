@@ -27,17 +27,7 @@ export RUN_NAME="${RUN_NAME:-arctic_bimanual_${SAMPLE_ID}}"
 export RUN_SEED="${RUN_SEED:-2026}"
 export TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-300}"
 export NUM_ENVS="${NUM_ENVS:-256}"
-export OBJECT_Z_REWARD_MULTIPLIER="${OBJECT_Z_REWARD_MULTIPLIER:-1.0}"
-export OBJECT_AIRBORNE_REWARD_WEIGHT=0.0
-export REQUIRE_CROSS_LINK_PINCH=false
-export SCISSORS_HANDLE_CONTACT_GATE=false
-# Keep the same failure envelope as the ordinary ARCTIC launcher.  The first
-# bimanual validation accidentally used a much stricter envelope, which reset
-# trajectories before PPO could observe the later articulated motion.
-export OBJECT_FAILURE_DISTANCE="${OBJECT_FAILURE_DISTANCE:-0.25}"
-export OBJECT_FAILURE_ORIENTATION="${OBJECT_FAILURE_ORIENTATION:-3.14}"
-export OBJECT_FAILURE_ARTICULATION="${OBJECT_FAILURE_ARTICULATION:-3.14}"
 export HAND_BEST_ROLLOUT_PATH="${ROOT}/artifacts/arctic_bimanual/rollouts/${SAMPLE_ID}_bimanual_ppo.npz"
 
 cd "${ROOT}"
-bash scripts/datasets/arctic/train_arctic_scissors.sbatch
+bash scripts/datasets/arctic/train_arctic_ppo.sbatch

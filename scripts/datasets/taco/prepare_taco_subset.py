@@ -298,7 +298,7 @@ def main() -> None:
             _copy_member(model_zip, member, root / "raw" / "object_models" / Path(member).name)
 
     manifests = root / "manifests"
-    _write_jsonl(manifests / "selected_100.jsonl", selected)
+    _write_jsonl(manifests / f"selected_{len(selected)}.jsonl", selected)
     _write_jsonl(manifests / "rejected.jsonl", sorted(rejected, key=lambda record: record["sequence_id"]))
     rejection_counts = Counter(reason for record in rejected for reason in record["reasons"])
     summary = {

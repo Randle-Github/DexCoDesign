@@ -214,7 +214,7 @@ def main(env_cfg, experiment_cfg: dict) -> None:
         import isaaclab.sim as sim_utils
         from isaaclab_tasks.direct.mano_residual.mano_residual_env import ManoResidualEnv
 
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts/visualization"))
         from wuji_rollout_video import make_hand_visible
 
         original_setup_scene = ManoResidualEnv._setup_scene

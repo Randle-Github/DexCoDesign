@@ -15,7 +15,7 @@ mkdir -p "${ASSET_ROOT}"
   --headless
 
 "${REPO_ROOT}/isaaclab.sh" -p \
-  "${REPO_ROOT}/temp/hocap_mano_replay/isaaclab/prepare_mano_visuals.py" \
+  "${REPO_ROOT}/scripts/visualization/prepare_mano_visuals.py" \
   --urdf "${REPO_ROOT}/assets/robot_hands/direct_motor/mano/left/hand.urdf" \
   --output-dir "${ASSET_ROOT}/mano_visuals" \
   --headless

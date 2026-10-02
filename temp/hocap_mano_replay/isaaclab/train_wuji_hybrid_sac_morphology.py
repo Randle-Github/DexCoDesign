@@ -389,6 +389,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
 REPO_ROOT = SCRIPT_ROOT.parents[2]
 sys.path.insert(0, str(SCRIPT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(REPO_ROOT / "scripts/visualization"))
 from wuji_ppo_logging import CompletedEpisodeWindow, enable_ppo_logging, track_completed_episodes  # noqa: E402
 from gpu_wuji_retarget import (  # noqa: E402
     WujiBatchKinematics,

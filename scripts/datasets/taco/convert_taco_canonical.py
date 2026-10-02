@@ -26,12 +26,23 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path("datasets/taco_v1"))
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--selection-manifest", type=Path, default=None)
     parser.add_argument("--stride", type=int, default=3)
     parser.add_argument("--source-fps", type=float, default=30.0)
     args = parser.parse_args()
     root = args.root.resolve()
-    output = (args.output or (root / "canonical_100")).resolve()
-    records = [json.loads(line) for line in (root / "manifests" / "selected_100.jsonl").read_text().splitlines() if line]
+    if args.selection_manifest is not None:
+        selection_manifest = args.selection_manifest.resolve()
+    else:
+        manifests = sorted((root / "manifests").glob("selected_*.jsonl"))
+        if len(manifests) == 1:
+            selection_manifest = manifests[0]
+        elif (root / "manifests" / "selected_100.jsonl").is_file():
+            selection_manifest = root / "manifests" / "selected_100.jsonl"
+        else:
+            raise FileNotFoundError(f"No unambiguous selected_*.jsonl under {root / 'manifests'}")
+    records = [json.loads(line) for line in selection_manifest.read_text().splitlines() if line]
+    output = (args.output or (root / f"canonical_{len(records)}")).resolve()
     converted = []
     for index, record in enumerate(records):
         sequence = record["sequence_id"]

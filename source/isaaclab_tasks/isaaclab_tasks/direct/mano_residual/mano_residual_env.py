@@ -210,19 +210,6 @@ else:
     SECOND_CONTACT_LINK_NAMES = ()
 
 
-def _points_in_elliptical_prism(
-    points: torch.Tensor,
-    center: torch.Tensor,
-    radii_xy: torch.Tensor,
-    half_height: float,
-) -> torch.Tensor:
-    """Return whether local-frame points lie inside an elliptical hole volume."""
-
-    centered = points - center
-    radial = (centered[..., :2] / radii_xy).square().sum(dim=-1)
-    return (radial <= 1.0) & (centered[..., 2].abs() <= half_height)
-
-
 @configclass
 class ManoResidualEnvCfg(DirectRLEnvCfg):
     decimation = 4
@@ -506,15 +493,6 @@ class ManoResidualEnvCfg(DirectRLEnvCfg):
     # Keep this optional because single-link objects and some articulated
     # tasks legitimately use same-link grasps.
     require_cross_link_pinch = False
-    # Opt-in gate for the ARCTIC scissors demonstration. It is disabled by
-    # default so every existing dataset retains the original contact reward.
-    # Coordinates are expressed in the corresponding scissors-link frame.
-    scissors_handle_contact_gate = False
-    scissors_top_hole_center = (-0.0654, 0.0292, 0.0035)
-    scissors_top_hole_radii_xy = (0.0140, 0.0140)
-    scissors_bottom_hole_center = (-0.0680, -0.0145, 0.0015)
-    scissors_bottom_hole_radii_xy = (0.0260, 0.0120)
-    scissors_hole_half_height = 0.015
     # Positive values gate contact reward by object-position tracking quality:
     # exp(-position_error / sigma). This prevents stationary table contact from
     # outscoring a grasp that actually follows a lifting reference.
@@ -1262,78 +1240,6 @@ class ManoResidualEnv(DirectRLEnv):
             self.hand.body_names.index(name)
             for name in self._reference_fingertip_link_names
         ]
-        self._setup_scissors_handle_contact_gate()
-
-    def _setup_scissors_handle_contact_gate(self) -> None:
-        """Resolve the two handle frames without changing the default task."""
-
-        self._scissors_handle_gate_enabled = bool(
-            self.cfg.scissors_handle_contact_gate
-        )
-        if not self._scissors_handle_gate_enabled:
-            return
-        if not self.cfg.articulate_mode:
-            raise RuntimeError("scissors_handle_contact_gate requires articulate_mode")
-
-        required_object_bodies = {"bottom", "top"}
-        missing_object_bodies = required_object_bodies - set(self.object.body_names)
-        if missing_object_bodies:
-            raise RuntimeError(
-                "scissors_handle_contact_gate needs object bodies bottom/top; "
-                f"missing {sorted(missing_object_bodies)} from {self.object.body_names}"
-            )
-        self._scissors_bottom_body_index = self.object.body_names.index("bottom")
-        self._scissors_top_body_index = self.object.body_names.index("top")
-
-        filter_names = list(self._articulated_contact_filter_body_names)
-        missing_filter_bodies = required_object_bodies - set(filter_names)
-        if missing_filter_bodies:
-            raise RuntimeError(
-                "Scissors contact filters do not expose bottom/top; "
-                f"missing {sorted(missing_filter_bodies)} from {filter_names}"
-            )
-        self._scissors_bottom_filter_index = filter_names.index("bottom")
-        self._scissors_top_filter_index = filter_names.index("top")
-
-        thumb_names = list(THUMB_CONTACT_LINK_NAMES)
-        other_names = list(OTHER_FINGER_CONTACT_LINK_NAMES)
-        if not thumb_names or not other_names:
-            raise RuntimeError("Scissors gate requires thumb and opposing-finger links")
-        self._scissors_thumb_body_indices = [
-            self.hand.body_names.index(name) for name in thumb_names
-        ]
-        self._scissors_other_body_indices = [
-            self.hand.body_names.index(name) for name in other_names
-        ]
-        self._scissors_thumb_contact_sensors = tuple(
-            self._articulated_contact_sensors[name] for name in thumb_names
-        )
-        self._scissors_other_contact_sensors = tuple(
-            self._articulated_contact_sensors[name] for name in other_names
-        )
-
-        def vector(values: Sequence[float]) -> torch.Tensor:
-            return torch.as_tensor(values, dtype=torch.float32, device=self.device)
-
-        self._scissors_top_hole_center = vector(
-            self.cfg.scissors_top_hole_center
-        )
-        self._scissors_top_hole_radii_xy = vector(
-            self.cfg.scissors_top_hole_radii_xy
-        )
-        self._scissors_bottom_hole_center = vector(
-            self.cfg.scissors_bottom_hole_center
-        )
-        self._scissors_bottom_hole_radii_xy = vector(
-            self.cfg.scissors_bottom_hole_radii_xy
-        )
-        if (
-            (self._scissors_top_hole_radii_xy <= 0).any()
-            or (self._scissors_bottom_hole_radii_xy <= 0).any()
-            or self.cfg.scissors_hole_half_height <= 0
-        ):
-            raise ValueError("Scissors hole radii and half-height must be positive")
-
     def _current_fingertip_positions_w(self) -> torch.Tensor:
         fingertip_body_quat = self.hand.data.body_quat_w[
             :, self._fingertip_body_indices
@@ -1562,9 +1468,6 @@ class ManoResidualEnv(DirectRLEnv):
                 raise RuntimeError(
                     f"Articulated object has no rigid links below {first_object_root}"
                 )
-            scissors_region_links = set(
-                (*THUMB_CONTACT_LINK_NAMES, *OTHER_FINGER_CONTACT_LINK_NAMES)
-            )
             self._articulated_contact_sensors = {
                 link_name: ContactSensor(
                     ContactSensorCfg(
@@ -1572,16 +1475,7 @@ class ManoResidualEnv(DirectRLEnv):
                         update_period=0.0,
                         history_length=0,
                         filter_prim_paths_expr=object_filter_paths,
-                        track_contact_points=bool(
-                            self.cfg.scissors_handle_contact_gate
-                            and link_name in scissors_region_links
-                        ),
-                        max_contact_data_count_per_prim=(
-                            32
-                            if self.cfg.scissors_handle_contact_gate
-                            and link_name in scissors_region_links
-                            else 4
-                        ),
+                        max_contact_data_count_per_prim=4,
                     )
                 )
                 for link_name in ALL_HAND_CONTACT_LINK_NAMES
@@ -2301,83 +2195,9 @@ class ManoResidualEnv(DirectRLEnv):
             )
         return torch.stack(forces, dim=-1).amax(dim=-1)
 
-    def _compute_scissors_handle_contact(
-        self,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Apply the union of the two hole ROIs to the existing contact reward."""
-
-        def group_contact(
-            sensors: Sequence[ContactSensor],
-        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-            in_either_hole = []
-            valid_contact = []
-            all_forces = []
-            for sensor in sensors:
-                if sensor.data.contact_pos_w is None:
-                    raise RuntimeError(
-                        "Scissors handle reward requires track_contact_points=True"
-                    )
-                force_by_filter = self._contact_sensor_forces_by_filter(sensor)
-                for body_index, filter_index, center, radii_xy in (
-                    (
-                        self._scissors_top_body_index,
-                        self._scissors_top_filter_index,
-                        self._scissors_top_hole_center,
-                        self._scissors_top_hole_radii_xy,
-                    ),
-                    (
-                        self._scissors_bottom_body_index,
-                        self._scissors_bottom_filter_index,
-                        self._scissors_bottom_hole_center,
-                        self._scissors_bottom_hole_radii_xy,
-                    ),
-                ):
-                    point_w = sensor.data.contact_pos_w[:, 0, filter_index]
-                    finite = torch.isfinite(point_w).all(dim=-1)
-                    point_local = quat_apply(
-                        quat_conjugate(self.object.data.body_quat_w[:, body_index]),
-                        torch.nan_to_num(point_w)
-                        - self.object.data.body_pos_w[:, body_index],
-                    )
-                    inside = finite & _points_in_elliptical_prism(
-                        point_local,
-                        center,
-                        radii_xy,
-                        self.cfg.scissors_hole_half_height,
-                    )
-                    force = force_by_filter[:, filter_index]
-                    in_either_hole.append(inside)
-                    valid_contact.append(
-                        inside & (force > self.cfg.contact_force_threshold)
-                    )
-                    all_forces.append(force)
-            return (
-                torch.stack(in_either_hole, dim=1).any(dim=1),
-                torch.stack(valid_contact, dim=1).any(dim=1),
-                torch.stack(all_forces, dim=1).amax(dim=1),
-            )
-
-        thumb_in_hole, thumb_contact, thumb_force = group_contact(
-            self._scissors_thumb_contact_sensors
-        )
-        other_in_hole, other_contact, other_force = group_contact(
-            self._scissors_other_contact_sensors
-        )
-        self._last_thumb_in_scissors_hole = thumb_in_hole
-        self._last_other_finger_in_scissors_hole = other_in_hole
-        return (
-            thumb_contact,
-            other_contact,
-            thumb_contact & other_contact,
-            thumb_force,
-            other_force,
-        )
-
     def _compute_pinch_contact(
         self,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        if self._scissors_handle_gate_enabled:
-            return self._compute_scissors_handle_contact()
         if self.cfg.articulate_mode and self.cfg.require_cross_link_pinch:
             thumb_link_force = self._contact_sensor_forces_by_filter(
                 self._thumb_contact_sensors
@@ -2582,13 +2402,6 @@ class ManoResidualEnv(DirectRLEnv):
                 / float(self._reference_length - 1)
             ),
         }
-        if self._scissors_handle_gate_enabled:
-            log["thumb_inside_scissors_top_hole"] = (
-                self._last_thumb_in_scissors_hole.to(torch.float32).mean()
-            )
-            log["other_finger_inside_scissors_bottom_hole"] = (
-                self._last_other_finger_in_scissors_hole.to(torch.float32).mean()
-            )
         completed = self.reset_buf
         if completed.any():
             log["pose_tracking_return"] = self._pose_episode_return[completed].mean()
