@@ -422,7 +422,7 @@ def main() -> None:
         record["mesh_available"] = True
         accepted.append(record)
 
-    (output / "manifest.json").write_text(json.dumps({
+    (root / "raw/conversion_manifest.json").write_text(json.dumps({
         "schema": "dexcodesign.pose_dataset.v1", "dataset": "GigaHands",
         "source_license": "CC BY-NC 4.0", "records": accepted,
     }, indent=2) + "\n")

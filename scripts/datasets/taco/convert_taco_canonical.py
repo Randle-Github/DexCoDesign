@@ -72,7 +72,7 @@ def main() -> None:
         )
         converted.append({"sequence_id": sequence, "path": str(destination.relative_to(root))})
         print(f"TACO_CANONICAL_READY {index + 1:03d}/{len(records)} {sequence}", flush=True)
-    (output / "manifest.json").write_text(
+    (root / "raw/conversion_manifest.json").write_text(
         json.dumps({"schema": "dexcodesign.pose_dataset.v1", "dataset": "TACO", "records": converted}, indent=2) + "\n"
     )
 

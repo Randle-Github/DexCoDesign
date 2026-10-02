@@ -171,7 +171,7 @@ def dexterhand() -> list[dict]:
 def gigahands() -> list[dict]:
     root = dataset_root("gigahands")
     canonical = canonical_records("gigahands")
-    manifest = json.loads((root / "canonical/manifest.json").read_text())
+    manifest = json.loads((root / "raw/conversion_manifest.json").read_text())
     records = []
     for source in manifest["records"]:
         entry = canonical.get(source["candidate_id"])

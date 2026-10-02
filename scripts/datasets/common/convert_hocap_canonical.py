@@ -54,7 +54,9 @@ def main() -> None:
         )
         converted.append({"task_id": info["task_id"], "path": str(destination)})
         print(f"HOCAP_CANONICAL_READY {info['task_id']}", flush=True)
-    (args.output / "manifest.json").write_text(
+    manifest_path = args.output.parent / "raw/conversion_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
         json.dumps({"schema": "dexcodesign.pose_dataset.v1", "dataset": "HO-Cap", "records": converted}, indent=2) + "\n"
     )
 

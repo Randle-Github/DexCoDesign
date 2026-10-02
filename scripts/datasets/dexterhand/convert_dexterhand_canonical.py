@@ -136,7 +136,7 @@ def main() -> None:
             records.append({"sequence_id": sequence_id, "path": str(destination.relative_to(output)), "frames": right-left, "fps": float(meta.get("fps", 20))})
             print(f"DEXTERHAND_CANONICAL_READY {sequence_id}", flush=True)
     output.mkdir(parents=True, exist_ok=True)
-    (output / "manifest.json").write_text(json.dumps({"schema": "dexcodesign.pose_dataset.v1", "dataset": "DexterCap/DexterHand", "records": records}, indent=2) + "\n")
+    (root / "raw/conversion_manifest.json").write_text(json.dumps({"schema": "dexcodesign.pose_dataset.v1", "dataset": "DexterCap/DexterHand", "records": records}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -217,7 +217,8 @@ def main() -> None:
                  "groups": groups, "diagnostic_groups": diagnostic_groups}
     args.selection.parent.mkdir(parents=True, exist_ok=True)
     args.selection.write_text(json.dumps(selection, indent=2) + "\n")
-    manifest = ROOT / "datasets/supp_v1/manifest.json"
+    manifest = ROOT / "datasets/supp_v1/raw/source_manifest.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(json.dumps(selection, indent=2) + "\n")
     print(f"SELECTION_READY {args.selection}", flush=True)
     print(f"SUPP_MANIFEST_READY {manifest}", flush=True)

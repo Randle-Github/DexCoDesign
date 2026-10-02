@@ -382,7 +382,7 @@ def write_table_dynamic(
             np.savez_compressed(destination, **output)
             raw_records.append({"sequence_id": source_path.stem, "path": str(destination.relative_to(root))})
 
-    (canonical_out / "manifest.json").write_text(json.dumps({"schema": "dexcodesign.pose_dataset.v1", "dataset": "ARCTIC_TABLETOP", "records": canonical_records}, indent=2) + "\n")
+    (root / "raw/tabletop_manifest.json").write_text(json.dumps({"schema": "dexcodesign.pose_dataset.v1", "dataset": "ARCTIC_TABLETOP", "records": canonical_records}, indent=2) + "\n")
     (benchmark_out / "manifest.json").write_text(json.dumps({"schema": "dexcodesign.arctic_subset.v1", "dataset": "ARCTIC_TABLETOP", "records": raw_records}, indent=2) + "\n")
     return {"canonical_count": len(canonical_records), "benchmark_count": len(raw_records), "max_relative_distance_error_m": max_relative_error}
 

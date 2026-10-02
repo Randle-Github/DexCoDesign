@@ -58,11 +58,11 @@ def build_index(dataset: str) -> dict:
         raise FileNotFoundError(f"No active canonical trajectories in {root}")
     giga_meshes = {}
     if dataset == "gigahands":
-        source = json.loads((root / "canonical/manifest.json").read_text())
+        source = json.loads((root / "raw/conversion_manifest.json").read_text())
         giga_meshes = {row["candidate_id"]: row["mesh_file"] for row in source["records"]}
     supp_objects = {}
     if dataset == "supp":
-        source = json.loads((root / "manifest.json").read_text())
+        source = json.loads((root / "raw/source_manifest.json").read_text())
         supp_rows = source["groups"]["supp"] + source.get("diagnostic_groups", {}).get("supp", [])
         supp_objects = {row["sample_id"]: row["objects"] for row in supp_rows}
     samples = []
